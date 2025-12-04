@@ -2,8 +2,10 @@
 // Data source: https://github.com/Ayanab01/FPL_Stats
 
 const DATA_BASE_URL = 'https://raw.githubusercontent.com/Ayanab01/FPL_Stats/main/data/2025-2026';
+const DATA_GW_URL = 'https://raw.githubusercontent.com/Ayanab01/FPL_Stats/main/data/2025-2026/By%20Gameweek';
 const DEFCON_THRESHOLD_DEF = 10;  // CBIT threshold for defenders
 const DEFCON_THRESHOLD_MID_FWD = 12;  // CBIRT threshold for mids/forwards
+const MAX_GAMEWEEKS = 38;  // Maximum gameweeks in a season
 
 // Global state
 let state = {
@@ -79,29 +81,87 @@ function parseCSVLine(line) {
 }
 
 // Fetch data from GitHub
-async function fetchCSV(filename) {
-    const url = `${DATA_BASE_URL}/${filename}`;
+async function fetchCSV(url) {
     const response = await fetch(url);
     if (!response.ok) {
-        throw new Error(`Failed to fetch ${filename}: ${response.status}`);
+        throw new Error(`Failed to fetch ${url}: ${response.status}`);
     }
     const text = await response.text();
     return parseCSV(text);
 }
 
+// Fetch CSV from root data directory
+async function fetchRootCSV(filename) {
+    return fetchCSV(`${DATA_BASE_URL}/${filename}`);
+}
+
+// Fetch CSV from a specific gameweek directory
+async function fetchGameweekCSV(gameweek, filename) {
+    return fetchCSV(`${DATA_GW_URL}/GW${gameweek}/${filename}`);
+}
+
+// Fetch data from all available gameweeks and aggregate
+async function fetchAllGameweekData(filename) {
+    const allData = [];
+    const fetchPromises = [];
+
+    // Try to fetch from all gameweeks (1 to MAX_GAMEWEEKS)
+    for (let gw = 1; gw <= MAX_GAMEWEEKS; gw++) {
+        fetchPromises.push(
+            fetchGameweekCSV(gw, filename)
+                .then(data => ({ gw, data, success: true }))
+                .catch(() => ({ gw, data: [], success: false }))
+        );
+    }
+
+    const results = await Promise.all(fetchPromises);
+
+    // Aggregate successful results
+    results.forEach(result => {
+        if (result.success && result.data.length > 0) {
+            allData.push(...result.data);
+        }
+    });
+
+    return allData;
+}
+
 async function loadAllData() {
     try {
-        const [players, playerMatchStats, matches, teams] = await Promise.all([
-            fetchCSV('players.csv'),
-            fetchCSV('playermatchstats.csv'),
-            fetchCSV('matches.csv'),
-            fetchCSV('teams.csv')
+        // Fetch players and teams from root (these exist at root level)
+        const [players, teams] = await Promise.all([
+            fetchRootCSV('players.csv'),
+            fetchRootCSV('teams.csv')
         ]);
 
         state.players = players;
+        state.teams = teams;
+
+        console.log('Loaded root data:', { players: players.length, teams: teams.length });
+
+        // Fetch playermatchstats and matches from all gameweeks
+        // These files only exist in By Gameweek/GW{x}/ subdirectories
+        const [playerMatchStats, matches] = await Promise.all([
+            fetchAllGameweekData('playermatchstats.csv'),
+            fetchAllGameweekData('matches.csv')
+        ]);
+
         state.playerMatchStats = playerMatchStats;
         state.matches = matches;
-        state.teams = teams;
+
+        console.log('Loaded gameweek data:', {
+            playerMatchStats: playerMatchStats.length,
+            matches: matches.length
+        });
+
+        // Validate we have enough data
+        if (players.length === 0 || teams.length === 0) {
+            throw new Error('Failed to load essential player/team data');
+        }
+
+        if (playerMatchStats.length === 0 || matches.length === 0) {
+            console.warn('No gameweek data available yet - season may not have started');
+        }
 
         return true;
     } catch (error) {
