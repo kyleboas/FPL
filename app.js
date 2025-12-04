@@ -166,58 +166,126 @@ function getThreshold(position) {
     return DEFCON_THRESHOLD_MID_FWD;
 }
 
-// Calculate opponent "CBIT allowed" multiplier
+// Build a lookup to determine if a match was home or away for a team
+function buildMatchLocationLookup() {
+    const lookup = {};
+
+    state.matches.forEach(match => {
+        const matchId = match.id || match.match_id;
+        const homeTeam = match.team_h || match.home_team_id;
+        const awayTeam = match.team_a || match.away_team_id;
+        const gameweek = match.event || match.gameweek;
+
+        // Create lookup keys: "teamId_opponentId_gameweek"
+        if (homeTeam && awayTeam && gameweek) {
+            lookup[`${homeTeam}_${awayTeam}_${gameweek}`] = 'home';
+            lookup[`${awayTeam}_${homeTeam}_${gameweek}`] = 'away';
+        }
+    });
+
+    return lookup;
+}
+
+// Calculate opponent "CBIT allowed" multiplier with home/away split
 // Higher multiplier = opponent allows more defensive returns (easier fixture)
 function calculateOpponentMultipliers() {
     const teamStats = {};
+    const matchLocationLookup = buildMatchLocationLookup();
 
-    // Initialize team stats
+    // Initialize team stats with separate home/away tracking
     state.teams.forEach(team => {
         const teamId = team.id || team.team_id;
         teamStats[teamId] = {
             name: team.name || team.team_name,
             shortName: team.short_name || team.name?.substring(0, 3).toUpperCase(),
-            totalAllowed: 0,
-            matchCount: 0
+            home: { totalAllowed: 0, matchCount: 0 },
+            away: { totalAllowed: 0, matchCount: 0 },
+            overall: { totalAllowed: 0, matchCount: 0 }
         };
     });
 
-    // Calculate what each team allows to opponents
+    // Calculate what each team allows to opponents (split by home/away)
     state.playerMatchStats.forEach(stat => {
         const opponentId = stat.opponent_team || stat.opponent_id;
-        if (opponentId && teamStats[opponentId]) {
-            // Get player position
-            const player = state.players.find(p =>
-                (p.id || p.player_id) === (stat.element || stat.player_id)
-            );
-            if (player) {
-                const position = getPosition(player);
-                const score = calculateScore(stat, position);
-                teamStats[opponentId].totalAllowed += score;
-                teamStats[opponentId].matchCount++;
-            }
+        if (!opponentId || !teamStats[opponentId]) return;
+
+        // Get player and their team
+        const player = state.players.find(p =>
+            (p.id || p.player_id) === (stat.element || stat.player_id)
+        );
+        if (!player) return;
+
+        const playerTeamId = player.team || player.team_id;
+        const gameweek = stat.round || stat.event || stat.gameweek;
+        const position = getPosition(player);
+        const score = calculateScore(stat, position);
+
+        // Determine if this was a home or away match for the opponent
+        const lookupKey = `${opponentId}_${playerTeamId}_${gameweek}`;
+        const location = matchLocationLookup[lookupKey];
+
+        if (location === 'home') {
+            // Opponent was at home (defending at home)
+            teamStats[opponentId].home.totalAllowed += score;
+            teamStats[opponentId].home.matchCount++;
+        } else if (location === 'away') {
+            // Opponent was away (defending away)
+            teamStats[opponentId].away.totalAllowed += score;
+            teamStats[opponentId].away.matchCount++;
         }
+
+        // Always track overall
+        teamStats[opponentId].overall.totalAllowed += score;
+        teamStats[opponentId].overall.matchCount++;
     });
 
-    // Calculate averages and league average
-    let leagueTotal = 0;
-    let leagueCount = 0;
+    // Calculate averages and league averages (separate for home/away)
+    let leagueHomeTotal = 0, leagueHomeCount = 0;
+    let leagueAwayTotal = 0, leagueAwayCount = 0;
+    let leagueOverallTotal = 0, leagueOverallCount = 0;
 
     Object.values(teamStats).forEach(team => {
-        if (team.matchCount > 0) {
-            team.avgAllowed = team.totalAllowed / team.matchCount;
-            leagueTotal += team.avgAllowed;
-            leagueCount++;
+        // Home average
+        if (team.home.matchCount > 0) {
+            team.home.avgAllowed = team.home.totalAllowed / team.home.matchCount;
+            leagueHomeTotal += team.home.avgAllowed;
+            leagueHomeCount++;
         } else {
-            team.avgAllowed = 0;
+            team.home.avgAllowed = 0;
+        }
+
+        // Away average
+        if (team.away.matchCount > 0) {
+            team.away.avgAllowed = team.away.totalAllowed / team.away.matchCount;
+            leagueAwayTotal += team.away.avgAllowed;
+            leagueAwayCount++;
+        } else {
+            team.away.avgAllowed = 0;
+        }
+
+        // Overall average (fallback)
+        if (team.overall.matchCount > 0) {
+            team.overall.avgAllowed = team.overall.totalAllowed / team.overall.matchCount;
+            leagueOverallTotal += team.overall.avgAllowed;
+            leagueOverallCount++;
+        } else {
+            team.overall.avgAllowed = 0;
         }
     });
 
-    const leagueAvg = leagueCount > 0 ? leagueTotal / leagueCount : 1;
+    const leagueHomeAvg = leagueHomeCount > 0 ? leagueHomeTotal / leagueHomeCount : 1;
+    const leagueAwayAvg = leagueAwayCount > 0 ? leagueAwayTotal / leagueAwayCount : 1;
+    const leagueOverallAvg = leagueOverallCount > 0 ? leagueOverallTotal / leagueOverallCount : 1;
 
-    // Calculate multiplier (ratio vs league average)
+    // Calculate multipliers (ratio vs league average)
     Object.values(teamStats).forEach(team => {
-        team.multiplier = leagueAvg > 0 ? team.avgAllowed / leagueAvg : 1;
+        team.home.multiplier = leagueHomeAvg > 0 ? team.home.avgAllowed / leagueHomeAvg : 1;
+        team.away.multiplier = leagueAwayAvg > 0 ? team.away.avgAllowed / leagueAwayAvg : 1;
+        team.overall.multiplier = leagueOverallAvg > 0 ? team.overall.avgAllowed / leagueOverallAvg : 1;
+
+        // Fallback: if no home/away data, use overall
+        if (team.home.matchCount === 0) team.home.multiplier = team.overall.multiplier;
+        if (team.away.matchCount === 0) team.away.multiplier = team.overall.multiplier;
     });
 
     return teamStats;
@@ -345,11 +413,20 @@ function processPlayerData() {
         let opponentId = null;
         let opponentMultiplier = 1;
         let opponentName = 'TBD';
+        let isHome = null;
+        let fixtureLocation = '';
 
         if (nextFixture) {
-            opponentId = nextFixture.homeTeam == teamId ? nextFixture.awayTeam : nextFixture.homeTeam;
+            // Determine if player's team is home or away
+            isHome = nextFixture.homeTeam == teamId;
+            opponentId = isHome ? nextFixture.awayTeam : nextFixture.homeTeam;
+            fixtureLocation = isHome ? 'H' : 'A';
+
             if (opponentMultipliers[opponentId]) {
-                opponentMultiplier = opponentMultipliers[opponentId].multiplier || 1;
+                // Use home/away specific multiplier based on opponent's defensive location
+                // If player is home, opponent defends away (and vice versa)
+                const opponentDefendsAt = isHome ? 'away' : 'home';
+                opponentMultiplier = opponentMultipliers[opponentId][opponentDefendsAt].multiplier || 1;
                 opponentName = opponentMultipliers[opponentId].shortName ||
                               opponentMultipliers[opponentId].name || 'UNK';
             }
@@ -379,7 +456,9 @@ function processPlayerData() {
             opponentId: opponentId,
             opponentMultiplier: opponentMultiplier,
             probability: probability,
-            nextGameweek: nextFixture?.gameweek || null
+            nextGameweek: nextFixture?.gameweek || null,
+            fixtureLocation: fixtureLocation,
+            isHome: isHome
         });
     });
 
@@ -443,6 +522,7 @@ function renderResults() {
         const probPercent = (player.probability * 100).toFixed(1);
         const probClass = getProbabilityClass(player.probability);
         const multClass = getMultiplierClass(player.opponentMultiplier);
+        const fixtureDisplay = player.fixtureLocation ? `${player.opponent} (${player.fixtureLocation})` : player.opponent;
 
         return `
             <tr>
@@ -451,7 +531,7 @@ function renderResults() {
                 <td><span class="pos-badge pos-${player.position}">${player.position}</span></td>
                 <td>${player.avgScore.toFixed(1)}</td>
                 <td>${player.matchCount}</td>
-                <td>${escapeHtml(player.opponent)}</td>
+                <td>${escapeHtml(fixtureDisplay)}</td>
                 <td class="${multClass}">${player.opponentMultiplier.toFixed(2)}x</td>
                 <td>${player.adjustedScore.toFixed(1)}</td>
                 <td>
