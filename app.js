@@ -1,8 +1,8 @@
 // FPL DEFCON Predictor - Main Application
-// Data source: https://github.com/Ayanab01/FPL_Stats
+// Data source: https://github.com/olbauday/FPL-Elo-Insights
 
-const DATA_BASE_URL = 'https://raw.githubusercontent.com/Ayanab01/FPL_Stats/main/data/2025-2026';
-const DATA_GW_URL = 'https://raw.githubusercontent.com/Ayanab01/FPL_Stats/main/data/2025-2026/By%20Gameweek';
+const DATA_BASE_URL = 'https://raw.githubusercontent.com/olbauday/FPL-Elo-Insights/main/data/2025-2026';
+const DATA_GW_URL = 'https://raw.githubusercontent.com/olbauday/FPL-Elo-Insights/main/data/2025-2026/By%20Tournament/Premier%20League';
 const DEFCON_THRESHOLD_DEF = 10;  // CBIT threshold for defenders
 const DEFCON_THRESHOLD_MID_FWD = 12;  // CBIRT threshold for mids/forwards
 const MAX_GAMEWEEKS = 38;  // Maximum gameweeks in a season
@@ -139,11 +139,11 @@ async function loadAllData() {
 
         console.log('Loaded root data:', { players: players.length, teams: teams.length });
 
-        // Fetch playermatchstats and matches from all gameweeks
-        // These files only exist in By Gameweek/GW{x}/ subdirectories
+        // Fetch player stats and matches from all gameweeks
+        // These files exist in By Tournament/Premier League/GW{x}/ subdirectories
         const [playerMatchStats, matches] = await Promise.all([
-            fetchAllGameweekData('playermatchstats.csv'),
-            fetchAllGameweekData('matches.csv')
+            fetchAllGameweekData('player_gameweek_stats.csv'),
+            fetchAllGameweekData('fixtures.csv')
         ]);
 
         state.playerMatchStats = playerMatchStats;
@@ -176,13 +176,17 @@ function calculateCBIT(matchStat) {
     const cleanSheet = parseFloat(matchStat.clean_sheets || matchStat.cleansheet || 0);
     const bonus = parseFloat(matchStat.bonus || 0);
     // Use clearances, blocks, interceptions as defensive stats
-    const interceptions = parseFloat(matchStat.clearances_blocks_interceptions || matchStat.interceptions || 0);
-    const tackles = parseFloat(matchStat.tackles || 0);
+    // FPL-Elo-Insights uses: tackles, interceptions, clearances, blocks
+    const interceptions = parseFloat(matchStat.interceptions || matchStat.clearances_blocks_interceptions || 0);
+    const clearances = parseFloat(matchStat.clearances || 0);
+    const blocks = parseFloat(matchStat.blocks || 0);
+    const tackles = parseFloat(matchStat.tackles || matchStat.tackles_won || 0);
 
     // Clean sheet gives 4 points for defenders, treat as 4 if they got one
     const csPoints = cleanSheet >= 1 ? 4 : 0;
 
-    return csPoints + bonus + interceptions + tackles;
+    // Include clearances and blocks in the calculation
+    return csPoints + bonus + interceptions + clearances + blocks + tackles;
 }
 
 // Calculate CBIRT for mids/forwards
@@ -190,9 +194,10 @@ function calculateCBIT(matchStat) {
 function calculateCBIRT(matchStat, position) {
     const cleanSheet = parseFloat(matchStat.clean_sheets || matchStat.cleansheet || 0);
     const bonus = parseFloat(matchStat.bonus || 0);
-    const interceptions = parseFloat(matchStat.clearances_blocks_interceptions || matchStat.interceptions || 0);
-    const recoveries = parseFloat(matchStat.recoveries || 0);
-    const tackles = parseFloat(matchStat.tackles || 0);
+    // FPL-Elo-Insights uses: tackles, interceptions, recoveries
+    const interceptions = parseFloat(matchStat.interceptions || matchStat.clearances_blocks_interceptions || 0);
+    const recoveries = parseFloat(matchStat.recoveries || matchStat.ball_recoveries || 0);
+    const tackles = parseFloat(matchStat.tackles || matchStat.tackles_won || 0);
 
     // Clean sheet gives 1 point for mids, 0 for forwards
     let csPoints = 0;
@@ -254,7 +259,7 @@ function calculateOpponentMultipliers() {
 
     // Initialize team stats with separate home/away tracking
     state.teams.forEach(team => {
-        const teamId = team.id || team.team_id;
+        const teamId = team.id || team.team_id || team.code;
         teamStats[teamId] = {
             name: team.name || team.team_name,
             shortName: team.short_name || team.name?.substring(0, 3).toUpperCase(),
@@ -266,16 +271,17 @@ function calculateOpponentMultipliers() {
 
     // Calculate what each team allows to opponents (split by home/away)
     state.playerMatchStats.forEach(stat => {
-        const opponentId = stat.opponent_team || stat.opponent_id;
+        // FPL-Elo-Insights uses opponent_team field
+        const opponentId = stat.opponent_team || stat.opponent_id || stat.vs_team;
         if (!opponentId || !teamStats[opponentId]) return;
 
-        // Get player and their team
+        // Get player and their team - FPL-Elo-Insights uses element for player ID
         const player = state.players.find(p =>
-            (p.id || p.player_id) === (stat.element || stat.player_id)
+            (p.id || p.player_id || p.element) === (stat.element || stat.player_id)
         );
         if (!player) return;
 
-        const playerTeamId = player.team || player.team_id;
+        const playerTeamId = player.team || player.team_id || player.team_code;
         const gameweek = stat.round || stat.event || stat.gameweek;
         const position = getPosition(player);
         const score = calculateScore(stat, position);
@@ -410,13 +416,15 @@ function getUpcomingFixtures() {
     const fixtures = [];
 
     state.matches.forEach(match => {
-        const matchDate = new Date(match.kickoff_time || match.datetime || match.date);
-        if (matchDate > now || !match.finished) {
+        // FPL-Elo-Insights uses: kickoff_time, event, team_h, team_a, finished
+        const matchDate = new Date(match.kickoff_time || match.datetime || match.date || match.kickoff);
+        const isFinished = match.finished === true || match.finished === 'true' || match.finished === 'True' || match.finished === 1;
+        if (matchDate > now || !isFinished) {
             fixtures.push({
-                id: match.id || match.match_id,
-                gameweek: parseInt(match.event || match.gameweek || 0),
-                homeTeam: match.team_h || match.home_team_id,
-                awayTeam: match.team_a || match.away_team_id,
+                id: match.id || match.match_id || match.fixture_id,
+                gameweek: parseInt(match.event || match.gameweek || match.gw || 0),
+                homeTeam: match.team_h || match.home_team_id || match.team_h_id,
+                awayTeam: match.team_a || match.away_team_id || match.team_a_id,
                 date: matchDate
             });
         }
@@ -437,7 +445,8 @@ function processPlayerData() {
     // Group match stats by player
     const playerStats = {};
     state.playerMatchStats.forEach(stat => {
-        const playerId = stat.element || stat.player_id;
+        // FPL-Elo-Insights uses element for player ID
+        const playerId = stat.element || stat.player_id || stat.id;
         if (!playerStats[playerId]) {
             playerStats[playerId] = [];
         }
@@ -446,9 +455,10 @@ function processPlayerData() {
 
     // Process each player
     state.players.forEach(player => {
-        const playerId = player.id || player.player_id;
+        // FPL-Elo-Insights uses id for player ID
+        const playerId = player.id || player.player_id || player.element;
         const position = getPosition(player);
-        const teamId = player.team || player.team_id;
+        const teamId = player.team || player.team_id || player.team_code;
 
         // Skip goalkeepers for DEFCON (they don't contribute same way)
         if (position === 'GKP') return;
