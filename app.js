@@ -210,9 +210,22 @@ function calculateCBIRT(matchStat, position) {
 
 // Get player position from element_type or position field
 function getPosition(player) {
-    const elementType = parseInt(player.element_type || player.position || 0);
+    // Try numeric element_type first (FPL API standard: 1=GKP, 2=DEF, 3=MID, 4=FWD)
+    const elementType = parseInt(player.element_type || player.position || player.pos || 0);
     const posMap = { 1: 'GKP', 2: 'DEF', 3: 'MID', 4: 'FWD' };
-    return posMap[elementType] || player.singular_name_short || 'UNK';
+    if (posMap[elementType]) {
+        return posMap[elementType];
+    }
+
+    // Try string position codes
+    const posStr = (player.singular_name_short || player.position || player.pos || '').toUpperCase();
+    const strMap = {
+        'GK': 'GKP', 'GKP': 'GKP', 'GOALKEEPER': 'GKP',
+        'DEF': 'DEF', 'D': 'DEF', 'DEFENDER': 'DEF',
+        'MID': 'MID', 'M': 'MID', 'MIDFIELDER': 'MID',
+        'FWD': 'FWD', 'F': 'FWD', 'FW': 'FWD', 'FORWARD': 'FWD', 'ATT': 'FWD'
+    };
+    return strMap[posStr] || 'UNK';
 }
 
 // Calculate score based on position
@@ -418,8 +431,11 @@ function getUpcomingFixtures() {
     state.matches.forEach(match => {
         // FPL-Elo-Insights uses: kickoff_time, event, team_h, team_a, finished
         const matchDate = new Date(match.kickoff_time || match.datetime || match.date || match.kickoff);
-        const isFinished = match.finished === true || match.finished === 'true' || match.finished === 'True' || match.finished === 1;
-        if (matchDate > now || !isFinished) {
+        const isFinished = match.finished === true || match.finished === 'true' || match.finished === 'True' || match.finished === 1 || match.finished === '1';
+
+        // Only include fixtures that are not finished (future or upcoming matches)
+        // A fixture is upcoming if it's not finished yet, regardless of kickoff time
+        if (!isFinished) {
             fixtures.push({
                 id: match.id || match.match_id || match.fixture_id,
                 gameweek: parseInt(match.event || match.gameweek || match.gw || 0),
@@ -499,6 +515,16 @@ function processPlayerData() {
                 opponentMultiplier = opponentMultipliers[opponentId][opponentDefendsAt].multiplier || 1;
                 opponentName = opponentMultipliers[opponentId].shortName ||
                               opponentMultipliers[opponentId].name || 'UNK';
+            } else {
+                // Fallback: look up opponent team directly from teams array
+                const opponentTeam = state.teams.find(t =>
+                    (t.id || t.team_id || t.code) == opponentId ||
+                    t.code == opponentId ||
+                    t.id == opponentId
+                );
+                if (opponentTeam) {
+                    opponentName = opponentTeam.short_name || opponentTeam.name?.substring(0, 3).toUpperCase() || 'TBD';
+                }
             }
         }
 
@@ -506,8 +532,12 @@ function processPlayerData() {
         const probability = calculateProbability(scores, threshold, opponentMultiplier);
         const adjustedScore = avgScore * opponentMultiplier;
 
-        // Get team name
-        const team = state.teams.find(t => (t.id || t.team_id) == teamId);
+        // Get team name - check all possible ID fields (id, team_id, code)
+        const team = state.teams.find(t =>
+            (t.id || t.team_id || t.code) == teamId ||
+            t.code == teamId ||
+            t.id == teamId
+        );
         const teamName = team?.short_name || team?.name?.substring(0, 3).toUpperCase() || 'UNK';
 
         processed.push({
@@ -645,7 +675,8 @@ function populateFilters() {
 
     teams.forEach(team => {
         const option = document.createElement('option');
-        option.value = team.id || team.team_id;
+        // Use the same ID field priority as player data for consistency
+        option.value = team.id || team.team_id || team.code;
         option.textContent = team.name || team.team_name;
         elements.teamFilter.appendChild(option);
     });
