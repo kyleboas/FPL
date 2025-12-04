@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FPL DEFCON Predictor</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>FPL DEFCON Predictor</h1>
+            <p class="subtitle">Probability of hitting DEFCON thresholds (10 CBIT for DEF, 12 CBIRT for MID/FWD)</p>
+        </header>
+
+        <div class="loading" id="loading">
+            <div class="spinner"></div>
+            <p>Loading FPL data...</p>
+        </div>
+
+        <div class="error hidden" id="error">
+            <p>Failed to load data. Please refresh the page.</p>
+        </div>
+
+        <main class="hidden" id="main-content">
+            <section class="filters">
+                <div class="filter-group">
+                    <label for="position-filter">Position:</label>
+                    <select id="position-filter">
+                        <option value="all">All Positions</option>
+                        <option value="DEF">Defenders (CBIT ≥ 10)</option>
+                        <option value="MID">Midfielders (CBIRT ≥ 12)</option>
+                        <option value="FWD">Forwards (CBIRT ≥ 12)</option>
+                    </select>
+                </div>
+                <div class="filter-group">
+                    <label for="team-filter">Team:</label>
+                    <select id="team-filter">
+                        <option value="all">All Teams</option>
+                    </select>
+                </div>
+                <div class="filter-group">
+                    <label for="gameweek-filter">Gameweek:</label>
+                    <select id="gameweek-filter">
+                        <option value="next">Next Fixture</option>
+                    </select>
+                </div>
+                <div class="filter-group">
+                    <label for="min-matches">Min Matches:</label>
+                    <input type="number" id="min-matches" value="3" min="1" max="38">
+                </div>
+                <div class="filter-group">
+                    <label for="sort-by">Sort By:</label>
+                    <select id="sort-by">
+                        <option value="probability">DEFCON Probability</option>
+                        <option value="average">Average Score</option>
+                        <option value="name">Player Name</option>
+                    </select>
+                </div>
+            </section>
+
+            <section class="stats-summary">
+                <div class="stat-card">
+                    <h3>Players Analyzed</h3>
+                    <span id="total-players">0</span>
+                </div>
+                <div class="stat-card">
+                    <h3>High Probability (≥50%)</h3>
+                    <span id="high-prob-count">0</span>
+                </div>
+                <div class="stat-card">
+                    <h3>Medium Probability (25-50%)</h3>
+                    <span id="med-prob-count">0</span>
+                </div>
+            </section>
+
+            <section class="legend">
+                <h3>Understanding the Stats</h3>
+                <div class="legend-items">
+                    <div class="legend-item">
+                        <span class="legend-label">CBIT (Defenders):</span>
+                        <span class="legend-desc">Clean Sheet + Bonus + Interceptions + Tackles</span>
+                    </div>
+                    <div class="legend-item">
+                        <span class="legend-label">CBIRT (MID/FWD):</span>
+                        <span class="legend-desc">Clean Sheet Points + Bonus + Interceptions + Recoveries + Tackles</span>
+                    </div>
+                    <div class="legend-item">
+                        <span class="legend-label">Opp. Multiplier:</span>
+                        <span class="legend-desc">How much the opponent allows vs league average (>1 = easier fixture)</span>
+                    </div>
+                </div>
+            </section>
+
+            <section class="results">
+                <table id="results-table">
+                    <thead>
+                        <tr>
+                            <th>Player</th>
+                            <th>Team</th>
+                            <th>Pos</th>
+                            <th>Avg Score</th>
+                            <th>Matches</th>
+                            <th>Opponent</th>
+                            <th>Opp. Mult.</th>
+                            <th>Adj. Score</th>
+                            <th>DEFCON Prob.</th>
+                        </tr>
+                    </thead>
+                    <tbody id="results-body">
+                    </tbody>
+                </table>
+            </section>
+        </main>
+
+        <footer>
+            <p>Data source: <a href="https://github.com/Ayanab01/FPL_Stats" target="_blank">FPL_Stats</a></p>
+            <p>DEFCON Thresholds: DEF ≥ 10 CBIT | MID/FWD ≥ 12 CBIRT</p>
+        </footer>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
