@@ -37,7 +37,7 @@ const STATE = {
     },
     ui: {
         statType: 'for', // 'for' or 'against'
-        venueFilter: 'combined', // 'combined', 'home', 'away'
+        venueFilter: 'combined', // 'combined' or 'homeaway'
         startGW: 1,
         endGW: 6,
         excludedGWs: [],
@@ -439,20 +439,7 @@ function renderTable() {
         let metrics = [];
 
         gwList.forEach(gw => {
-            // Check if this fixture matches the venue filter
             const fix = fixturesByTeam[teamCode] ? fixturesByTeam[teamCode][gw] : null;
-
-            // Apply venue filter
-            if (venueFilter === 'home' && fix && !fix.wasHome) {
-                fixtures.push({ type: 'FILTERED', cumulativeValue: null });
-                gwValueMap[gw] = null;
-                return;
-            }
-            if (venueFilter === 'away' && fix && fix.wasHome) {
-                fixtures.push({ type: 'FILTERED', cumulativeValue: null });
-                gwValueMap[gw] = null;
-                return;
-            }
 
             if (!fix) {
                 // No fixture scheduled
@@ -467,14 +454,11 @@ function renderTable() {
             const oppName = oppTeam ? oppTeam.short_name : 'UNK';
 
             // Determine which venue stats to use for the opponent
-            // If we're home, opponent is away (use their away stats)
-            // If we're away, opponent is home (use their home stats)
-            // If combined filter, use combined stats
+            // Combined: use opponent's total goals regardless of venue
+            // Home/Away: use venue-specific (if we're home, opponent is away; if we're away, opponent is home)
             let oppVenue = 'combined';
-            if (venueFilter === 'home') {
-                oppVenue = 'away'; // We're home, so opponent is away
-            } else if (venueFilter === 'away') {
-                oppVenue = 'home'; // We're away, so opponent is home
+            if (venueFilter === 'homeaway') {
+                oppVenue = isHome ? 'away' : 'home';
             }
 
             // Get opponent's cumulative goals up to this GW for the appropriate venue
