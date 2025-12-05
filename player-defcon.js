@@ -374,13 +374,14 @@ function checkDefconHit(stats, archetype) {
     return false;
 }
 
-function processProbabilities() {
+function processProbabilities(startGW = 1, endGW = CONFIG.UI.MAX_GW, excludedGWs = []) {
     const { stats, teams } = STATE.data;
     const { playersById, fixturesByTeam, teamsById, teamsByCode } = STATE.lookups;
 
     const opponentAgg = {};
     const initAgg = () => ({ hits: 0, trials: 0 });
     const archetypes = ['CB', 'LB', 'RB', 'MID', 'FWD'];
+    const excludedSet = new Set(excludedGWs);
 
     stats.forEach(statRecord => {
         const minutes = getVal(statRecord, 'minutes', 'minutes_played', 'minutes_x');
@@ -395,6 +396,9 @@ function processProbabilities() {
 
         const gw = getVal(statRecord, 'gw', 'gameweek', 'event', 'round');
         if (!gw) return;
+
+        // Only include stats from the specified GW range (form window)
+        if (gw < startGW || gw > endGW || excludedSet.has(gw)) return;
 
         const teamRef = getVal(player, 'team', 'team_id', 'teamid', 'team_code');
         let teamCode = null;
@@ -559,12 +563,18 @@ function renderTable() {
     const endGW   = parseInt(STATE.ui.endGW, 10);
     const excludedSet = new Set(STATE.ui.excludedGWs || []);
 
-    // Build GW list respecting range + exclusions
+    // Recalculate probabilities based on the selected form window (startGW to endGW)
+    processProbabilities(startGW, endGW, STATE.ui.excludedGWs || []);
+
+    // Build GW list to display - show upcoming fixtures starting from endGW + 1
+    // This way the form window (startGW to endGW) defines the historical data used,
+    // and we show the upcoming fixtures with those calculated probabilities
     const gwList = [];
-    for (let gw = startGW; gw <= endGW; gw++) {
-        if (!excludedSet.has(gw)) {
-            gwList.push(gw);
-        }
+    const displayStartGW = endGW + 1;
+    const displayEndGW = Math.min(displayStartGW + 9, CONFIG.UI.MAX_GW); // Show next 10 GWs
+
+    for (let gw = displayStartGW; gw <= displayEndGW; gw++) {
+        gwList.push(gw);
     }
 
     const { players, stats } = STATE.data;
@@ -633,21 +643,35 @@ function renderTable() {
         const teamName = teamCode ? (teamsByCode[teamCode]?.short_name || teamCode) : 'Unknown';
         const playerName = getVal(player, 'name', 'web_name', 'player_name') || 'Unknown';
 
-        // Calculate stats for this player
+        // Calculate total minutes and defcon hits from the FORM WINDOW (startGW to endGW)
         let totalMinutes = 0;
         let totalDefconHits = 0;
-        const fixtures = [];
-        const gwProbMap = {};
-        let metrics = [];
 
-        gwList.forEach(gw => {
-            // Find this player's stats for this GW
+        for (let gw = startGW; gw <= endGW; gw++) {
+            if (excludedSet.has(gw)) continue;
+
             const statRecord = stats.find(s => {
                 const sID = getVal(s, 'player_id', 'element', 'id');
                 const sGW = getVal(s, 'gw', 'gameweek', 'event', 'round');
                 return sID === pid && sGW === gw;
             });
 
+            if (statRecord) {
+                const minutes = getVal(statRecord, 'minutes', 'minutes_played', 'minutes_x') || 0;
+                totalMinutes += minutes;
+                const defconHit = checkDefconHit(statRecord, archetype);
+                if (defconHit) {
+                    totalDefconHits++;
+                }
+            }
+        }
+
+        // Build fixtures array for DISPLAY (upcoming fixtures)
+        const fixtures = [];
+        const gwProbMap = {};
+        let metrics = [];
+
+        gwList.forEach(gw => {
             // Get fixture for this team in this GW
             const fix = teamCode && fixturesByTeam[teamCode] ? fixturesByTeam[teamCode][gw] : null;
 
@@ -664,7 +688,7 @@ function renderTable() {
             const finished = fix.finished;
             const venueKey = String(isHome);
 
-            // Calculate probability
+            // Calculate probability using the form window data
             let prob = CONFIG.MODEL.MIN_PROB;
             if (probabilities[opponentCode] &&
                 probabilities[opponentCode][venueKey] &&
@@ -675,26 +699,11 @@ function renderTable() {
             const oppTeam = teamsByCode[opponentCode];
             const oppName = oppTeam ? oppTeam.short_name : 'UNK';
 
-            // Handle stats if they exist (for past/current gameweeks)
-            let minutes = 0;
-            let defconHit = false;
-
-            if (statRecord) {
-                minutes = getVal(statRecord, 'minutes', 'minutes_played', 'minutes_x') || 0;
-                totalMinutes += minutes;
-                defconHit = checkDefconHit(statRecord, archetype);
-                if (defconHit) {
-                    totalDefconHits++;
-                }
-            }
-
             fixtures.push({
                 type: 'MATCH',
                 opponent: oppName,
                 venue: isHome ? '(H)' : '(A)',
                 prob: prob,
-                minutes: minutes,
-                defconHit: defconHit,
                 finished: finished
             });
 
@@ -798,20 +807,6 @@ function renderTable() {
 
                 wrapper.appendChild(divOpp);
                 wrapper.appendChild(divProb);
-
-                // Add actual result if game is finished
-                if (cell.finished && cell.minutes > 0) {
-                    const divResult = document.createElement('div');
-                    divResult.className = 'match-result';
-                    if (cell.defconHit) {
-                        divResult.textContent = '✓ HIT';
-                        divResult.style.color = '#28a745';
-                    } else {
-                        divResult.textContent = '✗ MISS';
-                        divResult.style.color = '#dc3545';
-                    }
-                    wrapper.appendChild(divResult);
-                }
 
                 td.appendChild(wrapper);
                 td.style.backgroundColor = getProbabilityColor(cell.prob, row.archetype);
