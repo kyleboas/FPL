@@ -692,15 +692,26 @@ function setupEventListeners() {
 
     endInput.addEventListener('input', (e) => {
         let val = parseInt(e.target.value, 10);
+        // Only update state if value is valid, but don't enforce startGW constraint during typing
+        if (!isNaN(val) && val >= 1 && val <= CONFIG.UI.MAX_GW) {
+            STATE.ui.endGW = val;
+            renderTable();
+        }
+    });
+
+    // Validate and correct end GW when user finishes typing
+    endInput.addEventListener('blur', (e) => {
+        let val = parseInt(e.target.value, 10);
         if (isNaN(val)) val = CONFIG.UI.MAX_GW;
         if (val < 1) val = 1;
         if (val > CONFIG.UI.MAX_GW) val = CONFIG.UI.MAX_GW;
 
+        // Ensure endGW >= startGW
         if (val < STATE.ui.startGW) {
             val = STATE.ui.startGW;
-            e.target.value = String(val);
         }
 
+        e.target.value = String(val);
         STATE.ui.endGW = val;
         renderTable();
     });
