@@ -170,6 +170,22 @@ async function loadAllData() {
     }
 }
 
+// Map a player row to its team row using FPL-Elo-Insights conventions:
+// players.team_id -> teams.code, and then teams.id is the canonical key for matches.
+function getTeamFromPlayer(player) {
+    const playerTeamKey = player.team_id || player.team_code || player.team;
+    if (!playerTeamKey) return null;
+
+    const team = state.teams.find(t =>
+        t.code == playerTeamKey ||
+        t.team_code == playerTeamKey ||
+        t.id == playerTeamKey ||
+        t.team_id == playerTeamKey
+    );
+
+    return team || null;
+}
+
 // Calculate CBIT for a defender match
 // CBIT = Clean Sheet Points + Bonus + Interceptions + Tackles (blocked passes proxy)
 function calculateCBIT(matchStat) {
@@ -249,7 +265,6 @@ function buildMatchLocationLookup() {
     const lookup = {};
 
     state.matches.forEach(match => {
-        const matchId = match.id || match.match_id;
         const homeTeam = match.home_team || match.team_h || match.home_team_id;
         const awayTeam = match.away_team || match.team_a || match.away_team_id;
         const gameweek = match.event || match.gameweek || match.round;
@@ -275,7 +290,7 @@ function calculateOpponentMultipliers() {
         const teamId = team.id || team.team_id || team.code;
         teamStats[teamId] = {
             name: team.name || team.team_name,
-            shortName: team.short_name || team.name?.substring(0, 3).toUpperCase(),
+            shortName: team.short_name || (team.name ? team.name.substring(0, 3).toUpperCase() : 'UNK'),
             home: { totalAllowed: 0, matchCount: 0 },
             away: { totalAllowed: 0, matchCount: 0 },
             overall: { totalAllowed: 0, matchCount: 0 }
@@ -284,17 +299,22 @@ function calculateOpponentMultipliers() {
 
     // Calculate what each team allows to opponents (split by home/away)
     state.playerMatchStats.forEach(stat => {
-        // FPL-Elo-Insights uses opponent_team field
+        // FPL-Elo-Insights uses opponent_team field -> matches teams.id
         const opponentId = stat.opponent_team || stat.opponent_id || stat.vs_team;
         if (!opponentId || !teamStats[opponentId]) return;
 
-        // Get player and their team - FPL-Elo-Insights uses element for player ID
+        // Link stats to players: player_gameweek_stats.id -> players.player_id
+        const playerId = stat.id || stat.element || stat.player_id;
         const player = state.players.find(p =>
-            (p.id || p.player_id || p.element) === (stat.element || stat.player_id)
+            (p.player_id || p.id || p.element) == playerId
         );
         if (!player) return;
 
-        const playerTeamId = player.team || player.team_id || player.team_code;
+        // Resolve player's actual team row and canonical team id (matches teams.id)
+        const playerTeam = getTeamFromPlayer(player);
+        if (!playerTeam) return;
+        const playerTeamId = playerTeam.id || playerTeam.team_id || playerTeam.code;
+
         const gameweek = stat.round || stat.event || stat.gameweek;
         const position = getPosition(player);
         const score = calculateScore(stat, position);
@@ -425,7 +445,6 @@ function normalCDF(z) {
 
 // Get upcoming fixtures
 function getUpcomingFixtures() {
-    const now = new Date();
     const fixtures = [];
 
     state.matches.forEach(match => {
@@ -461,8 +480,8 @@ function processPlayerData() {
     // Group match stats by player
     const playerStats = {};
     state.playerMatchStats.forEach(stat => {
-        // FPL-Elo-Insights uses element for player ID
-        const playerId = stat.element || stat.player_id || stat.id;
+        // player_gameweek_stats.id -> players.player_id
+        const playerId = stat.id || stat.element || stat.player_id;
         if (!playerStats[playerId]) {
             playerStats[playerId] = [];
         }
@@ -471,20 +490,23 @@ function processPlayerData() {
 
     // Process each player
     state.players.forEach(player => {
-        // FPL-Elo-Insights uses id for player ID
-        const playerId = player.id || player.player_id || player.element;
+        const playerId = player.player_id || player.id || player.element;
         const position = getPosition(player);
-        const teamId = player.team || player.team_id || player.team_code;
 
         // Skip goalkeepers for DEFCON (they don't contribute same way)
         if (position === 'GKP') return;
+
+        const team = getTeamFromPlayer(player);
+        if (!team) return;
+
+        // Canonical team id (matches matches.home_team / matches.away_team)
+        const teamId = team.id || team.team_id || team.code;
 
         const stats = playerStats[playerId] || [];
         if (stats.length === 0) return;
 
         // Calculate scores for each match
         const scores = stats.map(s => calculateScore(s, position)).filter(s => !isNaN(s));
-
         if (scores.length === 0) return;
 
         // Calculate average score
@@ -514,16 +536,17 @@ function processPlayerData() {
                 const opponentDefendsAt = isHome ? 'away' : 'home';
                 opponentMultiplier = opponentMultipliers[opponentId][opponentDefendsAt].multiplier || 1;
                 opponentName = opponentMultipliers[opponentId].shortName ||
-                              opponentMultipliers[opponentId].name || 'UNK';
+                    opponentMultipliers[opponentId].name || 'UNK';
             } else {
                 // Fallback: look up opponent team directly from teams array
                 const opponentTeam = state.teams.find(t =>
-                    (t.id || t.team_id || t.code) == opponentId ||
-                    t.code == opponentId ||
-                    t.id == opponentId
+                    t.id == opponentId ||
+                    t.team_id == opponentId ||
+                    t.code == opponentId
                 );
                 if (opponentTeam) {
-                    opponentName = opponentTeam.short_name || opponentTeam.name?.substring(0, 3).toUpperCase() || 'TBD';
+                    opponentName = opponentTeam.short_name ||
+                        (opponentTeam.name ? opponentTeam.name.substring(0, 3).toUpperCase() : 'TBD');
                 }
             }
         }
@@ -532,13 +555,9 @@ function processPlayerData() {
         const probability = calculateProbability(scores, threshold, opponentMultiplier);
         const adjustedScore = avgScore * opponentMultiplier;
 
-        // Get team name - check all possible ID fields (id, team_id, code)
-        const team = state.teams.find(t =>
-            (t.id || t.team_id || t.code) == teamId ||
-            t.code == teamId ||
-            t.id == teamId
-        );
-        const teamName = team?.short_name || team?.name?.substring(0, 3).toUpperCase() || 'UNK';
+        // Team name for display
+        const teamName = team.short_name ||
+            (team.name ? team.name.substring(0, 3).toUpperCase() : 'UNK');
 
         processed.push({
             id: playerId,
@@ -682,7 +701,9 @@ function populateFilters() {
     });
 
     // Gameweek filter
-    const gameweeks = [...new Set(state.processedData.map(p => p.nextGameweek))].filter(g => g).sort((a, b) => a - b);
+    const gameweeks = [...new Set(state.processedData.map(p => p.nextGameweek))]
+        .filter(g => g)
+        .sort((a, b) => a - b);
 
     gameweeks.forEach(gw => {
         const option = document.createElement('option');
