@@ -218,6 +218,33 @@ function getTeamFromPlayer(player) {
     return team || null;
 }
 
+// Robust player lookup from a player_gameweek_stats row.
+// FPL-Elo-Insights usually uses `element` for the FPL player id.
+function getPlayerFromStat(stat) {
+    // Prefer FPL-style fields first, then fall back to id
+    const candidateIds = [
+        stat.element,
+        stat.player_id,
+        stat.player,
+        stat.id
+    ]
+        .map(normId)
+        .filter(Boolean);
+
+    if (candidateIds.length === 0) return null;
+
+    for (const cand of candidateIds) {
+        const player = state.players.find(p =>
+            normId(p.element) === cand ||
+            normId(p.player_id) === cand ||
+            normId(p.id) === cand
+        );
+        if (player) return player;
+    }
+
+    return null;
+}
+
 // Map a team id coming from matches.csv to canonical id (teams.id)
 function mapMatchTeamId(rawTeamId) {
     const codeKey = normId(rawTeamId);
@@ -376,11 +403,8 @@ function buildOpponentPositionProbabilities() {
         const opponentId = normId(stat.opponent_team || stat.opponent_id || stat.vs_team);
         if (!opponentId) return;
 
-        const playerId = stat.id || stat.element || stat.player_id;
-        const player = state.players.find(p =>
-            (p.player_id || p.id || p.element) == playerId
-        );
-        if (!player) return;
+        const player = getPlayerFromStat(stat);
+if (!player) return;
 
         const playerTeam = getTeamFromPlayer(player);
         if (!playerTeam) return;
