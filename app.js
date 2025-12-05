@@ -612,4 +612,13 @@ async function init() {
 }
 
 // Start the app when DOM is ready
-document.addEventListener('DOMContentLoaded', init);
+document.addEventListener('DOMContentLoaded', init);// app.js
+
+// Initialise the matrix preview when the DOM is ready
+document.addEventListener('DOMContentLoaded', () => {
+  if (typeof window.initMatrixPreview === 'function') {
+    window.initMatrixPreview();
+  } else {
+    console.warn('[app] initMatrixPreview not found. Is matrixPreview.js loaded?');
+  }
+});

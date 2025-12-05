@@ -61,7 +61,7 @@
             </div>
         </section>
 
-        <!-- Fixture Matrix -->
+        <!-- Fixture Matrix (table-based view driven by app.js) -->
         <section class="results">
             <table id="fixture-table">
                 <thead id="fixture-header"></thead>
@@ -83,6 +83,39 @@
             </div>
         </section>
 
+        <!-- Canvas-based FPL DEFCON Matrix Preview (mock data, separate module) -->
+        <section id="defcon-matrix-preview">
+            <header>
+                <h1>FPL DEFCON Matrix Preview</h1>
+                <div class="controls">
+                    <div class="control-group">
+                        <label for="archetypeSelect">Position Archetype:</label>
+                        <select id="archetypeSelect">
+                            <option value="CB">Center Back (CB)</option>
+                            <option value="LB">Left Back (LB)</option>
+                            <option value="RB">Right Back (RB)</option>
+                            <option value="MID">Midfielder (MID)</option>
+                            <option value="FWD">Forward (FWD)</option>
+                        </select>
+                    </div>
+
+                    <div class="control-group">
+                        <label for="gwRange">Scroll GWs:</label>
+                        <input type="range" id="gwRange" min="0" max="4" value="0" step="1">
+                        <span id="gwLabel">GW 15 - 19</span>
+                    </div>
+
+                    <div class="feedback">
+                        (Click any cell to log details to Console)
+                    </div>
+                </div>
+            </header>
+
+            <div class="canvas-container" id="canvasContainer">
+                <canvas id="defconCanvas"></canvas>
+            </div>
+        </section>
+
     </main>
 
     <footer>
@@ -91,6 +124,8 @@
     </footer>
 </div>
 
+<!-- Order matters: matrixPreview.js defines initMatrixPreview; app.js calls it -->
+<script src="matrixPreview.js"></script>
 <script src="app.js"></script>
 </body>
 </html>
