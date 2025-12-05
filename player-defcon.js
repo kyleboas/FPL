@@ -596,6 +596,7 @@ function renderTable() {
         const avgVal = validMetrics.length ? (validMetrics.reduce((a,b)=>a+b,0) / validMetrics.length) : 0;
 
         return {
+            playerId: pid,
             playerName,
             teamName,
             archetype,
@@ -641,8 +642,16 @@ function renderTable() {
         teamDiv.className = 'player-team';
         teamDiv.textContent = row.teamName;
 
+        const idDiv = document.createElement('div');
+        idDiv.className = 'player-id';
+        idDiv.textContent = `ID: ${row.playerId}`;
+        idDiv.style.fontSize = '0.75em';
+        idDiv.style.color = '#666';
+        idDiv.style.marginTop = '2px';
+
         tdName.appendChild(nameDiv);
         tdName.appendChild(teamDiv);
+        tdName.appendChild(idDiv);
         tr.appendChild(tdName);
 
         // Fixture cells
