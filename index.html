@@ -3,129 +3,209 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>FPL DEFCON Predictor – Fixture Matrix</title>
-    <link rel="stylesheet" href="style.css">
+    <title>FPL DEFCON Predictor</title>
+    <style>
+        :root {
+            --primary: #37003c;
+            --secondary: #00ff85;
+            --bg: #f4f4f4;
+            --text: #333;
+            --card-bg: #fff;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: var(--bg);
+            color: var(--text);
+            margin: 0;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        header {
+            margin-bottom: 20px;
+            border-bottom: 2px solid var(--primary);
+            padding-bottom: 10px;
+        }
+
+        h1 {
+            color: var(--primary);
+            margin: 0;
+        }
+
+        /* Controls */
+        .controls {
+            background: var(--card-bg);
+            padding: 15px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            display: flex;
+            flex-wrap: wrap;
+            gap: 20px;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+
+        .control-group {
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+        }
+
+        label {
+            font-size: 0.85rem;
+            font-weight: bold;
+            color: #666;
+        }
+
+        select, input[type="range"] {
+            padding: 8px;
+            border-radius: 4px;
+            border: 1px solid #ccc;
+        }
+
+        /* Table */
+        .table-container {
+            overflow-x: auto;
+            background: var(--card-bg);
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.9rem;
+        }
+
+        th, td {
+            padding: 10px;
+            text-align: center;
+            border-bottom: 1px solid #eee;
+        }
+
+        th {
+            background-color: var(--primary);
+            color: white;
+            position: sticky;
+            top: 0;
+        }
+        
+        /* First column sticky */
+        td:first-child, th:first-child {
+            position: sticky;
+            left: 0;
+            background-color: var(--card-bg);
+            z-index: 10;
+            border-right: 2px solid #eee;
+            text-align: left;
+        }
+        th:first-child {
+            background-color: var(--primary);
+            color: white;
+            z-index: 20;
+        }
+
+        /* Match Cell Styles */
+        .match-cell {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 40px;
+        }
+        .match-opp { font-size: 0.8em; margin-bottom: 2px; }
+        .match-prob { font-weight: bold; }
+
+        /* Status & Error */
+        #loading {
+            text-align: center;
+            padding: 40px;
+            font-size: 1.2rem;
+            color: #666;
+        }
+
+        #error {
+            display: none;
+            background: #ffebee;
+            color: #c62828;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            border: 1px solid #ef9a9a;
+        }
+
+        .status-bar {
+            font-size: 0.75rem;
+            color: #666;
+            margin-top: 10px;
+            padding: 10px;
+            background: #e0e0e0;
+            border-radius: 4px;
+        }
+    </style>
 </head>
 <body>
-<div class="container">
 
+<div class="container">
     <header>
-        <h1>FPL DEFCON Predictor</h1>
-        <p class="subtitle">Team fixture DEFCON probabilities by opponent and gameweek</p>
+        <h1>FPL DEFCON Matrix</h1>
+        <p>Defensive Action Probability Calculator</p>
     </header>
 
-    <div class="loading" id="loading">
-        <div class="spinner"></div>
-        <p>Loading FPL data...</p>
-    </div>
+    <div id="error"></div>
+    <div id="loading">Loading Season Data...</div>
 
-    <div class="error hidden" id="error">
-        <p>Failed to load data. Please refresh the page.</p>
-    </div>
-
-    <main class="hidden" id="main-content">
-
-        <!-- Filters: Archetype, GW slider, Sort order -->
-        <section class="filters">
-            <!-- Archetype / Position filter (matches app.js: CB, RB, LB, MID, FWD) -->
-            <div class="filter-group">
-                <label for="archetype-filter">Archetype:</label>
+    <div id="main-content" style="display: none;">
+        <div class="controls">
+            <div class="control-group">
+                <label for="archetype-filter">Position Archetype</label>
                 <select id="archetype-filter">
-                    <option value="CB">Centre-Back</option>
-                    <option value="RB">Right-Back</option>
-                    <option value="LB">Left-Back</option>
-                    <option value="MID">Midfielder</option>
-                    <option value="FWD">Forward</option>
+                    <option value="CB" selected>Center Back (CB)</option>
+                    <option value="LB">Left Back (LB)</option>
+                    <option value="RB">Right Back (RB)</option>
+                    <option value="MID">Midfielder (MID)</option>
+                    <option value="FWD">Forward (FWD)</option>
                 </select>
             </div>
 
-            <!-- Gameweek range slider (app.js expects #gw-slider and #gw-label) -->
-            <div class="filter-group">
-                <label for="gw-slider">Start Gameweek:</label>
-                <input type="range"
-                       id="gw-slider"
-                       min="1"
-                       max="38"
-                       value="1"
-                />
-                <span id="gw-label">GW 1</span>
+            <div class="control-group">
+                <label id="gw-label" for="gw-slider">Start GW: 1</label>
+                <input type="range" id="gw-slider" min="1" max="33" value="1" step="1">
             </div>
 
-            <!-- Sort dropdown (app.js expects #sort-by with values 'max' and 'avg') -->
-            <div class="filter-group">
-                <label for="sort-by">Sort by:</label>
+            <div class="control-group">
+                <label for="sort-by">Sort Order</label>
                 <select id="sort-by">
-                    <option value="max">Max DEFCON % (hottest run)</option>
-                    <option value="avg">Average DEFCON % (overall difficulty)</option>
+                    <option value="max" selected>Highest Single Prob</option>
+                    <option value="avg">Highest Average Prob</option>
                 </select>
             </div>
-        </section>
+        </div>
 
-        <!-- Fixture Matrix (table-based view driven by app.js) -->
-        <section class="results">
-            <table id="fixture-table">
-                <thead id="fixture-header"></thead>
-                <tbody id="fixture-body"></tbody>
+        <div class="table-container">
+            <table>
+                <thead id="fixture-header">
+                    <!-- JS Injected -->
+                </thead>
+                <tbody id="fixture-body">
+                    <!-- JS Injected -->
+                </tbody>
             </table>
-        </section>
+        </div>
 
-        <section class="legend">
-            <h3>Legend</h3>
-            <div class="legend-items">
-                <div class="legend-item">
-                    <span class="legend-label">Cell Value:</span>
-                    <span class="legend-desc">Opponent + (H/A) + DEFCON probability for selected archetype</span>
-                </div>
-                <div class="legend-item">
-                    <span class="legend-label">Probability Colors:</span>
-                    <span class="legend-desc">Very High ≥60%, High ≥40%, Medium ≥25%, Low &lt;25%</span>
-                </div>
-            </div>
-        </section>
-
-        <!-- Canvas-based FPL DEFCON Matrix Preview (mock data, separate module) -->
-        <section id="defcon-matrix-preview">
-            <header>
-                <h1>FPL DEFCON Matrix Preview</h1>
-                <div class="controls">
-                    <div class="control-group">
-                        <label for="archetypeSelect">Position Archetype:</label>
-                        <select id="archetypeSelect">
-                            <option value="CB">Center Back (CB)</option>
-                            <option value="LB">Left Back (LB)</option>
-                            <option value="RB">Right Back (RB)</option>
-                            <option value="MID">Midfielder (MID)</option>
-                            <option value="FWD">Forward (FWD)</option>
-                        </select>
-                    </div>
-
-                    <div class="control-group">
-                        <label for="gwRange">Scroll GWs:</label>
-                        <input type="range" id="gwRange" min="0" max="4" value="0" step="1">
-                        <span id="gwLabel">GW 15 - 19</span>
-                    </div>
-
-                    <div class="feedback">
-                        (Click any cell to log details to Console)
-                    </div>
-                </div>
-            </header>
-
-            <div class="canvas-container" id="canvasContainer">
-                <canvas id="defconCanvas"></canvas>
-            </div>
-        </section>
-
-    </main>
-
-    <footer>
-        <p>Data source: <a href="https://github.com/olbauday/FPL-Elo-Insights" target="_blank">FPL-Elo-Insights</a></p>
-        <p>DEFCON thresholds: DEF ≥ 10 CBIT | MID/FWD ≥ 12 CBIRT</p>
-    </footer>
+        <div class="status-bar" id="status-bar">
+            Waiting for data...
+        </div>
+    </div>
 </div>
 
-<!-- Order matters: matrixPreview.js defines initMatrixPreview; app.js calls it -->
-<script src="matrixPreview.js"></script>
 <script src="app.js"></script>
+
 </body>
 </html>
+
