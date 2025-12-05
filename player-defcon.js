@@ -137,18 +137,41 @@ function exportOverrides() {
         csvContent += `${playerId},${position}\n`;
     });
 
-    // Create download link
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    const link = document.createElement('a');
-    const url = URL.createObjectURL(blob);
+    // Show modal with CSV content
+    const modal = document.getElementById('csv-modal');
+    const textarea = document.getElementById('csv-output');
+    textarea.value = csvContent;
+    modal.style.display = 'block';
 
-    link.setAttribute('href', url);
-    link.setAttribute('download', 'player_position_overrides.csv');
-    link.style.visibility = 'hidden';
+    // Auto-select the text for easy copying
+    setTimeout(() => {
+        textarea.select();
+    }, 100);
+}
 
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+function closeModal() {
+    const modal = document.getElementById('csv-modal');
+    modal.style.display = 'none';
+}
+
+function copyToClipboard() {
+    const textarea = document.getElementById('csv-output');
+    const copyBtn = document.getElementById('copy-csv');
+
+    textarea.select();
+
+    try {
+        document.execCommand('copy');
+        copyBtn.textContent = 'Copied!';
+        copyBtn.classList.add('copied');
+
+        setTimeout(() => {
+            copyBtn.textContent = 'Copy to Clipboard';
+            copyBtn.classList.remove('copied');
+        }, 2000);
+    } catch (err) {
+        alert('Failed to copy. Please manually select and copy the text.');
+    }
 }
 
 // ==========================================
@@ -888,6 +911,20 @@ function setupEventListeners() {
 
     // Export position overrides button
     document.getElementById('export-overrides').addEventListener('click', exportOverrides);
+
+    // Modal close button
+    document.getElementById('close-modal').addEventListener('click', closeModal);
+
+    // Copy to clipboard button
+    document.getElementById('copy-csv').addEventListener('click', copyToClipboard);
+
+    // Close modal when clicking outside
+    window.addEventListener('click', (e) => {
+        const modal = document.getElementById('csv-modal');
+        if (e.target === modal) {
+            closeModal();
+        }
+    });
 }
 
 // ==========================================
