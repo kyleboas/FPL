@@ -204,6 +204,136 @@
         .sorted-asc::after {
             content: ' ▲';
         }
+
+        /* Position Override Controls */
+        .position-select {
+            padding: 4px;
+            border-radius: 4px;
+            border: 1px solid #ccc;
+            font-size: 0.85em;
+            background-color: #fff;
+            cursor: pointer;
+        }
+
+        .position-select.has-override {
+            background-color: #fff3cd;
+            border-color: #ffc107;
+        }
+
+        .export-btn {
+            padding: 10px 20px;
+            background-color: var(--primary);
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-weight: bold;
+        }
+
+        .export-btn:hover {
+            opacity: 0.9;
+        }
+
+        .override-controls {
+            background: var(--card-bg);
+            padding: 15px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
+            display: flex;
+            gap: 15px;
+            align-items: center;
+        }
+
+        .override-count {
+            font-size: 0.9em;
+            color: #666;
+        }
+
+        /* Modal for CSV output */
+        .modal {
+            display: none;
+            position: fixed;
+            z-index: 1000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0,0,0,0.5);
+        }
+
+        .modal-content {
+            background-color: var(--card-bg);
+            margin: 10% auto;
+            padding: 30px;
+            border-radius: 8px;
+            width: 90%;
+            max-width: 600px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+        }
+
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+
+        .modal-header h2 {
+            margin: 0;
+            color: var(--primary);
+        }
+
+        .close-btn {
+            font-size: 28px;
+            font-weight: bold;
+            color: #aaa;
+            cursor: pointer;
+            background: none;
+            border: none;
+        }
+
+        .close-btn:hover {
+            color: #000;
+        }
+
+        .csv-textarea {
+            width: 100%;
+            min-height: 300px;
+            font-family: 'Courier New', monospace;
+            font-size: 0.9em;
+            padding: 10px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            resize: vertical;
+            box-sizing: border-box;
+        }
+
+        .modal-actions {
+            margin-top: 20px;
+            display: flex;
+            gap: 10px;
+            justify-content: flex-end;
+        }
+
+        .copy-btn {
+            padding: 10px 20px;
+            background-color: var(--secondary);
+            color: var(--primary);
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-weight: bold;
+        }
+
+        .copy-btn:hover {
+            opacity: 0.9;
+        }
+
+        .copy-btn.copied {
+            background-color: #28a745;
+            color: white;
+        }
     </style>
 </head>
 <body>
@@ -222,6 +352,14 @@
     <div id="loading">Loading Season Data...</div>
 
     <div id="main-content" style="display: none;">
+        <div class="override-controls">
+            <button id="export-overrides" class="export-btn">Generate CSV</button>
+            <span id="override-count" class="override-count">0 overrides set</span>
+            <div style="font-size: 0.85em; color: #666; margin-left: auto;">
+                Set player positions using the dropdowns, then click Generate CSV to copy.
+            </div>
+        </div>
+
         <div class="controls">
             <div class="control-group">
                 <label for="position-filter">Position</label>
@@ -281,6 +419,21 @@
 
         <div class="status-bar" id="status-bar">
             Loading...
+        </div>
+    </div>
+</div>
+
+<!-- CSV Export Modal -->
+<div id="csv-modal" class="modal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h2>Position Overrides CSV</h2>
+            <button class="close-btn" id="close-modal">&times;</button>
+        </div>
+        <p style="margin-bottom: 15px; color: #666;">Copy the text below and paste it into <code>data/player_position_overrides.csv</code></p>
+        <textarea id="csv-output" class="csv-textarea" readonly></textarea>
+        <div class="modal-actions">
+            <button id="copy-csv" class="copy-btn">Copy to Clipboard</button>
         </div>
     </div>
 </div>

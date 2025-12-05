@@ -62,6 +62,118 @@ const STATE = {
     }
 };
 
+// User-defined position overrides (separate from loaded overrides)
+const USER_OVERRIDES = new Map(); // playerId -> position string
+
+// ==========================================
+// POSITION OVERRIDE HELPERS
+// ==========================================
+
+function createPositionSelect(playerId, currentArchetype) {
+    const select = document.createElement('select');
+    select.className = 'position-select';
+    select.dataset.playerId = playerId;
+
+    const positions = [
+        { value: '', label: `Auto (${currentArchetype})` },
+        { value: 'CB', label: 'CB - Center Back' },
+        { value: 'LB', label: 'LB - Left Back' },
+        { value: 'RB', label: 'RB - Right Back' },
+        { value: 'CDM', label: 'CDM - Defensive Mid' },
+        { value: 'MID', label: 'MID - Midfielder' },
+        { value: 'FWD', label: 'FWD - Forward' }
+    ];
+
+    positions.forEach(pos => {
+        const option = document.createElement('option');
+        option.value = pos.value;
+        option.textContent = pos.label;
+        select.appendChild(option);
+    });
+
+    // Check if there's an existing override (from file or user set)
+    const existingOverride = STATE.lookups.positionOverrides[playerId] || USER_OVERRIDES.get(playerId);
+    if (existingOverride) {
+        select.value = existingOverride;
+        select.classList.add('has-override');
+    }
+
+    select.addEventListener('change', (e) => {
+        const position = e.target.value;
+        if (position) {
+            USER_OVERRIDES.set(playerId, position);
+            select.classList.add('has-override');
+        } else {
+            USER_OVERRIDES.delete(playerId);
+            select.classList.remove('has-override');
+        }
+        updateOverrideCount();
+    });
+
+    return select;
+}
+
+function updateOverrideCount() {
+    const count = USER_OVERRIDES.size;
+    const countEl = document.getElementById('override-count');
+    if (countEl) {
+        countEl.textContent = `${count} override${count !== 1 ? 's' : ''} set`;
+    }
+}
+
+function exportOverrides() {
+    if (USER_OVERRIDES.size === 0) {
+        alert('No position overrides set. Use the dropdowns in the Position column to set player positions first.');
+        return;
+    }
+
+    // Create CSV content
+    let csvContent = 'player_id,actual_position\n';
+
+    // Sort by player ID for consistency
+    const sortedEntries = Array.from(USER_OVERRIDES.entries()).sort((a, b) => a[0] - b[0]);
+
+    sortedEntries.forEach(([playerId, position]) => {
+        csvContent += `${playerId},${position}\n`;
+    });
+
+    // Show modal with CSV content
+    const modal = document.getElementById('csv-modal');
+    const textarea = document.getElementById('csv-output');
+    textarea.value = csvContent;
+    modal.style.display = 'block';
+
+    // Auto-select the text for easy copying
+    setTimeout(() => {
+        textarea.select();
+    }, 100);
+}
+
+function closeModal() {
+    const modal = document.getElementById('csv-modal');
+    modal.style.display = 'none';
+}
+
+function copyToClipboard() {
+    const textarea = document.getElementById('csv-output');
+    const copyBtn = document.getElementById('copy-csv');
+
+    textarea.select();
+
+    try {
+        document.execCommand('copy');
+        copyBtn.textContent = 'Copied!';
+        copyBtn.classList.add('copied');
+
+        setTimeout(() => {
+            copyBtn.textContent = 'Copy to Clipboard';
+            copyBtn.classList.remove('copied');
+        }, 2000);
+    } catch (err) {
+        alert('Failed to copy. Please manually select and copy the text.');
+    }
+}
+
 // ==========================================
 // UTILITIES & PARSING
 // ==========================================
@@ -469,6 +581,11 @@ function renderTable() {
     thPlayer.textContent = 'Player';
     headerRow.appendChild(thPlayer);
 
+    const thPosition = document.createElement('th');
+    thPosition.textContent = 'Position';
+    thPosition.style.minWidth = '120px';
+    headerRow.appendChild(thPosition);
+
     gwList.forEach(gw => {
         const th = document.createElement('th');
         th.textContent = `GW ${gw}`;
@@ -654,6 +771,12 @@ function renderTable() {
         tdName.appendChild(idDiv);
         tr.appendChild(tdName);
 
+        // Position override cell
+        const tdPosition = document.createElement('td');
+        const positionSelect = createPositionSelect(row.playerId, row.archetype);
+        tdPosition.appendChild(positionSelect);
+        tr.appendChild(tdPosition);
+
         // Fixture cells
         row.fixtures.forEach(cell => {
             const td = document.createElement('td');
@@ -795,6 +918,23 @@ function setupEventListeners() {
         STATE.ui.sortMode.direction = 'desc';
         STATE.ui.sortMode.gw = null;
         renderTable();
+    });
+
+    // Export position overrides button
+    document.getElementById('export-overrides').addEventListener('click', exportOverrides);
+
+    // Modal close button
+    document.getElementById('close-modal').addEventListener('click', closeModal);
+
+    // Copy to clipboard button
+    document.getElementById('copy-csv').addEventListener('click', copyToClipboard);
+
+    // Close modal when clicking outside
+    window.addEventListener('click', (e) => {
+        const modal = document.getElementById('csv-modal');
+        if (e.target === modal) {
+            closeModal();
+        }
     });
 }
 
