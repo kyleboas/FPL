@@ -385,7 +385,7 @@ function renderTable() {
     const cumulativeGoalsByTeam = {};
     const latestCompletedGW = STATE.latestGW || 0;
 
-    teams.forEach(team => {
+        teams.forEach(team => {
         const teamCode = team.code;
         cumulativeGoalsByTeam[teamCode] = {
             combined: {},
@@ -393,54 +393,55 @@ function renderTable() {
             away: {}
         };
 
-        for (let gw = 1; gw <= CONFIG.UI.MAX_GW; gw++) {
-            let combinedFor = 0, combinedAgainst = 0;
-            let homeFor = 0, homeAgainst = 0;
-            let awayFor = 0, awayAgainst = 0;
+        // Use ONE form window for the whole table,
+        // based on the latest completed GW and the formFilter.
+        const windowEnd = latestCompletedGW;
 
-            // Anchor GW for this column
-            const anchorGw = Math.min(gw, latestCompletedGW + 1);
-
-            // No completed data before GW1
-            let windowEnd = anchorGw - 1;
-            if (windowEnd < 1) {
+        // If no completed fixtures yet, everything is 0 for all GWs
+        if (windowEnd < 1) {
+            for (let gw = 1; gw <= CONFIG.UI.MAX_GW; gw++) {
                 cumulativeGoalsByTeam[teamCode].combined[gw] = { for: 0, against: 0 };
                 cumulativeGoalsByTeam[teamCode].home[gw]     = { for: 0, against: 0 };
                 cumulativeGoalsByTeam[teamCode].away[gw]     = { for: 0, against: 0 };
-                continue;
             }
+            return;
+        }
 
-            let windowStart;
-            if (formFilter === 0) {
-                // All time (up to windowEnd)
-                windowStart = 1;
-            } else {
-                // Last N completed GWs BEFORE the anchor
-                windowStart = Math.max(1, windowEnd - formFilter + 1);
-            }
+        let windowStart;
+        if (formFilter === 0) {
+            // All completed GWs up to latestCompletedGW
+            windowStart = 1;
+        } else {
+            // Last N completed GWs up to latestCompletedGW
+            windowStart = Math.max(1, windowEnd - formFilter + 1);
+        }
 
-            // Sum goals in the chosen window of completed fixtures
-            for (let w = windowStart; w <= windowEnd; w++) {
-                const fix = fixturesByTeam[teamCode] ? fixturesByTeam[teamCode][w] : null;
-                if (fix && fix.finished) {
-                    const goalsFor = fix.goalsFor || 0;
-                    const goalsAgainst = fix.goalsAgainst || 0;
+        // Sum goals in this SINGLE window
+        let combinedFor = 0, combinedAgainst = 0;
+        let homeFor = 0, homeAgainst = 0;
+        let awayFor = 0, awayAgainst = 0;
 
-                    // Combined
-                    combinedFor += goalsFor;
-                    combinedAgainst += goalsAgainst;
+        for (let w = windowStart; w <= windowEnd; w++) {
+            const fix = fixturesByTeam[teamCode] ? fixturesByTeam[teamCode][w] : null;
+            if (fix && fix.finished) {
+                const goalsFor = fix.goalsFor || 0;
+                const goalsAgainst = fix.goalsAgainst || 0;
 
-                    // Venue-specific
-                    if (fix.wasHome) {
-                        homeFor += goalsFor;
-                        homeAgainst += goalsAgainst;
-                    } else {
-                        awayFor += goalsFor;
-                        awayAgainst += goalsAgainst;
-                    }
+                combinedFor += goalsFor;
+                combinedAgainst += goalsAgainst;
+
+                if (fix.wasHome) {
+                    homeFor += goalsFor;
+                    homeAgainst += goalsAgainst;
+                } else {
+                    awayFor += goalsFor;
+                    awayAgainst += goalsAgainst;
                 }
             }
+        }
 
+        // Write the SAME totals into every GW column for this team
+        for (let gw = 1; gw <= CONFIG.UI.MAX_GW; gw++) {
             cumulativeGoalsByTeam[teamCode].combined[gw] = {
                 for: combinedFor,
                 against: combinedAgainst
