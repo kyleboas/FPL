@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Player DEFCON Stats | FPL</title>
+    <title>Goals Statistics | FPL</title>
     <style>
         :root {
             --primary: #37003c;
@@ -86,6 +86,34 @@
             width: 80px;
         }
 
+        /* Toggle Switch */
+        .toggle-group {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+
+        .toggle-switch {
+            display: inline-flex;
+            background: #e0e0e0;
+            border-radius: 20px;
+            padding: 3px;
+        }
+
+        .toggle-option {
+            padding: 6px 12px;
+            border-radius: 17px;
+            cursor: pointer;
+            font-size: 0.85rem;
+            transition: all 0.3s;
+            white-space: nowrap;
+        }
+
+        .toggle-option.active {
+            background: var(--primary);
+            color: white;
+        }
+
         /* Table */
         .table-container {
             overflow-x: auto;
@@ -128,38 +156,16 @@
             z-index: 20;
         }
 
-        /* Player name cell */
-        .player-name {
-            font-weight: bold;
-            font-size: 0.95em;
-        }
-
-        .player-team {
-            font-size: 0.75em;
-            color: #666;
-            margin-top: 2px;
-        }
-
         /* Match Cell Styles */
         .match-cell {
             display: flex;
             flex-direction: column;
             align-items: center;
             justify-content: center;
-            min-height: 50px;
-            gap: 3px;
+            min-height: 40px;
         }
-        .match-opp {
-            font-size: 0.8em;
-        }
-        .match-prob {
-            font-weight: bold;
-        }
-        .match-result {
-            font-size: 0.75em;
-            font-weight: bold;
-            margin-top: 2px;
-        }
+        .match-opp { font-size: 0.8em; margin-bottom: 2px; }
+        .match-value { font-weight: bold; }
 
         /* Status & Error */
         #loading {
@@ -210,11 +216,11 @@
 
 <div class="container">
     <header>
-        <h1>Player DEFCON Statistics</h1>
-        <p>Individual player defensive action probabilities</p>
+        <h1>Goals Statistics</h1>
+        <p>Goals For and Against by Team</p>
         <div class="nav-links">
             <a href="index.html">Team DEFCON View</a>
-            <a href="goals.html">Goals Statistics</a>
+            <a href="player-defcon.html">Player DEFCON Stats</a>
         </div>
     </header>
 
@@ -224,20 +230,20 @@
     <div id="main-content" style="display: none;">
         <div class="controls">
             <div class="control-group">
-                <label for="position-filter">Position</label>
-                <select id="position-filter">
-                    <option value="ALL">All Positions</option>
-                    <option value="DEF" selected>Defenders</option>
-                    <option value="MID">Midfielders</option>
-                    <option value="FWD">Forwards</option>
+                <label for="stat-type">Statistic</label>
+                <select id="stat-type">
+                    <option value="for" selected>Goals For</option>
+                    <option value="against">Goals Against</option>
                 </select>
             </div>
 
             <div class="control-group">
-                <label for="team-filter">Team</label>
-                <select id="team-filter">
-                    <option value="ALL">All Teams</option>
-                </select>
+                <label>Venue Split</label>
+                <div class="toggle-switch" id="venue-toggle">
+                    <div class="toggle-option active" data-value="combined">Combined</div>
+                    <div class="toggle-option" data-value="home">Home</div>
+                    <div class="toggle-option" data-value="away">Away</div>
+                </div>
             </div>
 
             <div class="control-group">
@@ -256,16 +262,11 @@
             </div>
 
             <div class="control-group">
-                <label for="min-minutes">Min Minutes</label>
-                <input type="number" id="min-minutes" min="0" value="90" step="90">
-            </div>
-
-            <div class="control-group">
                 <label for="sort-by">Sort Order</label>
                 <select id="sort-by">
-                    <option value="defcon90" selected>DEFCON per 90</option>
-                    <option value="max">Highest Single Prob</option>
-                    <option value="avg">Highest Average Prob</option>
+                    <option value="max" selected>Highest Single Value</option>
+                    <option value="avg">Highest Average</option>
+                    <option value="total">Highest Total</option>
                 </select>
             </div>
         </div>
@@ -273,18 +274,21 @@
         <div class="table-container">
             <table>
                 <thead id="fixture-header">
+                    <!-- JS Injected -->
                 </thead>
                 <tbody id="fixture-body">
+                    <!-- JS Injected -->
                 </tbody>
             </table>
         </div>
 
         <div class="status-bar" id="status-bar">
-            Loading...
+            Waiting for data...
         </div>
     </div>
 </div>
 
-<script src="player-defcon.js"></script>
+<script src="goals.js"></script>
+
 </body>
 </html>
