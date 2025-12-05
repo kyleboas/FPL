@@ -38,6 +38,7 @@ const STATE = {
     ui: {
         statType: 'for', // 'for' or 'against'
         venueFilter: 'combined', // 'combined', 'home', 'away'
+        formFilter: 0, // 0 = all gameweeks, 1-12 = last N gameweeks
         startGW: 1,
         endGW: 6,
         excludedGWs: [],
@@ -46,7 +47,8 @@ const STATE = {
             direction: 'desc',
             gw: null
         }
-    }
+    },
+    latestGW: 0 // Track the latest completed gameweek
 };
 
 // ==========================================
@@ -223,6 +225,9 @@ function processGoalsData() {
         };
     });
 
+    // Track latest completed gameweek
+    let latestCompletedGW = 0;
+
     // Process fixtures to extract goals data
     fixtures.forEach(fix => {
         const hCode = getVal(fix, 'home_team', 'team_h', 'home_team_id');
@@ -231,6 +236,11 @@ function processGoalsData() {
         const aGoals = getVal(fix, 'team_a_score', 'away_score', 'away_goals') || 0;
         const isFin = String(getVal(fix, 'finished')).toLowerCase() === 'true';
         const gw = getVal(fix, 'gw', 'event', 'gameweek');
+
+        // Track latest completed gameweek
+        if (isFin && gw > latestCompletedGW) {
+            latestCompletedGW = gw;
+        }
 
         // Home team - always add fixture to lookup
         if (hCode != null && STATE.lookups.fixturesByTeam[hCode]) {
@@ -267,9 +277,13 @@ function processGoalsData() {
         }
     });
 
+    // Save the latest completed gameweek
+    STATE.latestGW = latestCompletedGW;
+
     console.log('=== Goals Data Processed ===');
     console.log('Fixtures processed:', fixtures.length);
     console.log('Teams tracked:', Object.keys(STATE.lookups.teamGoals).length);
+    console.log('Latest completed GW:', STATE.latestGW);
 }
 
 function processData() {
@@ -610,6 +624,41 @@ function renderTable() {
 }
 
 // ==========================================
+// FORM FILTER LOGIC
+// ==========================================
+
+function applyFormFilter(formFilterValue) {
+    const latestGW = STATE.latestGW || CONFIG.UI.MAX_GW;
+
+    if (formFilterValue === 0) {
+        // Show all gameweeks
+        STATE.ui.startGW = 1;
+        STATE.ui.endGW = latestGW;
+    } else {
+        // Show last N gameweeks
+        STATE.ui.startGW = Math.max(1, latestGW - formFilterValue + 1);
+        STATE.ui.endGW = latestGW;
+    }
+
+    // Update the input fields to reflect the change
+    const startInput = document.getElementById('gw-start');
+    const endInput = document.getElementById('gw-end');
+    if (startInput) startInput.value = STATE.ui.startGW;
+    if (endInput) endInput.value = STATE.ui.endGW;
+}
+
+function updateFormFilterDisplay(value) {
+    const displayEl = document.getElementById('form-filter-value');
+    if (!displayEl) return;
+
+    if (value === 0) {
+        displayEl.textContent = 'All Gameweeks';
+    } else {
+        displayEl.textContent = `Last ${value} GW${value > 1 ? 's' : ''}`;
+    }
+}
+
+// ==========================================
 // INITIALIZATION
 // ==========================================
 
@@ -637,6 +686,16 @@ function setupEventListeners() {
         });
     });
 
+    // Form filter slider
+    const formFilterSlider = document.getElementById('form-filter');
+    formFilterSlider.addEventListener('input', (e) => {
+        const value = parseInt(e.target.value, 10);
+        STATE.ui.formFilter = value;
+        updateFormFilterDisplay(value);
+        applyFormFilter(value);
+        renderTable();
+    });
+
     const startInput = document.getElementById('gw-start');
     const endInput = document.getElementById('gw-end');
     const excludeInput = document.getElementById('gw-exclude');
@@ -657,6 +716,11 @@ function setupEventListeners() {
             endInput.value = String(val);
         }
 
+        // Reset form filter when manual input is used
+        STATE.ui.formFilter = 0;
+        formFilterSlider.value = 0;
+        updateFormFilterDisplay(0);
+
         renderTable();
     });
 
@@ -672,6 +736,12 @@ function setupEventListeners() {
         }
 
         STATE.ui.endGW = val;
+
+        // Reset form filter when manual input is used
+        STATE.ui.formFilter = 0;
+        formFilterSlider.value = 0;
+        updateFormFilterDisplay(0);
+
         renderTable();
     });
 

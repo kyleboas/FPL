@@ -86,6 +86,19 @@
             width: 80px;
         }
 
+        /* Range Slider */
+        input[type="range"] {
+            width: 200px;
+            cursor: pointer;
+        }
+
+        .form-filter-value {
+            font-weight: bold;
+            color: var(--primary);
+            min-width: 100px;
+            text-align: center;
+        }
+
         /* Toggle Switch */
         .toggle-group {
             display: flex;
@@ -243,6 +256,14 @@
                     <div class="toggle-option active" data-value="combined">Combined</div>
                     <div class="toggle-option" data-value="home">Home</div>
                     <div class="toggle-option" data-value="away">Away</div>
+                </div>
+            </div>
+
+            <div class="control-group">
+                <label for="form-filter">Form Filter</label>
+                <div style="display: flex; align-items: center; gap: 10px;">
+                    <input type="range" id="form-filter" min="0" max="12" value="0" step="1">
+                    <span class="form-filter-value" id="form-filter-value">All Gameweeks</span>
                 </div>
             </div>
 
