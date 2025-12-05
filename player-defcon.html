@@ -360,6 +360,11 @@
             </div>
         </div>
 
+        <div style="background: #e3f2fd; padding: 12px; border-radius: 8px; margin-bottom: 15px; font-size: 0.9em; color: #1565c0;">
+            <strong>Form Window:</strong> The Form Window (Start/End GW) defines which historical gameweeks are used to calculate probabilities.
+            The table shows the next 10 upcoming fixtures with probabilities based on data from the selected form window.
+        </div>
+
         <div class="controls">
             <div class="control-group">
                 <label for="position-filter">Position</label>
@@ -379,12 +384,12 @@
             </div>
 
             <div class="control-group">
-                <label for="gw-start">Start GW</label>
+                <label for="gw-start">Form Window Start GW</label>
                 <input type="number" id="gw-start" min="1" max="38" value="1" step="1">
             </div>
 
             <div class="control-group">
-                <label for="gw-end">End GW</label>
+                <label for="gw-end">Form Window End GW</label>
                 <input type="number" id="gw-end" min="1" max="38" value="6" step="1">
             </div>
 
