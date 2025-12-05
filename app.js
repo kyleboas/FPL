@@ -1,11 +1,6 @@
 /**
- * FPL DEFCON PREDICTOR - app.js
- * * A vanilla JavaScript SPA to calculate and visualize defensive action probabilities
- * based on opponent strength and position archetypes.
- * * Core Features:
- * - Bayesian shrinkage for probability smoothing.
- * - Dynamic fixture matrix rendering.
- * - Client-side CSV parsing and data aggregation.
+ * FPL DEFCON PREDICTOR
+ * Consolidated Single File Implementation
  */
 
 // ==========================================
@@ -18,10 +13,8 @@ const CONFIG = {
         PL_TOURNAMENT_BASE: 'https://raw.githubusercontent.com/olbauday/FPL-Elo-Insights/main/data/2025-2026/By%20Tournament/Premier%20League'
     },
     URLS: {
-        // season-level master files
         PLAYERS: 'https://raw.githubusercontent.com/olbauday/FPL-Elo-Insights/main/data/2025-2026/players.csv',
         TEAMS:   'https://raw.githubusercontent.com/olbauday/FPL-Elo-Insights/main/data/2025-2026/teams.csv'
-        // STATS/FIXTURES now come from per-GW folders, so no single URL here
     },
     THRESHOLDS: {
         DEF: 10,
@@ -47,15 +40,15 @@ const STATE = {
         fixtures: []
     },
     lookups: {
-        teamsById: {}, // map id -> team obj
-        playersById: {}, // map id -> player obj
-        fixturesByTeam: {}, // map teamId -> { gw -> { opponentId, wasHome, finished } }
-        probabilities: {} // [opponentId][isPlayerHome][archetype] -> { p, n }
+        teamsById: {}, 
+        playersById: {},
+        fixturesByTeam: {}, 
+        probabilities: {} 
     },
     ui: {
-        currentArchetype: 'CB', // Default
-        startGW: 1,             // Default from slider
-        sortBy: 'max'           // 'max' or 'avg'
+        currentArchetype: 'CB',
+        startGW: 1,
+        sortBy: 'max'
     }
 };
 
@@ -63,26 +56,63 @@ const STATE = {
 // 2. UTILITIES & PARSING
 // ==========================================
 
-/**
- * Basic CSV Parser.
- * Assumes standard CSV format with header row.
- */
 const CSVParser = {
+    // Improved Parser handles quoted strings correctly (e.g. "Fernandes, Bruno")
     parse: (text) => {
         if (!text) return [];
         const lines = text.trim().split('\n');
         if (lines.length < 2) return [];
 
-        const headers = lines[0].split(',').map(h => h.trim());
+        const headers = lines[0].split(',').map(h => h.trim().replace(/^"|"$/g, '')); // Remove quotes from headers
         const result = [];
 
-        for (let i = 1; i < lines.length; i++) {
-            const currentLine = lines[i].split(',');
-            if (currentLine.length !== headers.length) continue;
+        // Regex to match CSV fields, respecting quotes
+        // Matches: quoted string OR non-comma sequence
+        const re = /(?:\"([^\"]*(?:\"\"[^\"]*)*)\")|([^\",]+)/g;
 
-            const obj = {};
+        for (let i = 1; i < lines.length; i++) {
+            if (!lines[i].trim()) continue;
+
+            const row = {};
+            const matches = [];
+            let match;
+            // Simple split is risky, but for speed in browser JS on clean data:
+            // Let's use a slightly robust split or fallback to standard split if no quotes found
+            
+            let currentLine = lines[i];
+            
+            // Basic comma split (Fallback for simple files)
+            let values = currentLine.split(',');
+
+            // If we have more commas than headers, likely have quoted strings. 
+            // For this specific FPL data, names are often quoted.
+            if (values.length > headers.length) {
+                // Quick-fix parser for quoted CSVs
+                values = [];
+                let inQuote = false;
+                let buffer = '';
+                for(let char of currentLine) {
+                    if(char === '"') {
+                        inQuote = !inQuote;
+                    } else if (char === ',' && !inQuote) {
+                        values.push(buffer);
+                        buffer = '';
+                    } else {
+                        buffer += char;
+                    }
+                }
+                values.push(buffer);
+            }
+
+            if (values.length < headers.length) continue; // Malformed row
+
             headers.forEach((header, index) => {
-                let val = currentLine[index].trim();
+                let val = values[index] ? values[index].trim() : '';
+                // Clean quotes
+                if (val.startsWith('"') && val.endsWith('"')) {
+                    val = val.slice(1, -1);
+                }
+
                 // Attempt numeric conversion
                 if (!isNaN(val) && val !== '') {
                     val = Number(val);
@@ -91,23 +121,33 @@ const CSVParser = {
                 } else if (val.toLowerCase() === 'false') {
                     val = false;
                 }
-                obj[header] = val;
+                row[header] = val;
             });
-            result.push(obj);
+            result.push(row);
         }
         return result;
     }
 };
 
-/**
- * Fetch helper to grab all data sources in parallel.
- */
-/**
- * Fetch helper to grab all data sources.
- * - players / teams from season root
- * - stats / fixtures from per-GW Premier League folders
- */
+// Helper to handle header variations common in FPL data
+const getVal = (obj, ...keys) => {
+    for (let k of keys) {
+        if (obj[k] !== undefined) return obj[k];
+    }
+    return undefined;
+};
+
+// ==========================================
+// 3. DATA LOADING
+// ==========================================
+
 async function loadData() {
+    const updateStatus = (msg) => {
+        const el = document.getElementById('loading');
+        if (el) el.textContent = msg;
+        console.log(`[System]: ${msg}`);
+    };
+
     const fetchCSV = async (url) => {
         const res = await fetch(url);
         if (!res.ok) throw new Error(`Failed to load ${url} (${res.status})`);
@@ -115,171 +155,125 @@ async function loadData() {
         return CSVParser.parse(text);
     };
 
-    // Tolerant version for per-GW files (some future GWs won’t exist yet)
     const fetchCSVOptional = async (url) => {
         try {
             const res = await fetch(url);
-            if (!res.ok) {
-                console.warn(`Skipping ${url}: HTTP ${res.status}`);
-                return [];
-            }
+            if (!res.ok) return [];
             const text = await res.text();
             return CSVParser.parse(text);
         } catch (e) {
-            console.warn(`Error fetching ${url}: ${e.message}`);
             return [];
         }
     };
 
+    updateStatus("Fetching Season Metadata...");
+    
     // 1) Season-level players / teams
     const [players, teams] = await Promise.all([
         fetchCSV(CONFIG.URLS.PLAYERS),
         fetchCSV(CONFIG.URLS.TEAMS)
     ]);
 
-    // 2) GW-level stats + fixtures for Premier League
+    updateStatus(`Loaded ${players.length} Players and ${teams.length} Teams. Fetching GW Data...`);
+
+    // 2) GW-level stats + fixtures
     const allStats = [];
     const allFixtures = [];
 
-    for (let gw = 1; gw <= CONFIG.UI.MAX_GW; gw++) {
-        const gwPath = `${CONFIG.PATHS.PL_TOURNAMENT_BASE}/GW${gw}`;
-        const statsUrl = `${gwPath}/player_gameweek_stats.csv`;
-        const fixturesUrl = `${gwPath}/fixtures.csv`;
+    // Batch requests to avoid hitting browser connection limits instantly
+    const batchSize = 5;
+    for (let gw = 1; gw <= CONFIG.UI.MAX_GW; gw += batchSize) {
+        const promises = [];
+        for (let j = 0; j < batchSize; j++) {
+            const currentGW = gw + j;
+            if (currentGW > CONFIG.UI.MAX_GW) break;
 
-        const [gwStats, gwFixtures] = await Promise.all([
-            fetchCSVOptional(statsUrl),
-            fetchCSVOptional(fixturesUrl)
-        ]);
+            const gwPath = `${CONFIG.PATHS.PL_TOURNAMENT_BASE}/GW${currentGW}`;
+            const statsUrl = `${gwPath}/player_gameweek_stats.csv`;
+            const fixturesUrl = `${gwPath}/fixtures.csv`;
 
-        // Tag GW if not already present
-        gwStats.forEach(row => {
-            if (row.gw == null && row.gameweek != null) {
-                row.gw = row.gameweek;
-            } else if (row.gw == null) {
-                row.gw = gw;
-            }
+            promises.push(
+                Promise.all([
+                    fetchCSVOptional(statsUrl),
+                    fetchCSVOptional(fixturesUrl),
+                    currentGW
+                ])
+            );
+        }
+
+        const results = await Promise.all(promises);
+        
+        results.forEach(([gwStats, gwFixtures, gNum]) => {
+            // Normalize GW property
+            gwStats.forEach(row => row.gw = row.gw || row.gameweek || gNum);
+            gwFixtures.forEach(row => row.gw = row.gw || row.gameweek || gNum);
+
+            allStats.push(...gwStats);
+            allFixtures.push(...gwFixtures);
         });
-
-        gwFixtures.forEach(row => {
-            if (row.gw == null && row.gameweek != null) {
-                row.gw = row.gameweek;
-            } else if (row.gw == null) {
-                row.gw = gw;
-            }
-        });
-
-        allStats.push(...gwStats);
-        allFixtures.push(...gwFixtures);
+        
+        updateStatus(`Fetching Data... processed up to GW${Math.min(gw+batchSize, CONFIG.UI.MAX_GW)}`);
     }
 
-    return {
-        players,
-        teams,
-        stats: allStats,
-        fixtures: allFixtures
-    };
+    return { players, teams, stats: allStats, fixtures: allFixtures };
 }
 
 // ==========================================
-// 3. CORE LOGIC: ARCHETYPES & PROBABILITIES
+// 4. CORE LOGIC
 // ==========================================
 
-/**
- * Maps player position data to our app archetypes:
- * CB, LB, RB, MID, FWD.
- * * Logic:
- * 1. Use granular `specific_role` if available (e.g., from source).
- * 2. Fallback to broad `position` (GKP, DEF, MID, FWD).
- */
 function deriveArchetype(player) {
     if (!player) return null;
-
-    // 1. Try granular role if it exists in data
-    const specific = player.detailed_position || player.role; // Adjust based on actual CSV headers
+    const specific = player.detailed_position || player.role;
     if (specific) {
         if (['CB', 'LB', 'RB'].includes(specific)) return specific;
         if (['CDM', 'CAM', 'RM', 'LM', 'RW', 'LW'].includes(specific)) return 'MID';
         if (['ST', 'CF'].includes(specific)) return 'FWD';
     }
-
-    // 2. Fallback based on FPL standard positions
-    // 1=GKP, 2=DEF, 3=MID, 4=FWD usually, but we use string codes here
-    const pos = player.position; 
-    
-    if (pos === 'GKP') return 'GKP'; // Excluded from table but useful for baselines if needed
-    
-    if (pos === 'DEF') {
-        // Simple mapping function constraint:
-        // Without detailed data, we can't perfectly distinguish CB vs FB.
-        // We will return 'CB' as a generic default for DEF if specific is missing,
-        // OR rely on a naming convention.
-        // For this exercise, we map generic DEF to CB to be safe, 
-        // or we could split specific IDs if we had a hardcoded list.
-        return 'CB'; 
-    }
-    
+    const pos = player.position;
+    if (pos === 'GKP') return 'GKP'; 
+    if (pos === 'DEF') return 'CB'; // Default DEF to CB
     if (pos === 'MID') return 'MID';
     if (pos === 'FWD') return 'FWD';
-
     return null;
 }
 
-/**
- * Calculates whether a player hit the DEFCON threshold in a specific match.
- */
 function checkDefconHit(stats, archetype) {
-    const { clearances, interceptions, tackles, recoveries } = stats;
-    
-    // Safely handle missing keys by defaulting to 0
-    const clr = clearances || 0;
-    const int = interceptions || 0;
-    const tck = tackles || 0;
-    const rec = recoveries || 0;
+    // Handle variations in stat names (clearances vs clearances_blocks_interceptions etc)
+    const clr = getVal(stats, 'clearances', 'clearances_blocks_interceptions') || 0;
+    const int = getVal(stats, 'interceptions') || 0;
+    const tck = getVal(stats, 'tackles') || 0;
+    const rec = getVal(stats, 'recoveries') || 0;
 
     if (['CB', 'LB', 'RB'].includes(archetype)) {
-        // Defender Rule: CLR + INT + TCK >= 10
         return (clr + int + tck) >= CONFIG.THRESHOLDS.DEF;
     } else if (['MID', 'FWD'].includes(archetype)) {
-        // Mid/Fwd Rule: CLR + INT + TCK + REC >= 12
         return (clr + int + tck + rec) >= CONFIG.THRESHOLDS.MID_FWD;
     }
-    
     return false;
 }
 
-/**
- * The Heavy Lifter: Aggregates stats and computes probabilities
- * using Bayesian shrinkage.
- */
 function processProbabilities() {
-    const { stats, players, teams } = STATE.data;
+    const { stats, players } = STATE.data;
     const { playersById } = STATE.lookups;
 
-    // Data Structures for Aggregation
-    // Structure: agg[opponentId][isPlayerHomeString][archetype] = { hits, trials }
-    // isPlayerHomeString: "true" (Home) or "false" (Away)
     const opponentAgg = {};
-    
-    // League Baselines: baseline[isPlayerHomeString][archetype] = { hits, trials }
-    const leagueAgg = {
-        'true': {}, 
-        'false': {}
-    };
-
-    // Initialize Helpers
+    const leagueAgg = { 'true': {}, 'false': {} };
     const initAgg = () => ({ hits: 0, trials: 0 });
     const archetypes = ['CB', 'LB', 'RB', 'MID', 'FWD'];
-    
+
     archetypes.forEach(arch => {
         leagueAgg['true'][arch] = initAgg();
         leagueAgg['false'][arch] = initAgg();
     });
 
-    // 1. Iterate over every historical appearance
     stats.forEach(statRecord => {
-        if (statRecord.minutes <= 0) return; // Ignore bench warmers
+        if ((statRecord.minutes || 0) <= 0) return;
 
-        const player = playersById[statRecord.player_id];
+        // Try to find player ID in common fields
+        const pID = getVal(statRecord, 'player_id', 'element', 'id');
+        const player = playersById[pID];
+        
         if (!player) return;
 
         const archetype = deriveArchetype(player);
@@ -287,17 +281,20 @@ function processProbabilities() {
 
         const isHit = checkDefconHit(statRecord, archetype);
         
-        // Normalize boolean to string key for consistent object access
-        const venueKey = String(statRecord.was_home); // "true" if player was home
-        const opponentId = statRecord.opponent_team_id;
+        const wasHome = getVal(statRecord, 'was_home', 'identifier') === true || String(getVal(statRecord, 'was_home')) === 'true';
+        const venueKey = String(wasHome); 
+        const opponentId = getVal(statRecord, 'opponent_team_id', 'opponent_team');
 
-        // A. Update League Baseline
+        if (!opponentId) return;
+
+        // League Baseline
         const leagueBin = leagueAgg[venueKey][archetype];
         leagueBin.trials++;
         if (isHit) leagueBin.hits++;
 
-        // B. Update Opponent Specific Aggregates
+        // Opponent Specific
         if (!opponentAgg[opponentId]) opponentAgg[opponentId] = { 'true': {}, 'false': {} };
+        if (!opponentAgg[opponentId][venueKey]) opponentAgg[opponentId][venueKey] = {};
         if (!opponentAgg[opponentId][venueKey][archetype]) opponentAgg[opponentId][venueKey][archetype] = initAgg();
 
         const oppBin = opponentAgg[opponentId][venueKey][archetype];
@@ -305,173 +302,140 @@ function processProbabilities() {
         if (isHit) oppBin.hits++;
     });
 
-    // 2. Compute Probabilities with Shrinkage
+    // Compute Probabilities
     STATE.lookups.probabilities = {};
     const { K_FACTOR, MIN_PROB, MAX_PROB } = CONFIG.MODEL;
 
-    teams.forEach(team => {
+    STATE.data.teams.forEach(team => {
         const teamId = team.id;
         STATE.lookups.probabilities[teamId] = { 'true': {}, 'false': {} };
 
         ['true', 'false'].forEach(venueKey => {
             archetypes.forEach(arch => {
-                // Get League Average for this Archetype + Venue
                 const lb = leagueAgg[venueKey][arch];
                 const leagueProb = lb.trials > 0 ? (lb.hits / lb.trials) : 0;
 
-                // Get Opponent Specific Data
-                let hits = 0;
-                let trials = 0;
-
-                if (opponentAgg[teamId] && opponentAgg[teamId][venueKey][arch]) {
+                let hits = 0, trials = 0;
+                if (opponentAgg[teamId] && opponentAgg[teamId][venueKey] && opponentAgg[teamId][venueKey][arch]) {
                     hits = opponentAgg[teamId][venueKey][arch].hits;
                     trials = opponentAgg[teamId][venueKey][arch].trials;
                 }
 
-                // Bayesian Shrinkage Formula
-                // P = (hits + K * leagueProb) / (trials + K)
                 const smoothedProb = (hits + (K_FACTOR * leagueProb)) / (trials + K_FACTOR);
-
-                // Clamp
-                let finalProb = Math.max(MIN_PROB, Math.min(MAX_PROB, smoothedProb));
+                const finalProb = Math.max(MIN_PROB, Math.min(MAX_PROB, smoothedProb));
 
                 STATE.lookups.probabilities[teamId][venueKey][arch] = finalProb;
             });
         });
     });
-
-    console.log("Probabilities Processed", STATE.lookups.probabilities);
 }
-
-// ==========================================
-// 4. DATA PROCESSING & INDEXING
-// ==========================================
 
 function processData() {
-    // Index Players
-    STATE.data.players.forEach(p => {
-        STATE.lookups.playersById[p.id] = p;
-    });
+    STATE.lookups.playersById = {};
+    STATE.data.players.forEach(p => STATE.lookups.playersById[p.id] = p);
 
-    // Index Teams
-    STATE.data.teams.forEach(t => {
-        STATE.lookups.teamsById[t.id] = t;
-    });
+    STATE.lookups.teamsById = {};
+    STATE.data.teams.forEach(t => STATE.lookups.teamsById[t.id] = t);
 
-    // Index Fixtures: Group by Team
     STATE.lookups.fixturesByTeam = {};
-    
-    // Initialize array for all teams
-    STATE.data.teams.forEach(t => {
-        STATE.lookups.fixturesByTeam[t.id] = {};
-    });
+    STATE.data.teams.forEach(t => STATE.lookups.fixturesByTeam[t.id] = {});
 
     STATE.data.fixtures.forEach(fix => {
-        // Processing Home Team's fixture
-        if (STATE.lookups.fixturesByTeam[fix.home_team_id]) {
-            STATE.lookups.fixturesByTeam[fix.home_team_id][fix.gw] = {
-                opponentId: fix.away_team_id,
+        // Handle common fixture column variations
+        const hID = getVal(fix, 'home_team_id', 'team_h');
+        const aID = getVal(fix, 'away_team_id', 'team_a');
+        const isFin = getVal(fix, 'finished') === true || String(getVal(fix, 'finished')) === 'true';
+        const gw = getVal(fix, 'gw', 'event');
+
+        if (STATE.lookups.fixturesByTeam[hID]) {
+            STATE.lookups.fixturesByTeam[hID][gw] = {
+                opponentId: aID,
                 wasHome: true,
-                finished: fix.finished === true || fix.finished === 'true'
+                finished: isFin
             };
         }
-
-        // Processing Away Team's fixture
-        if (STATE.lookups.fixturesByTeam[fix.away_team_id]) {
-            STATE.lookups.fixturesByTeam[fix.away_team_id][fix.gw] = {
-                opponentId: fix.home_team_id,
-                wasHome: false, // Away team is NOT home
-                finished: fix.finished === true || fix.finished === 'true'
+        if (STATE.lookups.fixturesByTeam[aID]) {
+            STATE.lookups.fixturesByTeam[aID][gw] = {
+                opponentId: hID,
+                wasHome: false,
+                finished: isFin
             };
         }
     });
 
-    // Run Probability Engine
     processProbabilities();
+    
+    // Update Debug Bar
+    const debugEl = document.getElementById('status-bar');
+    debugEl.textContent = `Data Ready: ${STATE.data.players.length} Players, ${STATE.data.teams.length} Teams, ${STATE.data.stats.length} Stat Records, ${STATE.data.fixtures.length} Fixtures processed.`;
 }
 
 // ==========================================
-// 5. RENDERING & UI
+// 5. RENDERING
 // ==========================================
 
-/**
- * Returns a CSS color string based on probability.
- * Low Prob (0.05) -> Transparent/Neutral
- * High Prob (0.95) -> High Intensity Red/Orange
- */
 function getProbabilityColor(prob) {
-    // 0 to 1 scale. 
-    // Let's go from Light Yellow to Dark Red for "Hot" zones.
-    // HSL: Start around 60 (Yellow) go down to 0 (Red). 
-    // Lightness: 90% down to 50%.
+    // Heatmap Logic: Green (Low action) -> Yellow -> Red (High action)
+    // Actually, usually in FPL: Red = Danger/Hard, Green = Easy.
+    // For "Defensive Action Probability", HIGH prob means defenders are BUSY.
+    // If you want defenders to get points (BPS/Saves), high action is often Good for GKP/Defenders, 
+    // but implies the team is under pressure.
+    // Let's use a standard heat scale. 
+    // 0.05 (Low) -> White/Blue
+    // 0.95 (High) -> Red
     
-    // Using a simpler alpha approach for clean UI
-    // Base color red: 255, 50, 50
-    const alpha = (prob - 0.1) / 0.8; // Normalize roughly for visibility
-    const safeAlpha = Math.max(0, Math.min(1, alpha));
-    
-    return `rgba(255, 99, 71, ${safeAlpha})`; // Tomato red with variable opacity
+    const intensity = Math.min(1, Math.max(0, (prob - 0.2) / 0.6)); // Normalize roughly between 0.2 and 0.8
+    // Interpolate white to red
+    // Red: 255, 0, 0
+    // White: 255, 255, 255
+    const g = Math.floor(255 * (1 - intensity));
+    const b = Math.floor(255 * (1 - intensity));
+    return `rgb(255, ${g}, ${b})`; 
 }
 
 function renderTable() {
     const { currentArchetype, startGW, sortBy } = STATE.ui;
-    const { teams, teamsById } = STATE.data; // teams is array
+    const { teams, teamsById } = STATE.data;
     const { fixturesByTeam, probabilities } = STATE.lookups;
     const endGW = parseInt(startGW) + CONFIG.UI.VISIBLE_GW_SPAN - 1;
 
     const thead = document.getElementById('fixture-header');
     const tbody = document.getElementById('fixture-body');
 
-    // 1. Build Header
     thead.innerHTML = '';
     const thTeam = document.createElement('th');
     thTeam.textContent = 'Team';
-    thTeam.style.textAlign = 'left';
     thead.appendChild(thTeam);
 
     for (let gw = parseInt(startGW); gw <= endGW; gw++) {
         const th = document.createElement('th');
         th.textContent = `GW ${gw}`;
-        th.style.width = '80px';
         thead.appendChild(th);
     }
 
-    // 2. Prepare Rows Data
     let rowData = teams.map(team => {
         const teamId = team.id;
         const fixtures = [];
-        let metrics = []; // To calculate sort values
+        let metrics = [];
 
         for (let gw = parseInt(startGW); gw <= endGW; gw++) {
             const fix = fixturesByTeam[teamId] ? fixturesByTeam[teamId][gw] : null;
             
             if (!fix) {
-                // Blank Gameweek
                 fixtures.push({ type: 'BLANK' });
                 metrics.push(0); 
                 continue;
             }
 
             const opponentId = fix.opponentId;
-            const isHome = fix.wasHome; // Boolean
-            const venueKey = String(isHome); // "true" or "false"
+            const isHome = fix.wasHome;
+            const venueKey = String(isHome); 
 
-            // LOOKUP LOGIC:
-            // We want the probability that THIS team's player (Archetype) hits DEFCON.
-            // This happens against the OPPONENT.
-            // Condition: Opponent ID, and the VENUE of the player.
-            // e.g. Arsenal (Home) vs Liverpool.
-            // We look at stats conceded by Liverpool when Liverpool is Away (== Player Home).
-            
-            let prob = 0;
+            let prob = CONFIG.MODEL.MIN_PROB;
             if (probabilities[opponentId] && 
                 probabilities[opponentId][venueKey] && 
                 probabilities[opponentId][venueKey][currentArchetype]) {
-                
                 prob = probabilities[opponentId][venueKey][currentArchetype];
-            } else {
-                // Fallback (shouldn't happen often due to league baseline)
-                prob = CONFIG.MODEL.MIN_PROB;
             }
 
             const oppName = teamsById[opponentId] ? teamsById[opponentId].short_name : 'UNK';
@@ -485,7 +449,6 @@ function renderTable() {
             metrics.push(prob);
         }
 
-        // Compute Sort Metric
         const validMetrics = metrics.filter(m => m > 0);
         const maxVal = validMetrics.length ? Math.max(...validMetrics) : 0;
         const avgVal = validMetrics.length ? (validMetrics.reduce((a,b)=>a+b,0) / validMetrics.length) : 0;
@@ -497,48 +460,39 @@ function renderTable() {
         };
     });
 
-    // 3. Sort Rows
     rowData.sort((a, b) => b.sortVal - a.sortVal);
 
-    // 4. Render Body
     tbody.innerHTML = '';
     rowData.forEach(row => {
         const tr = document.createElement('tr');
         
-        // Name Cell
         const tdName = document.createElement('td');
         tdName.textContent = row.teamName;
         tdName.style.fontWeight = 'bold';
         tr.appendChild(tdName);
 
-        // Fixture Cells
         row.fixtures.forEach(cell => {
             const td = document.createElement('td');
             
             if (cell.type === 'BLANK') {
                 td.textContent = '-';
-                td.style.backgroundColor = '#eee';
+                td.style.backgroundColor = '#f4f4f4';
             } else {
-                // Inner Content
+                td.classList.add('match-cell');
                 const divOpp = document.createElement('div');
+                divOpp.className = 'match-opp';
                 divOpp.textContent = `${cell.opponent} ${cell.venue}`;
-                divOpp.style.fontSize = '0.85em';
                 
                 const divProb = document.createElement('div');
+                divProb.className = 'match-prob';
                 divProb.textContent = `${(cell.prob * 100).toFixed(0)}%`;
-                divProb.style.fontWeight = 'bold';
                 
                 td.appendChild(divOpp);
                 td.appendChild(divProb);
                 
-                // Styling
                 td.style.backgroundColor = getProbabilityColor(cell.prob);
-                td.style.textAlign = 'center';
-                td.style.border = '1px solid #ddd';
-                
-                // Optional: dark text on light bg, white text on dark bg
-                if (cell.prob > 0.7) td.style.color = 'white';
-                else td.style.color = 'black';
+                if (cell.prob > 0.6) td.style.color = 'white';
+                else td.style.color = '#222';
             }
             tr.appendChild(td);
         });
@@ -548,35 +502,27 @@ function renderTable() {
 }
 
 // ==========================================
-// 6. INITIALIZATION & EVENTS
+// 6. INITIALIZATION
 // ==========================================
 
 function setupEventListeners() {
-    // Archetype Filter
-    const archSelect = document.getElementById('archetype-filter');
-    archSelect.addEventListener('change', (e) => {
+    document.getElementById('archetype-filter').addEventListener('change', (e) => {
         STATE.ui.currentArchetype = e.target.value;
         renderTable();
     });
 
-    // GW Slider
     const slider = document.getElementById('gw-slider');
-    const gwLabel = document.getElementById('gw-label'); // Optional label
-    
-    // Initialize slider value
-    if (gwLabel) gwLabel.textContent = `GW ${slider.value}`;
+    const gwLabel = document.getElementById('gw-label');
     STATE.ui.startGW = slider.value;
 
     slider.addEventListener('input', (e) => {
         const val = e.target.value;
         STATE.ui.startGW = val;
-        if (gwLabel) gwLabel.textContent = `GW ${val}`;
+        gwLabel.textContent = `Start GW: ${val}`;
         renderTable();
     });
 
-    // Sort By
-    const sortSelect = document.getElementById('sort-by');
-    sortSelect.addEventListener('change', (e) => {
+    document.getElementById('sort-by').addEventListener('change', (e) => {
         STATE.ui.sortBy = e.target.value;
         renderTable();
     });
@@ -588,18 +534,13 @@ async function init() {
     const errorEl = document.getElementById('error');
 
     try {
-        // 1. Load Data
         const rawData = await loadData();
         STATE.data = rawData;
-
-        // 2. Process Data
         processData();
 
-        // 3. Update UI
         loadingEl.style.display = 'none';
         mainEl.style.display = 'block';
 
-        // 4. Initial Render
         setupEventListeners();
         renderTable();
 
@@ -607,18 +548,9 @@ async function init() {
         console.error("Initialization Error:", err);
         loadingEl.style.display = 'none';
         errorEl.style.display = 'block';
-        errorEl.textContent = `Error loading data: ${err.message}. Ensure data files exist in /data/ folder.`;
+        errorEl.textContent = `Error: ${err.message}. Check console for details.`;
     }
 }
 
-// Start the app when DOM is ready
-document.addEventListener('DOMContentLoaded', init);// app.js
+document.addEventListener('DOMContentLoaded', init);
 
-// Initialise the matrix preview when the DOM is ready
-document.addEventListener('DOMContentLoaded', () => {
-  if (typeof window.initMatrixPreview === 'function') {
-    window.initMatrixPreview();
-  } else {
-    console.warn('[app] initMatrixPreview not found. Is matrixPreview.js loaded?');
-  }
-});
