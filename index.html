@@ -25,23 +25,43 @@
 
     <main class="hidden" id="main-content">
 
-        <!-- NEW: Single Filter (Archetype / Position Group) -->
+        <!-- Filters: Archetype, GW slider, Sort order -->
         <section class="filters">
+            <!-- Archetype / Position filter (matches app.js: CB, RB, LB, MID, FWD) -->
             <div class="filter-group">
                 <label for="archetype-filter">Archetype:</label>
                 <select id="archetype-filter">
-                    <option value="CB">Centre-Back (DEF_GKP)</option>
-                    <option value="RB">Right-Back (DEF_GKP)</option>
-                    <option value="LB">Left-Back (DEF_GKP)</option>
-                    <option value="DEF_GKP">DEF/GKP (CBIT ≥ 10)</option>
-                    <option value="MID">Midfielder (MID_FWD)</option>
-                    <option value="FWD">Forward (MID_FWD)</option>
-                    <option value="MID_FWD">MID/FWD (CBIRT ≥ 12)</option>
+                    <option value="CB">Centre-Back</option>
+                    <option value="RB">Right-Back</option>
+                    <option value="LB">Left-Back</option>
+                    <option value="MID">Midfielder</option>
+                    <option value="FWD">Forward</option>
+                </select>
+            </div>
+
+            <!-- Gameweek range slider (app.js expects #gw-slider and #gw-label) -->
+            <div class="filter-group">
+                <label for="gw-slider">Start Gameweek:</label>
+                <input type="range"
+                       id="gw-slider"
+                       min="1"
+                       max="38"
+                       value="1"
+                />
+                <span id="gw-label">GW 1</span>
+            </div>
+
+            <!-- Sort dropdown (app.js expects #sort-by with values 'max' and 'avg') -->
+            <div class="filter-group">
+                <label for="sort-by">Sort by:</label>
+                <select id="sort-by">
+                    <option value="max">Max DEFCON % (hottest run)</option>
+                    <option value="avg">Average DEFCON % (overall difficulty)</option>
                 </select>
             </div>
         </section>
 
-        <!-- NEW: Fixture Matrix -->
+        <!-- Fixture Matrix -->
         <section class="results">
             <table id="fixture-table">
                 <thead id="fixture-header"></thead>
