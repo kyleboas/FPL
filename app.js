@@ -250,9 +250,9 @@ function buildMatchLocationLookup() {
 
     state.matches.forEach(match => {
         const matchId = match.id || match.match_id;
-        const homeTeam = match.team_h || match.home_team_id;
-        const awayTeam = match.team_a || match.away_team_id;
-        const gameweek = match.event || match.gameweek;
+        const homeTeam = match.home_team || match.team_h || match.home_team_id;
+        const awayTeam = match.away_team || match.team_a || match.away_team_id;
+        const gameweek = match.event || match.gameweek || match.round;
 
         // Create lookup keys: "teamId_opponentId_gameweek"
         if (homeTeam && awayTeam && gameweek) {
@@ -429,7 +429,7 @@ function getUpcomingFixtures() {
     const fixtures = [];
 
     state.matches.forEach(match => {
-        // FPL-Elo-Insights uses: kickoff_time, event, team_h, team_a, finished
+        // FPL-Elo-Insights uses: kickoff_time, event, home_team, away_team, finished
         const matchDate = new Date(match.kickoff_time || match.datetime || match.date || match.kickoff);
         const isFinished = match.finished === true || match.finished === 'true' || match.finished === 'True' || match.finished === 1 || match.finished === '1';
 
@@ -438,9 +438,9 @@ function getUpcomingFixtures() {
         if (!isFinished) {
             fixtures.push({
                 id: match.id || match.match_id || match.fixture_id,
-                gameweek: parseInt(match.event || match.gameweek || match.gw || 0),
-                homeTeam: match.team_h || match.home_team_id || match.team_h_id,
-                awayTeam: match.team_a || match.away_team_id || match.team_a_id,
+                gameweek: parseInt(match.event || match.gameweek || match.round || match.gw || 0),
+                homeTeam: match.home_team || match.team_h || match.home_team_id,
+                awayTeam: match.away_team || match.team_a || match.away_team_id,
                 date: matchDate
             });
         }
