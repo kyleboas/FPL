@@ -232,9 +232,7 @@ function processGoalsData() {
         const isFin = String(getVal(fix, 'finished')).toLowerCase() === 'true';
         const gw = getVal(fix, 'gw', 'event', 'gameweek');
 
-        if (!isFin) return; // Only process finished fixtures
-
-        // Home team
+        // Home team - always add fixture to lookup
         if (hCode != null && STATE.lookups.fixturesByTeam[hCode]) {
             STATE.lookups.fixturesByTeam[hCode][gw] = {
                 opponentCode: aCode,
@@ -244,12 +242,14 @@ function processGoalsData() {
                 goalsAgainst: aGoals
             };
 
-            // Track goals
-            STATE.lookups.teamGoals[hCode]['combined'][gw] = { for: hGoals, against: aGoals };
-            STATE.lookups.teamGoals[hCode]['home'][gw] = { for: hGoals, against: aGoals };
+            // Only track goals for finished fixtures
+            if (isFin) {
+                STATE.lookups.teamGoals[hCode]['combined'][gw] = { for: hGoals, against: aGoals };
+                STATE.lookups.teamGoals[hCode]['home'][gw] = { for: hGoals, against: aGoals };
+            }
         }
 
-        // Away team
+        // Away team - always add fixture to lookup
         if (aCode != null && STATE.lookups.fixturesByTeam[aCode]) {
             STATE.lookups.fixturesByTeam[aCode][gw] = {
                 opponentCode: hCode,
@@ -259,9 +259,11 @@ function processGoalsData() {
                 goalsAgainst: hGoals
             };
 
-            // Track goals
-            STATE.lookups.teamGoals[aCode]['combined'][gw] = { for: aGoals, against: hGoals };
-            STATE.lookups.teamGoals[aCode]['away'][gw] = { for: aGoals, against: hGoals };
+            // Only track goals for finished fixtures
+            if (isFin) {
+                STATE.lookups.teamGoals[aCode]['combined'][gw] = { for: aGoals, against: hGoals };
+                STATE.lookups.teamGoals[aCode]['away'][gw] = { for: aGoals, against: hGoals };
+            }
         }
     });
 
