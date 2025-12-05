@@ -147,6 +147,22 @@
             background: #e0e0e0;
             border-radius: 4px;
         }
+
+        /* Sortable GW headers */
+        .gw-header {
+            cursor: pointer;
+            user-select: none;
+        }
+
+        .gw-header.sorted-desc::after {
+            content: " ▼";
+            font-size: 0.75em;
+        }
+
+        .gw-header.sorted-asc::after {
+            content: " ▲";
+            font-size: 0.75em;
+        }
     </style>
 </head>
 <body>
@@ -174,8 +190,18 @@
             </div>
 
             <div class="control-group">
-                <label id="gw-label" for="gw-slider">Start GW: 1</label>
-                <input type="range" id="gw-slider" min="1" max="33" value="1" step="1">
+                <label for="gw-start">Start GW</label>
+                <input type="number" id="gw-start" min="1" max="38" value="15">
+            </div>
+
+            <div class="control-group">
+                <label for="gw-end">End GW</label>
+                <input type="number" id="gw-end" min="1" max="38" value="18">
+            </div>
+
+            <div class="control-group">
+                <label for="gw-exclude">Exclude GW(s)</label>
+                <input type="text" id="gw-exclude" placeholder="e.g. 19,20,25">
             </div>
 
             <div class="control-group">
