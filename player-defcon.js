@@ -29,12 +29,6 @@ const CONFIG = {
     }
 };
 
-// Player position overrides - for manually classifying specific players
-// Map player names (case-insensitive) to their archetype (CB, LB, RB, MID, FWD)
-const PLAYER_OVERRIDES = {
-    'wieffer': 'CB'  // Classify Wieffer as a defender (Center Back)
-};
-
 // Application State
 const STATE = {
     data: {
