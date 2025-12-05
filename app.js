@@ -30,6 +30,12 @@ const CONFIG = {
     }
 };
 
+// Player position overrides - for manually classifying specific players
+// Map player names (case-insensitive) to their archetype (CB, LB, RB, MID, FWD)
+const PLAYER_OVERRIDES = {
+    'wieffer': 'CB'  // Classify Wieffer as a defender (Center Back)
+};
+
 // Application State
 const STATE = {
     data: {
@@ -217,6 +223,12 @@ async function loadData() {
 
 function deriveArchetype(player) {
     if (!player) return null;
+
+    // Check for player-specific overrides first
+    const playerName = (getVal(player, 'name', 'web_name', 'player_name') || '').toString().toLowerCase();
+    if (playerName && PLAYER_OVERRIDES[playerName]) {
+        return PLAYER_OVERRIDES[playerName];
+    }
 
     // If you ever add detailed_position / role later, this still works
     const specific = player.detailed_position || player.role;
