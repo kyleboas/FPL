@@ -143,7 +143,7 @@ async function loadAllData() {
         // These files exist in By Tournament/Premier League/GW{x}/ subdirectories
         const [playerMatchStats, matches] = await Promise.all([
             fetchAllGameweekData('player_gameweek_stats.csv'),
-            fetchAllGameweekData('fixtures.csv')
+            fetchAllGameweekData('matches.csv')
         ]);
 
         state.playerMatchStats = playerMatchStats;
