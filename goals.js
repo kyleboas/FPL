@@ -300,20 +300,18 @@ function processData() {
 // ==========================================
 
 function getGoalsColor(value, statType) {
-    // Color scheme:
-    // For goals FOR: more is better (green)
-    // For goals AGAINST: less is better (green for low, red for high)
+    // Color scheme: use red gradient for both
+    // For cumulative goals, scale to around 20 goals max for full red
 
     if (statType === 'for') {
-        // Goals for: 0-1 (white) to 4+ (green)
-        const intensity = Math.min(1, value / 4);
-        const r = Math.floor(255 * (1 - intensity));
-        const g = 255;
+        // Goals for: 0 (white) to 20+ (dark red)
+        const intensity = Math.min(1, value / 20);
+        const g = Math.floor(255 * (1 - intensity));
         const b = Math.floor(255 * (1 - intensity));
-        return `rgb(${r}, ${g}, ${b})`;
+        return `rgb(255, ${g}, ${b})`;
     } else {
-        // Goals against: 0 (green) to 4+ (red)
-        const intensity = Math.min(1, value / 4);
+        // Goals against: 0 (white) to 20+ (dark red)
+        const intensity = Math.min(1, value / 20);
         const g = Math.floor(255 * (1 - intensity));
         const b = Math.floor(255 * (1 - intensity));
         return `rgb(255, ${g}, ${b})`;
@@ -349,6 +347,40 @@ function renderTable() {
 
     const { teams } = STATE.data;
     const { fixturesByTeam, teamGoals, teamsByCode } = STATE.lookups;
+
+    // Pre-calculate cumulative goals for all teams up to each GW
+    const cumulativeGoalsByTeam = {};
+    teams.forEach(team => {
+        const teamCode = team.code;
+        cumulativeGoalsByTeam[teamCode] = {};
+
+        let cumulativeFor = 0;
+        let cumulativeAgainst = 0;
+
+        // Calculate cumulative for all GWs (not just the filtered gwList)
+        for (let gw = 1; gw <= CONFIG.UI.MAX_GW; gw++) {
+            const fix = fixturesByTeam[teamCode] ? fixturesByTeam[teamCode][gw] : null;
+
+            // Apply venue filter when accumulating
+            let shouldCount = true;
+            if (venueFilter === 'home' && fix && !fix.wasHome) {
+                shouldCount = false;
+            }
+            if (venueFilter === 'away' && fix && fix.wasHome) {
+                shouldCount = false;
+            }
+
+            if (fix && fix.finished && shouldCount) {
+                cumulativeFor += fix.goalsFor || 0;
+                cumulativeAgainst += fix.goalsAgainst || 0;
+            }
+
+            cumulativeGoalsByTeam[teamCode][gw] = {
+                for: cumulativeFor,
+                against: cumulativeAgainst
+            };
+        }
+    });
 
     const thead = document.getElementById('fixture-header');
     const tbody = document.getElementById('fixture-body');
@@ -389,38 +421,51 @@ function renderTable() {
 
             // Apply venue filter
             if (venueFilter === 'home' && fix && !fix.wasHome) {
-                fixtures.push({ type: 'FILTERED' });
+                fixtures.push({ type: 'FILTERED', cumulativeValue: null });
                 gwValueMap[gw] = null;
                 return;
             }
             if (venueFilter === 'away' && fix && fix.wasHome) {
-                fixtures.push({ type: 'FILTERED' });
+                fixtures.push({ type: 'FILTERED', cumulativeValue: null });
                 gwValueMap[gw] = null;
                 return;
             }
 
-            if (!fix || !fix.finished) {
-                fixtures.push({ type: 'BLANK' });
+            if (!fix) {
+                // No fixture scheduled
+                fixtures.push({ type: 'BLANK', cumulativeValue: null });
                 gwValueMap[gw] = null;
                 return;
             }
 
             const opponentCode = fix.opponentCode;
             const isHome = fix.wasHome;
-            const goalsFor = fix.goalsFor || 0;
-            const goalsAgainst = fix.goalsAgainst || 0;
-            const value = statType === 'for' ? goalsFor : goalsAgainst;
-
             const oppTeam = teamsByCode[opponentCode];
             const oppName = oppTeam ? oppTeam.short_name : 'UNK';
 
+            // Get opponent's cumulative goals up to this GW
+            const oppCumulative = cumulativeGoalsByTeam[opponentCode] ? cumulativeGoalsByTeam[opponentCode][gw] : null;
+
+            if (!oppCumulative) {
+                fixtures.push({ type: 'BLANK', cumulativeValue: null });
+                gwValueMap[gw] = null;
+                return;
+            }
+
+            // The value to display depends on what we're tracking
+            // "for" means opponent's goals FOR (their attack strength)
+            // "against" means opponent's goals AGAINST (their defense weakness)
+            const oppCumulativeValue = statType === 'for' ? oppCumulative.for : oppCumulative.against;
+
+            // For metrics, use the opponent's cumulative value at this GW
+            const value = oppCumulativeValue;
+
             fixtures.push({
-                type: 'MATCH',
+                type: fix.finished ? 'MATCH' : 'FUTURE',
                 opponent: oppName,
                 venue: isHome ? '(H)' : '(A)',
-                goalsFor: goalsFor,
-                goalsAgainst: goalsAgainst,
-                value: value
+                value: value,
+                isFinished: fix.finished
             });
             metrics.push(value);
             gwValueMap[gw] = value;
@@ -471,9 +516,11 @@ function renderTable() {
             const td = document.createElement('td');
 
             if (cell.type === 'BLANK' || cell.type === 'FILTERED') {
+                // No fixture or filtered out
                 td.textContent = '-';
                 td.style.backgroundColor = '#f4f4f4';
-            } else {
+                td.style.color = '#999';
+            } else if (cell.type === 'MATCH' || cell.type === 'FUTURE') {
                 const wrapper = document.createElement('div');
                 wrapper.className = 'match-cell';
 
@@ -493,9 +540,15 @@ function renderTable() {
 
                 // Adjust text color for readability
                 const needsWhiteText =
-                    (statType === 'for' && cell.value >= 3) ||
-                    (statType === 'against' && cell.value >= 3);
+                    (statType === 'for' && cell.value >= 15) ||
+                    (statType === 'against' && cell.value >= 15);
                 td.style.color = needsWhiteText ? 'white' : '#222';
+
+                // Style future fixtures slightly differently
+                if (cell.type === 'FUTURE') {
+                    td.style.opacity = '0.8';
+                    td.style.fontStyle = 'italic';
+                }
             }
             tr.appendChild(td);
         });
