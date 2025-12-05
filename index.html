@@ -37,6 +37,20 @@
             margin: 0;
         }
 
+        .nav-links {
+            margin-top: 10px;
+        }
+
+        .nav-links a {
+            color: var(--primary);
+            text-decoration: none;
+            margin-right: 15px;
+        }
+
+        .nav-links a:hover {
+            text-decoration: underline;
+        }
+
         /* Controls */
         .controls {
             background: var(--card-bg);
@@ -159,6 +173,10 @@
     <header>
         <h1>FPL DEFCON Matrix</h1>
         <p>Defensive Action Probability Calculator</p>
+        <div class="nav-links">
+            <a href="player-defcon.html">Player DEFCON Stats</a>
+            <a href="goals.html">Goals Statistics</a>
+        </div>
     </header>
 
     <div id="error"></div>
