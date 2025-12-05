@@ -354,7 +354,7 @@ function handleGwHeaderClick(gw) {
 }
 
 function renderTable() {
-    const { statType, venueFilter, sortMode } = STATE.ui;
+    const { statType, venueFilter, sortMode, formFilter } = STATE.ui;
     const startGW = parseInt(STATE.ui.startGW, 10);
     const endGW   = parseInt(STATE.ui.endGW, 10);
     const excludedSet = new Set(STATE.ui.excludedGWs || []);
@@ -372,6 +372,7 @@ function renderTable() {
 
     // Pre-calculate cumulative goals for all teams up to each GW
     // Track home, away, and combined separately so we can show the right stats
+    // Use formFilter to determine rolling window (0 = all time, N = last N gameweeks)
     const cumulativeGoalsByTeam = {};
     teams.forEach(team => {
         const teamCode = team.code;
@@ -381,29 +382,36 @@ function renderTable() {
             away: {}
         };
 
-        let combinedFor = 0, combinedAgainst = 0;
-        let homeFor = 0, homeAgainst = 0;
-        let awayFor = 0, awayAgainst = 0;
-
         // Calculate cumulative for all GWs (not just the filtered gwList)
         for (let gw = 1; gw <= CONFIG.UI.MAX_GW; gw++) {
-            const fix = fixturesByTeam[teamCode] ? fixturesByTeam[teamCode][gw] : null;
+            let combinedFor = 0, combinedAgainst = 0;
+            let homeFor = 0, homeAgainst = 0;
+            let awayFor = 0, awayAgainst = 0;
 
-            if (fix && fix.finished) {
-                const goalsFor = fix.goalsFor || 0;
-                const goalsAgainst = fix.goalsAgainst || 0;
+            // Determine the window for calculation
+            const windowStart = formFilter === 0 ? 1 : Math.max(1, gw - formFilter + 1);
+            const windowEnd = gw;
 
-                // Always accumulate combined
-                combinedFor += goalsFor;
-                combinedAgainst += goalsAgainst;
+            // Sum goals within the window
+            for (let w = windowStart; w <= windowEnd; w++) {
+                const fix = fixturesByTeam[teamCode] ? fixturesByTeam[teamCode][w] : null;
 
-                // Accumulate home or away based on fixture
-                if (fix.wasHome) {
-                    homeFor += goalsFor;
-                    homeAgainst += goalsAgainst;
-                } else {
-                    awayFor += goalsFor;
-                    awayAgainst += goalsAgainst;
+                if (fix && fix.finished) {
+                    const goalsFor = fix.goalsFor || 0;
+                    const goalsAgainst = fix.goalsAgainst || 0;
+
+                    // Always accumulate combined
+                    combinedFor += goalsFor;
+                    combinedAgainst += goalsAgainst;
+
+                    // Accumulate home or away based on fixture
+                    if (fix.wasHome) {
+                        homeFor += goalsFor;
+                        homeAgainst += goalsAgainst;
+                    } else {
+                        awayFor += goalsFor;
+                        awayAgainst += goalsAgainst;
+                    }
                 }
             }
 
@@ -627,32 +635,12 @@ function renderTable() {
 // FORM FILTER LOGIC
 // ==========================================
 
-function applyFormFilter(formFilterValue) {
-    const latestGW = STATE.latestGW || CONFIG.UI.MAX_GW;
-
-    if (formFilterValue === 0) {
-        // Show all gameweeks
-        STATE.ui.startGW = 1;
-        STATE.ui.endGW = latestGW;
-    } else {
-        // Show last N gameweeks
-        STATE.ui.startGW = Math.max(1, latestGW - formFilterValue + 1);
-        STATE.ui.endGW = latestGW;
-    }
-
-    // Update the input fields to reflect the change
-    const startInput = document.getElementById('gw-start');
-    const endInput = document.getElementById('gw-end');
-    if (startInput) startInput.value = STATE.ui.startGW;
-    if (endInput) endInput.value = STATE.ui.endGW;
-}
-
 function updateFormFilterDisplay(value) {
     const displayEl = document.getElementById('form-filter-value');
     if (!displayEl) return;
 
     if (value === 0) {
-        displayEl.textContent = 'All Gameweeks';
+        displayEl.textContent = 'All Time';
     } else {
         displayEl.textContent = `Last ${value} GW${value > 1 ? 's' : ''}`;
     }
@@ -692,7 +680,6 @@ function setupEventListeners() {
         const value = parseInt(e.target.value, 10);
         STATE.ui.formFilter = value;
         updateFormFilterDisplay(value);
-        applyFormFilter(value);
         renderTable();
     });
 
@@ -716,11 +703,6 @@ function setupEventListeners() {
             endInput.value = String(val);
         }
 
-        // Reset form filter when manual input is used
-        STATE.ui.formFilter = 0;
-        formFilterSlider.value = 0;
-        updateFormFilterDisplay(0);
-
         renderTable();
     });
 
@@ -736,12 +718,6 @@ function setupEventListeners() {
         }
 
         STATE.ui.endGW = val;
-
-        // Reset form filter when manual input is used
-        STATE.ui.formFilter = 0;
-        formFilterSlider.value = 0;
-        updateFormFilterDisplay(0);
-
         renderTable();
     });
 
