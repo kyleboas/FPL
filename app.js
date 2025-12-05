@@ -3,9 +3,18 @@
 
 const DATA_BASE_URL = 'https://raw.githubusercontent.com/olbauday/FPL-Elo-Insights/main/data/2025-2026';
 const DATA_GW_URL = 'https://raw.githubusercontent.com/olbauday/FPL-Elo-Insights/main/data/2025-2026/By%20Tournament/Premier%20League';
-const DEFCON_THRESHOLD_DEF = 10;  // CBIT threshold for defenders
+const DEFCON_THRESHOLD_DEF = 10;  // CBIT threshold for defenders/keepers
 const DEFCON_THRESHOLD_MID_FWD = 12;  // CBIRT threshold for mids/forwards
 const MAX_GAMEWEEKS = 38;  // Maximum gameweeks in a season
+
+// Default league-wide DEFCON probability when no data exists yet
+// This is the neutral baseline chance that a player of a given position group
+// hits the DEFCON threshold vs a random opponent.
+const DEFAULT_DEFCON_PROB = 0.28;
+
+// Strength of league-wide prior (in "virtual games") for smoothing per-opponent rates.
+// Higher = more regression to league average, lower = more noisy team-specific rates.
+const DEFCON_PRIOR_STRENGTH = 6;
 
 // Global state
 let state = {
@@ -150,7 +159,6 @@ async function loadAllData() {
         console.log('Loaded root data:', { players: players.length, teams: teams.length });
 
         // Fetch player stats and matches from all gameweeks
-        // These files exist in By Tournament/Premier League/GW{x}/ subdirectories
         const [playerMatchStats, matches] = await Promise.all([
             fetchAllGameweekData('player_gameweek_stats.csv'),
             fetchAllGameweekData('matches.csv')
@@ -203,15 +211,15 @@ function mapMatchTeamId(rawTeamId) {
     if (!codeKey) return null;
 
     const team = state.teams.find(t =>
-        normId(t.code || t.team_code) === codeKey ||   // matches uses code
-        normId(t.id || t.team_id) === codeKey          // just in case it ever uses id
+        normId(t.code || t.team_code) === codeKey ||
+        normId(t.id || t.team_id) === codeKey
     );
 
     // Canonical id is teams.id (fallback to whatever we got if not found)
     return team ? normId(team.id || team.team_id || team.code) : codeKey;
 }
 
-// Calculate CBIT for a defender match
+// Calculate CBIT for a defender/keeper match
 // CBIT = Interceptions + Clearances + Blocks + Tackles
 function calculateCBIT(matchStat) {
     // FPL-Elo-Insights uses: tackles, interceptions, clearances, blocks
@@ -272,11 +280,45 @@ function getThreshold(position) {
     return DEFCON_THRESHOLD_MID_FWD;
 }
 
+// Group positions into DEF+GKP vs MID+FWD buckets for opponent-history aggregation
+function getPositionGroup(position) {
+    if (position === 'DEF' || position === 'GKP') {
+        return 'DEF_GKP';
+    }
+    if (position === 'MID' || position === 'FWD') {
+        return 'MID_FWD';
+    }
+    return null;
+}
+
+// Helper for opponent-history stats
+function createEmptyPositionStats() {
+    return { hits: 0, n: 0 };
+}
+
+// Helper structure for per-team, per-location, per-position-group counts
+function createEmptyTeamHistoryEntry() {
+    return {
+        home: {
+            DEF_GKP: createEmptyPositionStats(),
+            MID_FWD: createEmptyPositionStats()
+        },
+        away: {
+            DEF_GKP: createEmptyPositionStats(),
+            MID_FWD: createEmptyPositionStats()
+        },
+        overall: {
+            DEF_GKP: createEmptyPositionStats(),
+            MID_FWD: createEmptyPositionStats()
+        }
+    };
+}
+
 // Build a lookup to determine if a match was home or away for a team
 function buildMatchLocationLookup() {
     const lookup = {};
 
-        state.matches.forEach(match => {
+    state.matches.forEach(match => {
         const homeTeamId = mapMatchTeamId(match.home_team || match.team_h || match.home_team_id);
         const awayTeamId = mapMatchTeamId(match.away_team || match.team_a || match.away_team_id);
         const gwKey      = normId(match.event || match.gameweek || match.round || match.gw);
@@ -291,7 +333,7 @@ function buildMatchLocationLookup() {
     return lookup;
 }
 
-// Calculate opponent "CBIT allowed" multiplier with home/away split
+// Calculate opponent "CBIT/CBIRT allowed" multiplier with home/away split
 // Higher multiplier = opponent allows more defensive returns (easier fixture)
 function calculateOpponentMultipliers() {
     const teamStats = {};
@@ -405,57 +447,164 @@ function calculateOpponentMultipliers() {
     return teamStats;
 }
 
-// Calculate DEFCON probability using historical data and normal distribution approximation
-function calculateProbability(scores, threshold, opponentMultiplier = 1) {
-    if (scores.length === 0) return 0;
+// Smoothed probability using a Beta prior with mean = priorMean and strength = priorStrength
+// This keeps probabilities stable for small sample sizes.
+function getSmoothedProbability(hits, n, priorMean, priorStrength) {
+    const alpha0 = priorMean * priorStrength;
+    const beta0  = (1 - priorMean) * priorStrength;
 
-    // Calculate mean and standard deviation
-    const mean = scores.reduce((a, b) => a + b, 0) / scores.length;
-    const adjustedMean = mean * opponentMultiplier;
+    const alphaPost = alpha0 + hits;
+    const betaPost  = beta0 + (n - hits);
 
-    const variance = scores.reduce((sum, x) => sum + Math.pow(x - mean, 2), 0) / scores.length;
-    const stdDev = Math.sqrt(variance) || 1;
+    if (alphaPost <= 0 || betaPost <= 0) {
+        return priorMean;
+    }
 
-    // Use empirical probability (what % of historical games hit threshold)
-    const empiricalHits = scores.filter(s => s >= threshold).length;
-    const empiricalProb = empiricalHits / scores.length;
-
-    // Adjust for opponent - if multiplier > 1, increase probability
-    // Use a weighted blend of empirical and adjusted calculation
-    const zScore = (threshold - adjustedMean) / stdDev;
-
-    // Approximate normal CDF for probability of exceeding threshold
-    // P(X >= threshold) = 1 - P(X < threshold)
-    const normalProb = 1 - normalCDF(zScore);
-
-    // Blend empirical and statistical approaches
-    const blendedProb = (empiricalProb * 0.6) + (normalProb * 0.4);
-
-    // Adjust by opponent multiplier (subtle adjustment)
-    const finalProb = Math.min(1, Math.max(0, blendedProb * Math.pow(opponentMultiplier, 0.3)));
-
-    return finalProb;
+    return alphaPost / (alphaPost + betaPost);
 }
 
-// Approximate normal CDF using Abramowitz and Stegun approximation
-function normalCDF(z) {
-    if (z < -6) return 0;
-    if (z > 6) return 1;
+// Build historical DEFCON hit probabilities by opponent, location (home/away),
+// and position group (DEF_GKP vs MID_FWD).
+// This is the core engine driving DEFCON probabilities.
+function buildOpponentPositionProbabilities() {
+    const matchLocationLookup = buildMatchLocationLookup();
+    const opponentHistory = {};
+    const leagueTotals = createEmptyTeamHistoryEntry(); // reused shape for league-level aggregation
 
-    const a1 = 0.254829592;
-    const a2 = -0.284496736;
-    const a3 = 1.421413741;
-    const a4 = -1.453152027;
-    const a5 = 1.061405429;
-    const p = 0.3275911;
+    const LOCATIONS = ['home', 'away', 'overall'];
+    const GROUPS = ['DEF_GKP', 'MID_FWD'];
 
-    const sign = z < 0 ? -1 : 1;
-    z = Math.abs(z);
+    // 1) Accumulate hits and totals per opponent/location/positionGroup
+    state.playerMatchStats.forEach(stat => {
+        const opponentId = normId(stat.opponent_team || stat.opponent_id || stat.vs_team);
+        if (!opponentId) return;
 
-    const t = 1.0 / (1.0 + p * z);
-    const y = 1.0 - (((((a5 * t + a4) * t) + a3) * t + a2) * t + a1) * t * Math.exp(-z * z / 2);
+        const playerId = stat.id || stat.element || stat.player_id;
+        const player = state.players.find(p =>
+            (p.player_id || p.id || p.element) == playerId
+        );
+        if (!player) return;
 
-    return 0.5 * (1.0 + sign * y);
+        const playerTeam = getTeamFromPlayer(player);
+        if (!playerTeam) return;
+        const playerTeamId = normId(playerTeam.id || playerTeam.team_id || playerTeam.code);
+
+        const gameweek = stat.round || stat.event || stat.gameweek || stat.gw;
+        const gwKey = normId(gameweek);
+        if (!gwKey) return;
+
+        const position = getPosition(player);
+        const positionGroup = getPositionGroup(position);
+        if (!positionGroup) return;
+
+        const score = calculateScore(stat, position);
+        if (isNaN(score)) return;
+
+        const threshold = getThreshold(position);
+
+        // Determine if the OPPONENT was at home or away in this match
+        const lookupKey = `${opponentId}_${playerTeamId}_${gwKey}`;
+        const location = matchLocationLookup[lookupKey]; // 'home' or 'away' from opponent POV
+        if (location !== 'home' && location !== 'away') return;
+
+        if (!opponentHistory[opponentId]) {
+            opponentHistory[opponentId] = createEmptyTeamHistoryEntry();
+        }
+
+        const teamEntry = opponentHistory[opponentId];
+
+        // Location-specific bucket (home/away)
+        const locBucket = teamEntry[location][positionGroup];
+        locBucket.n++;
+        if (score >= threshold) {
+            locBucket.hits++;
+        }
+
+        // Overall bucket (regardless of home/away)
+        const overallBucket = teamEntry.overall[positionGroup];
+        overallBucket.n++;
+        if (score >= threshold) {
+            overallBucket.hits++;
+        }
+    });
+
+    // 2) Compute league totals by aggregating all teams
+    Object.values(opponentHistory).forEach(teamEntry => {
+        LOCATIONS.forEach(loc => {
+            GROUPS.forEach(group => {
+                const src = teamEntry[loc][group];
+                const dst = leagueTotals[loc][group];
+                dst.n += src.n;
+                dst.hits += src.hits;
+            });
+        });
+    });
+
+    // 3) League-wide baseline probabilities (used for smoothing & fallbacks)
+    const leaguePositionProbs = {
+        home:   { DEF_GKP: 0, MID_FWD: 0 },
+        away:   { DEF_GKP: 0, MID_FWD: 0 },
+        overall:{ DEF_GKP: 0, MID_FWD: 0 }
+    };
+
+    LOCATIONS.forEach(loc => {
+        GROUPS.forEach(group => {
+            const stats = leagueTotals[loc][group];
+            if (stats.n > 0) {
+                leaguePositionProbs[loc][group] = stats.hits / stats.n;
+            } else {
+                leaguePositionProbs[loc][group] = DEFAULT_DEFCON_PROB;
+            }
+        });
+    });
+
+    // 4) Convert raw counts into smoothed probabilities per opponent/location/group
+    const teamPositionProbs = {};
+    const priorStrength = DEFCON_PRIOR_STRENGTH;
+
+    Object.entries(opponentHistory).forEach(([teamId, teamEntry]) => {
+        teamPositionProbs[teamId] = {
+            home:   { DEF_GKP: { prob: 0, sampleSize: 0 }, MID_FWD: { prob: 0, sampleSize: 0 } },
+            away:   { DEF_GKP: { prob: 0, sampleSize: 0 }, MID_FWD: { prob: 0, sampleSize: 0 } },
+            overall:{ DEF_GKP: { prob: 0, sampleSize: 0 }, MID_FWD: { prob: 0, sampleSize: 0 } }
+        };
+
+        GROUPS.forEach(group => {
+            LOCATIONS.forEach(loc => {
+                const locStats = teamEntry[loc][group];
+                const overallStats = teamEntry.overall[group];
+
+                // Select league baseline for this bucket
+                const leagueLocBase     = leaguePositionProbs[loc][group];
+                const leagueOverallBase = leaguePositionProbs.overall[group];
+                const leagueBase = loc === 'overall'
+                    ? leagueOverallBase
+                    : (leagueLocBase || leagueOverallBase || DEFAULT_DEFCON_PROB);
+
+                let prob;
+                let nUsed = 0;
+
+                if (locStats.n > 0) {
+                    prob = getSmoothedProbability(locStats.hits, locStats.n, leagueBase, priorStrength);
+                    nUsed = locStats.n;
+                } else if (overallStats.n > 0) {
+                    prob = getSmoothedProbability(overallStats.hits, overallStats.n, leagueOverallBase, priorStrength);
+                    nUsed = overallStats.n;
+                } else {
+                    // No history at all for this team+group: use league baseline
+                    prob = leagueBase;
+                    nUsed = 0;
+                }
+
+                teamPositionProbs[teamId][loc][group] = {
+                    prob: Math.max(0, Math.min(1, prob)),
+                    sampleSize: nUsed
+                };
+            });
+        });
+    });
+
+    return { teamPositionProbs, leaguePositionProbs };
 }
 
 // Get upcoming fixtures
@@ -495,8 +644,12 @@ function getUpcomingFixtures() {
 }
 
 // Process all player data
+// Core change: DEFCON probability now comes from opponent's historical
+// allowance vs that position group (DEF+GKP vs MID+FWD) at the given
+// defensive location (home/away), rather than from the player's own distribution.
 function processPlayerData() {
     const opponentMultipliers = calculateOpponentMultipliers();
+    const { teamPositionProbs, leaguePositionProbs } = buildOpponentPositionProbabilities();
     const upcomingFixtures = getUpcomingFixtures();
     const processed = [];
 
@@ -515,9 +668,10 @@ function processPlayerData() {
     state.players.forEach(player => {
         const playerId = player.player_id || player.id || player.element;
         const position = getPosition(player);
+        const positionGroup = getPositionGroup(position);
 
-        // Skip goalkeepers for DEFCON (they don't contribute same way)
-        if (position === 'GKP') return;
+        // Ignore unknown positions altogether
+        if (!positionGroup) return;
 
         const team = getTeamFromPlayer(player);
         if (!team) return;
@@ -529,12 +683,14 @@ function processPlayerData() {
         if (stats.length === 0) return;
 
         // Calculate scores for each match
-        const scores = stats.map(s => calculateScore(s, position)).filter(s => !isNaN(s));
+        const scores = stats
+            .map(s => calculateScore(s, position))
+            .filter(s => !isNaN(s));
+
         if (scores.length === 0) return;
 
-        // Calculate average score
+        // Calculate average score (still useful to show historical involvement)
         const avgScore = scores.reduce((a, b) => a + b, 0) / scores.length;
-        const threshold = getThreshold(position);
 
         // Find next fixture for this player's team
         const nextFixture = upcomingFixtures.find(f =>
@@ -572,9 +728,36 @@ function processPlayerData() {
             }
         }
 
-        // Calculate DEFCON probability
-        const probability = calculateProbability(scores, threshold, opponentMultiplier);
+        // Adjusted score still uses historical avg * opponent multiplier for UI
         const adjustedScore = avgScore * opponentMultiplier;
+
+        // --- New DEFCON probability logic ---
+        // Base fallback: league-wide overall probability for this position group
+        let probability = (leaguePositionProbs.overall && leaguePositionProbs.overall[positionGroup] != null)
+            ? leaguePositionProbs.overall[positionGroup]
+            : DEFAULT_DEFCON_PROB;
+
+        if (nextFixture && opponentId) {
+            const defLocation = isHome ? 'away' : 'home'; // where opponent is defending
+            const teamEntry = teamPositionProbs[opponentId];
+
+            if (teamEntry && teamEntry[defLocation] && teamEntry[defLocation][positionGroup]) {
+                // Use opponent+location+position-group-specific probability (already smoothed)
+                probability = teamEntry[defLocation][positionGroup].prob;
+            } else if (teamEntry && teamEntry.overall && teamEntry.overall[positionGroup]) {
+                // Fallback to opponent overall vs this position group
+                probability = teamEntry.overall[positionGroup].prob;
+            } else {
+                // Final fallback: league baselines (home/away then overall)
+                const leagueLocBase  = leaguePositionProbs[defLocation] && leaguePositionProbs[defLocation][positionGroup];
+                const leagueOverall  = leaguePositionProbs.overall && leaguePositionProbs.overall[positionGroup];
+                probability = leagueLocBase != null
+                    ? leagueLocBase
+                    : (leagueOverall != null ? leagueOverall : DEFAULT_DEFCON_PROB);
+            }
+        }
+
+        probability = Math.max(0, Math.min(1, probability));
 
         // Team name for display
         const teamName = team.short_name ||
@@ -591,7 +774,7 @@ function processPlayerData() {
             adjustedScore: adjustedScore,
             matchCount: scores.length,
             scores: scores,
-            threshold: threshold,
+            threshold: getThreshold(position),
             opponent: opponentName,
             opponentId: opponentId,
             opponentMultiplier: opponentMultiplier,
