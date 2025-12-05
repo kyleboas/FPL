@@ -373,7 +373,18 @@ function renderTable() {
     // Pre-calculate cumulative goals for all teams up to each GW
     // Track home, away, and combined separately so we can show the right stats
     // Use formFilter to determine rolling window (0 = all time, N = last N gameweeks)
+        // Pre-calculate cumulative goals for all teams up to each GW
+    // Track home, away, and combined separately so we can show the right stats.
+    // formFilter semantics:
+    //   - 0  = All completed GWs before the anchor
+    //   - N>0 = Last N completed GWs before the anchor
+    //
+    // anchorGw = min(columnGw, latestCompletedGW + 1)
+    // windowEnd   = anchorGw - 1  (only completed GWs)
+    // windowStart = max(1, windowEnd - formFilter + 1)
     const cumulativeGoalsByTeam = {};
+    const latestCompletedGW = STATE.latestGW || 0;
+
     teams.forEach(team => {
         const teamCode = team.code;
         cumulativeGoalsByTeam[teamCode] = {
@@ -382,29 +393,44 @@ function renderTable() {
             away: {}
         };
 
-        // Calculate cumulative for all GWs (not just the filtered gwList)
         for (let gw = 1; gw <= CONFIG.UI.MAX_GW; gw++) {
             let combinedFor = 0, combinedAgainst = 0;
             let homeFor = 0, homeAgainst = 0;
             let awayFor = 0, awayAgainst = 0;
 
-            // Determine the window for calculation
-            const windowStart = formFilter === 0 ? 1 : Math.max(1, gw - formFilter + 1);
-            const windowEnd = gw;
+            // Anchor GW for this column
+            const anchorGw = Math.min(gw, latestCompletedGW + 1);
 
-            // Sum goals within the window
+            // No completed data before GW1
+            let windowEnd = anchorGw - 1;
+            if (windowEnd < 1) {
+                cumulativeGoalsByTeam[teamCode].combined[gw] = { for: 0, against: 0 };
+                cumulativeGoalsByTeam[teamCode].home[gw]     = { for: 0, against: 0 };
+                cumulativeGoalsByTeam[teamCode].away[gw]     = { for: 0, against: 0 };
+                continue;
+            }
+
+            let windowStart;
+            if (formFilter === 0) {
+                // All time (up to windowEnd)
+                windowStart = 1;
+            } else {
+                // Last N completed GWs BEFORE the anchor
+                windowStart = Math.max(1, windowEnd - formFilter + 1);
+            }
+
+            // Sum goals in the chosen window of completed fixtures
             for (let w = windowStart; w <= windowEnd; w++) {
                 const fix = fixturesByTeam[teamCode] ? fixturesByTeam[teamCode][w] : null;
-
                 if (fix && fix.finished) {
                     const goalsFor = fix.goalsFor || 0;
                     const goalsAgainst = fix.goalsAgainst || 0;
 
-                    // Always accumulate combined
+                    // Combined
                     combinedFor += goalsFor;
                     combinedAgainst += goalsAgainst;
 
-                    // Accumulate home or away based on fixture
+                    // Venue-specific
                     if (fix.wasHome) {
                         homeFor += goalsFor;
                         homeAgainst += goalsAgainst;
