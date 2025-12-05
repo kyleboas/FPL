@@ -301,19 +301,22 @@ function processData() {
 // RENDERING
 // ==========================================
 
-function getGoalsColor(value, statType) {
+function getGoalsColor(value, statType, maxValue) {
     // Color scheme: use red gradient for both
-    // For cumulative goals, scale to around 20 goals max for full red
+    // For cumulative goals, scale dynamically based on the maximum value shown
+
+    // Use at least 1 to avoid division by zero
+    const scale = Math.max(1, maxValue);
 
     if (statType === 'for') {
-        // Goals for: 0 (white) to 20+ (dark red)
-        const intensity = Math.min(1, value / 20);
+        // Goals for: 0 (white) to maxValue (dark red)
+        const intensity = Math.min(1, value / scale);
         const g = Math.floor(255 * (1 - intensity));
         const b = Math.floor(255 * (1 - intensity));
         return `rgb(255, ${g}, ${b})`;
     } else {
-        // Goals against: 0 (white) to 20+ (dark red)
-        const intensity = Math.min(1, value / 20);
+        // Goals against: 0 (white) to maxValue (dark red)
+        const intensity = Math.min(1, value / scale);
         const g = Math.floor(255 * (1 - intensity));
         const b = Math.floor(255 * (1 - intensity));
         return `rgb(255, ${g}, ${b})`;
@@ -543,6 +546,16 @@ function renderTable() {
         });
     }
 
+    // Calculate the maximum value across all displayed cells for dynamic color scaling
+    let globalMaxValue = 0;
+    rowData.forEach(row => {
+        row.fixtures.forEach(cell => {
+            if ((cell.type === 'MATCH' || cell.type === 'FUTURE') && cell.value != null) {
+                globalMaxValue = Math.max(globalMaxValue, cell.value);
+            }
+        });
+    });
+
     tbody.innerHTML = '';
     rowData.forEach(row => {
         const tr = document.createElement('tr');
@@ -576,12 +589,11 @@ function renderTable() {
                 wrapper.appendChild(divValue);
                 td.appendChild(wrapper);
 
-                td.style.backgroundColor = getGoalsColor(cell.value, statType);
+                td.style.backgroundColor = getGoalsColor(cell.value, statType, globalMaxValue);
 
-                // Adjust text color for readability
-                const needsWhiteText =
-                    (statType === 'for' && cell.value >= 15) ||
-                    (statType === 'against' && cell.value >= 15);
+                // Adjust text color for readability - use 75% of max value as threshold
+                const textThreshold = globalMaxValue * 0.75;
+                const needsWhiteText = cell.value >= textThreshold;
                 td.style.color = needsWhiteText ? 'white' : '#222';
 
                 // Style future fixtures slightly differently
