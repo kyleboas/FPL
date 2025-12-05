@@ -341,20 +341,24 @@ function processData() {
     STATE.data.teams.forEach(t => STATE.lookups.fixturesByTeam[t.id] = {});
 
     STATE.data.fixtures.forEach(fix => {
-        // Handle common fixture column variations
-        const hID = getVal(fix, 'home_team_id', 'team_h');
-        const aID = getVal(fix, 'away_team_id', 'team_a');
-        const isFin = getVal(fix, 'finished') === true || String(getVal(fix, 'finished')) === 'true';
-        const gw = getVal(fix, 'gw', 'event');
+        // ✅ include home_team / away_team as fallbacks
+        const hID = getVal(fix, 'home_team_id', 'team_h', 'home_team');
+        const aID = getVal(fix, 'away_team_id', 'team_a', 'away_team');
 
-        if (STATE.lookups.fixturesByTeam[hID]) {
+        const isFin = getVal(fix, 'finished') === true ||
+                      String(getVal(fix, 'finished')) === 'true';
+
+        // gw is already normalised in loadData()
+        const gw = getVal(fix, 'gw', 'event', 'gameweek');
+
+        if (hID != null && STATE.lookups.fixturesByTeam[hID]) {
             STATE.lookups.fixturesByTeam[hID][gw] = {
                 opponentId: aID,
                 wasHome: true,
                 finished: isFin
             };
         }
-        if (STATE.lookups.fixturesByTeam[aID]) {
+        if (aID != null && STATE.lookups.fixturesByTeam[aID]) {
             STATE.lookups.fixturesByTeam[aID][gw] = {
                 opponentId: hID,
                 wasHome: false,
@@ -364,10 +368,11 @@ function processData() {
     });
 
     processProbabilities();
-    
-    // Update Debug Bar
+
     const debugEl = document.getElementById('status-bar');
-    debugEl.textContent = `Data Ready: ${STATE.data.players.length} Players, ${STATE.data.teams.length} Teams, ${STATE.data.stats.length} Stat Records, ${STATE.data.fixtures.length} Fixtures processed.`;
+    if (debugEl) {
+        debugEl.textContent = `Data Ready: ${STATE.data.players.length} Players, ${STATE.data.teams.length} Teams, ${STATE.data.stats.length} Stat Records, ${STATE.data.fixtures.length} Fixtures processed.`;
+    }
 }
 
 // ==========================================
@@ -395,8 +400,9 @@ function getProbabilityColor(prob) {
 
 function renderTable() {
     const { currentArchetype, startGW, sortBy } = STATE.ui;
-    const { teams, teamsById } = STATE.data;
-    const { fixturesByTeam, probabilities } = STATE.lookups;
+    const { currentArchetype, startGW, sortBy } = STATE.ui;
+    const { teams } = STATE.data;
+    const { fixturesByTeam, probabilities, teamsById } = STATE.lookups;
     const endGW = parseInt(startGW) + CONFIG.UI.VISIBLE_GW_SPAN - 1;
 
     const thead = document.getElementById('fixture-header');
