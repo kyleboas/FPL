@@ -328,7 +328,10 @@ function handleGwHeaderClick(gw) {
     } else {
         mode.type = 'column';
         mode.gw = gw;
-        mode.direction = 'desc';
+        // Default to showing "best" matchups first
+        // For "goals for": 'asc' shows lowest values (weaker attacks)
+        // For "goals against": 'desc' shows highest values (weaker defenses)
+        mode.direction = STATE.ui.statType === 'for' ? 'asc' : 'desc';
     }
     renderTable();
 }
@@ -489,19 +492,23 @@ function renderTable() {
     });
 
     // Sorting
+    // For "goals for": ascending (lower opponent goals is better - weaker attacks)
+    // For "goals against": descending (higher opponent goals is better - weaker defenses)
+    const sortMultiplier = statType === 'for' ? 1 : -1;
+
     if (sortMode.type === 'max') {
-        rowData.sort((a, b) => b.maxVal - a.maxVal);
+        rowData.sort((a, b) => sortMultiplier * (a.maxVal - b.maxVal));
     } else if (sortMode.type === 'avg') {
-        rowData.sort((a, b) => b.avgVal - a.avgVal);
+        rowData.sort((a, b) => sortMultiplier * (a.avgVal - b.avgVal));
     } else if (sortMode.type === 'total') {
-        rowData.sort((a, b) => b.totalVal - a.totalVal);
+        rowData.sort((a, b) => sortMultiplier * (a.totalVal - b.totalVal));
     } else if (sortMode.type === 'column' && sortMode.gw != null) {
         const dir = sortMode.direction === 'asc' ? 1 : -1;
         const gw = sortMode.gw;
         rowData.sort((a, b) => {
             const va = a.gwValueMap[gw] ?? -1;
             const vb = b.gwValueMap[gw] ?? -1;
-            return dir * (va - vb);
+            return dir * sortMultiplier * (va - vb);
         });
     }
 
