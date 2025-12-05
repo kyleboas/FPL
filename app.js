@@ -41,10 +41,10 @@ const STATE = {
     },
     lookups: {
         teamsById: {},
-        teamsByCode: {},  // New lookup: code -> team (for fixture/stats data that uses codes)
+        teamsByCode: {},   // key: team.code
         playersById: {},
-        fixturesByTeam: {},
-        probabilities: {}
+        fixturesByTeam: {}, // key: team.code -> { gw -> { opponentCode, wasHome, finished } }
+        probabilities: {}   // key: opponentCode -> { 'true'/'false' -> { archetype -> prob } }
     },
     ui: {
         currentArchetype: 'CB',
@@ -58,42 +58,27 @@ const STATE = {
 // ==========================================
 
 const CSVParser = {
-    // Improved Parser handles quoted strings correctly (e.g. "Fernandes, Bruno")
     parse: (text) => {
         if (!text) return [];
         const lines = text.trim().split('\n');
         if (lines.length < 2) return [];
 
-        const headers = lines[0].split(',').map(h => h.trim().replace(/^"|"$/g, '')); // Remove quotes from headers
+        const headers = lines[0].split(',').map(h => h.trim().replace(/^"|"$/g, ''));
         const result = [];
-
-        // Regex to match CSV fields, respecting quotes
-        // Matches: quoted string OR non-comma sequence
-        const re = /(?:\"([^\"]*(?:\"\"[^\"]*)*)\")|([^\",]+)/g;
 
         for (let i = 1; i < lines.length; i++) {
             if (!lines[i].trim()) continue;
 
             const row = {};
-            const matches = [];
-            let match;
-            // Simple split is risky, but for speed in browser JS on clean data:
-            // Let's use a slightly robust split or fallback to standard split if no quotes found
-            
             let currentLine = lines[i];
-            
-            // Basic comma split (Fallback for simple files)
-            let values = currentLine.split(',');
 
-            // If we have more commas than headers, likely have quoted strings. 
-            // For this specific FPL data, names are often quoted.
+            let values = currentLine.split(',');
             if (values.length > headers.length) {
-                // Quick-fix parser for quoted CSVs
                 values = [];
                 let inQuote = false;
                 let buffer = '';
-                for(let char of currentLine) {
-                    if(char === '"') {
+                for (let char of currentLine) {
+                    if (char === '"') {
                         inQuote = !inQuote;
                     } else if (char === ',' && !inQuote) {
                         values.push(buffer);
@@ -105,16 +90,14 @@ const CSVParser = {
                 values.push(buffer);
             }
 
-            if (values.length < headers.length) continue; // Malformed row
+            if (values.length < headers.length) continue;
 
             headers.forEach((header, index) => {
                 let val = values[index] ? values[index].trim() : '';
-                // Clean quotes
                 if (val.startsWith('"') && val.endsWith('"')) {
                     val = val.slice(1, -1);
                 }
 
-                // Attempt numeric conversion
                 if (!isNaN(val) && val !== '') {
                     val = Number(val);
                 } else if (val.toLowerCase() === 'true') {
@@ -130,7 +113,6 @@ const CSVParser = {
     }
 };
 
-// Helper to handle header variations common in FPL data
 const getVal = (obj, ...keys) => {
     for (let k of keys) {
         if (obj[k] !== undefined) return obj[k];
@@ -169,7 +151,6 @@ async function loadData() {
 
     updateStatus("Fetching Season Metadata...");
     
-    // 1) Season-level players / teams
     const [players, teams] = await Promise.all([
         fetchCSV(CONFIG.URLS.PLAYERS),
         fetchCSV(CONFIG.URLS.TEAMS)
@@ -177,11 +158,9 @@ async function loadData() {
 
     updateStatus(`Loaded ${players.length} Players and ${teams.length} Teams. Fetching GW Data...`);
 
-    // 2) GW-level stats + fixtures
     const allStats = [];
     const allFixtures = [];
 
-    // Batch requests to avoid hitting browser connection limits instantly
     const batchSize = 5;
     for (let gw = 1; gw <= CONFIG.UI.MAX_GW; gw += batchSize) {
         const promises = [];
@@ -205,7 +184,6 @@ async function loadData() {
         const results = await Promise.all(promises);
         
         results.forEach(([gwStats, gwFixtures, gNum]) => {
-            // Normalize GW property
             gwStats.forEach(row => row.gw = row.gw || row.gameweek || gNum);
             gwFixtures.forEach(row => row.gw = row.gw || row.gameweek || gNum);
 
@@ -233,14 +211,13 @@ function deriveArchetype(player) {
     }
     const pos = player.position;
     if (pos === 'GKP') return 'GKP'; 
-    if (pos === 'DEF') return 'CB'; // Default DEF to CB
+    if (pos === 'DEF') return 'CB';
     if (pos === 'MID') return 'MID';
     if (pos === 'FWD') return 'FWD';
     return null;
 }
 
 function checkDefconHit(stats, archetype) {
-    // Handle variations in stat names (clearances vs clearances_blocks_interceptions etc)
     const clr = getVal(stats, 'clearances', 'clearances_blocks_interceptions') || 0;
     const int = getVal(stats, 'interceptions') || 0;
     const tck = getVal(stats, 'tackles') || 0;
@@ -254,18 +231,10 @@ function checkDefconHit(stats, archetype) {
     return false;
 }
 
+// probabilities keyed by opponentCode
 function processProbabilities() {
-    const { stats } = STATE.data;
-    const { playersById, teamsById, teamsByCode } = STATE.lookups;
-
-    // Helper to convert a team code to team ID (stats data may use codes)
-    const codeToId = (codeOrId) => {
-        // First check if it's already a valid team ID
-        if (teamsById[codeOrId]) return codeOrId;
-        // Otherwise, look up by code and return the team's ID
-        const team = teamsByCode[codeOrId];
-        return team ? team.id : null;
-    };
+    const { stats, teams } = STATE.data;
+    const { playersById, fixturesByTeam, teamsById, teamsByCode } = STATE.lookups;
 
     const opponentAgg = {};
     const leagueAgg = { 'true': {}, 'false': {} };
@@ -278,11 +247,9 @@ function processProbabilities() {
     });
 
     stats.forEach(statRecord => {
-        // ---- minutes guard (handle different column names) ----
         const minutes = getVal(statRecord, 'minutes', 'minutes_played', 'minutes_x');
         if ((minutes || 0) <= 0) return;
 
-        // Try to find player ID in common fields
         const pID = getVal(statRecord, 'player_id', 'element', 'id');
         const player = playersById[pID];
         if (!player) return;
@@ -290,47 +257,54 @@ function processProbabilities() {
         const archetype = deriveArchetype(player);
         if (!archetype || archetype === 'GKP') return;
 
-        const isHit = checkDefconHit(statRecord, archetype);
+        const gw = getVal(statRecord, 'gw', 'gameweek', 'event', 'round');
+        if (!gw) return;
 
-        // ---- more robust was_home parsing ----
-        const wasHomeRaw = getVal(statRecord, 'was_home');
-        const wasHome =
-            wasHomeRaw === true ||
-            wasHomeRaw === 1 ||
-            wasHomeRaw === '1' ||
-            String(wasHomeRaw).toLowerCase() === 'true';
+        // map player.team (id or code) → teamCode
+        const teamRef = getVal(player, 'team', 'team_id', 'teamid', 'team_code');
+        let teamCode = null;
 
+        if (teamsByCode[teamRef]) {
+            teamCode = teamRef;
+        } else if (teamsById[teamRef]) {
+            teamCode = teamsById[teamRef].code;
+        }
+
+        if (teamCode == null || !fixturesByTeam[teamCode]) return;
+
+        const fixture = fixturesByTeam[teamCode][gw];
+        if (!fixture) return;
+
+        const opponentCode = fixture.opponentCode;
+        const wasHome = !!fixture.wasHome;
         const venueKey = String(wasHome);
 
-        // Convert opponent code to ID (stats CSVs may use team codes, not IDs)
-        const opponentRaw = getVal(statRecord, 'opponent_team_id', 'opponent_team');
-        const opponentId = codeToId(opponentRaw);
-        if (!opponentId) return;
+        const isHit = checkDefconHit(statRecord, archetype);
 
-        // League Baseline
         const leagueBin = leagueAgg[venueKey][archetype];
         leagueBin.trials++;
         if (isHit) leagueBin.hits++;
 
-        // Opponent Specific
-        if (!opponentAgg[opponentId]) opponentAgg[opponentId] = { 'true': {}, 'false': {} };
-        if (!opponentAgg[opponentId][venueKey]) opponentAgg[opponentId][venueKey] = {};
-        if (!opponentAgg[opponentId][venueKey][archetype]) {
-            opponentAgg[opponentId][venueKey][archetype] = initAgg();
+        if (!opponentCode) return;
+
+        if (!opponentAgg[opponentCode]) {
+            opponentAgg[opponentCode] = { 'true': {}, 'false': {} };
+        }
+        if (!opponentAgg[opponentCode][venueKey][archetype]) {
+            opponentAgg[opponentCode][venueKey][archetype] = initAgg();
         }
 
-        const oppBin = opponentAgg[opponentId][venueKey][archetype];
+        const oppBin = opponentAgg[opponentCode][venueKey][archetype];
         oppBin.trials++;
         if (isHit) oppBin.hits++;
     });
 
-    // Compute Probabilities
     STATE.lookups.probabilities = {};
     const { K_FACTOR, MIN_PROB, MAX_PROB } = CONFIG.MODEL;
 
-    STATE.data.teams.forEach(team => {
-        const teamId = team.id;
-        STATE.lookups.probabilities[teamId] = { 'true': {}, 'false': {} };
+    teams.forEach(team => {
+        const teamCode = team.code;
+        STATE.lookups.probabilities[teamCode] = { 'true': {}, 'false': {} };
 
         ['true', 'false'].forEach(venueKey => {
             archetypes.forEach(arch => {
@@ -338,15 +312,17 @@ function processProbabilities() {
                 const leagueProb = lb.trials > 0 ? (lb.hits / lb.trials) : 0;
 
                 let hits = 0, trials = 0;
-                if (opponentAgg[teamId] && opponentAgg[teamId][venueKey] && opponentAgg[teamId][venueKey][arch]) {
-                    hits = opponentAgg[teamId][venueKey][arch].hits;
-                    trials = opponentAgg[teamId][venueKey][arch].trials;
+                if (opponentAgg[teamCode] &&
+                    opponentAgg[teamCode][venueKey] &&
+                    opponentAgg[teamCode][venueKey][arch]) {
+                    hits = opponentAgg[teamCode][venueKey][arch].hits;
+                    trials = opponentAgg[teamCode][venueKey][arch].trials;
                 }
 
                 const smoothedProb = (hits + (K_FACTOR * leagueProb)) / (trials + K_FACTOR);
                 const finalProb = Math.max(MIN_PROB, Math.min(MAX_PROB, smoothedProb));
 
-                STATE.lookups.probabilities[teamId][venueKey][arch] = finalProb;
+                STATE.lookups.probabilities[teamCode][venueKey][arch] = finalProb;
             });
         });
     });
@@ -359,47 +335,30 @@ function processData() {
     STATE.lookups.teamsById = {};
     STATE.data.teams.forEach(t => STATE.lookups.teamsById[t.id] = t);
 
-    // Create code -> team lookup (fixture data often uses team codes, not IDs)
     STATE.lookups.teamsByCode = {};
     STATE.data.teams.forEach(t => STATE.lookups.teamsByCode[t.code] = t);
 
     STATE.lookups.fixturesByTeam = {};
-    STATE.data.teams.forEach(t => STATE.lookups.fixturesByTeam[t.id] = {});
+    STATE.data.teams.forEach(t => STATE.lookups.fixturesByTeam[t.code] = {});
 
-    // Helper to convert a team code to team ID (fixture data uses codes)
-    const codeToId = (codeOrId) => {
-        // First check if it's already a valid team ID
-        if (STATE.lookups.teamsById[codeOrId]) return codeOrId;
-        // Otherwise, look up by code and return the team's ID
-        const team = STATE.lookups.teamsByCode[codeOrId];
-        return team ? team.id : null;
-    };
-
+    // fixtures.csv uses team codes; keep everything in codes
     STATE.data.fixtures.forEach(fix => {
-        // ✅ include home_team / away_team as fallbacks
-        const hRaw = getVal(fix, 'home_team_id', 'team_h', 'home_team');
-        const aRaw = getVal(fix, 'away_team_id', 'team_a', 'away_team');
+        const hCode = getVal(fix, 'home_team', 'team_h', 'home_team_id');
+        const aCode = getVal(fix, 'away_team', 'team_a', 'away_team_id');
 
-        // Convert codes to IDs (fixture CSVs use team codes, not IDs)
-        const hID = codeToId(hRaw);
-        const aID = codeToId(aRaw);
-
-        const isFin = getVal(fix, 'finished') === true ||
-                      String(getVal(fix, 'finished')) === 'true';
-
-        // gw is already normalised in loadData()
+        const isFin = String(getVal(fix, 'finished')).toLowerCase() === 'true';
         const gw = getVal(fix, 'gw', 'event', 'gameweek');
 
-        if (hID != null && STATE.lookups.fixturesByTeam[hID]) {
-            STATE.lookups.fixturesByTeam[hID][gw] = {
-                opponentId: aID,  // Store the converted ID, not the raw code
+        if (hCode != null && STATE.lookups.fixturesByTeam[hCode]) {
+            STATE.lookups.fixturesByTeam[hCode][gw] = {
+                opponentCode: aCode,
                 wasHome: true,
                 finished: isFin
             };
         }
-        if (aID != null && STATE.lookups.fixturesByTeam[aID]) {
-            STATE.lookups.fixturesByTeam[aID][gw] = {
-                opponentId: hID,  // Store the converted ID, not the raw code
+        if (aCode != null && STATE.lookups.fixturesByTeam[aCode]) {
+            STATE.lookups.fixturesByTeam[aCode][gw] = {
+                opponentCode: hCode,
                 wasHome: false,
                 finished: isFin
             };
@@ -410,7 +369,11 @@ function processData() {
 
     const debugEl = document.getElementById('status-bar');
     if (debugEl) {
-        debugEl.textContent = `Data Ready: ${STATE.data.players.length} Players, ${STATE.data.teams.length} Teams, ${STATE.data.stats.length} Stat Records, ${STATE.data.fixtures.length} Fixtures processed.`;
+        debugEl.textContent =
+            `Data Ready: ${STATE.data.players.length} Players, ` +
+            `${STATE.data.teams.length} Teams, ` +
+            `${STATE.data.stats.length} Stat Records, ` +
+            `${STATE.data.fixtures.length} Fixtures processed.`;
     }
 }
 
@@ -419,19 +382,7 @@ function processData() {
 // ==========================================
 
 function getProbabilityColor(prob) {
-    // Heatmap Logic: Green (Low action) -> Yellow -> Red (High action)
-    // Actually, usually in FPL: Red = Danger/Hard, Green = Easy.
-    // For "Defensive Action Probability", HIGH prob means defenders are BUSY.
-    // If you want defenders to get points (BPS/Saves), high action is often Good for GKP/Defenders, 
-    // but implies the team is under pressure.
-    // Let's use a standard heat scale. 
-    // 0.05 (Low) -> White/Blue
-    // 0.95 (High) -> Red
-    
-    const intensity = Math.min(1, Math.max(0, (prob - 0.2) / 0.6)); // Normalize roughly between 0.2 and 0.8
-    // Interpolate white to red
-    // Red: 255, 0, 0
-    // White: 255, 255, 255
+    const intensity = Math.min(1, Math.max(0, (prob - 0.2) / 0.6));
     const g = Math.floor(255 * (1 - intensity));
     const b = Math.floor(255 * (1 - intensity));
     return `rgb(255, ${g}, ${b})`; 
@@ -444,18 +395,13 @@ function sanityCheck() {
     console.log('Teams:', STATE.data.teams.length);
     console.log('Raw fixtures rows:', STATE.data.fixtures.length);
 
-    // How many GW slots did we actually map into fixturesByTeam?
     let mappedSlots = 0;
-    for (const [teamId, gwMap] of Object.entries(STATE.lookups.fixturesByTeam)) {
+    for (const [, gwMap] of Object.entries(STATE.lookups.fixturesByTeam)) {
         mappedSlots += Object.keys(gwMap).length;
     }
     console.log('Mapped fixture slots in fixturesByTeam:', mappedSlots);
-
-    // Each real fixture should appear twice (home + away),
-    // so this number should be roughly 2x the raw fixtures count.
     console.log('Expected ~2x raw fixtures:', STATE.data.fixtures.length * 2);
 
-    // Pick a concrete team to inspect, e.g. Arsenal
     const arsenal = STATE.data.teams.find(t => t.short_name === 'ARS');
     if (!arsenal) {
         console.warn('No team with short_name "ARS" found');
@@ -463,21 +409,20 @@ function sanityCheck() {
     }
 
     console.log('Arsenal team object:', arsenal);
-    const arsenalMap = STATE.lookups.fixturesByTeam[arsenal.id];
+    const arsenalMap = STATE.lookups.fixturesByTeam[arsenal.code];
     console.log('Arsenal fixturesByTeam entry:', arsenalMap);
 
-    // Try a couple of gameweeks – adjust to ones you know should have fixtures
     [1, 2, 7].forEach(gw => {
         const f = arsenalMap ? arsenalMap[gw] : null;
         console.log(`GW${gw} fixture for ARS:`, f);
 
         if (f) {
-            const opp = STATE.lookups.teamsById[f.opponentId];
+            const opp = STATE.lookups.teamsByCode[f.opponentCode];
             const venueKey = String(f.wasHome);
-            const probCB = STATE.lookups.probabilities[f.opponentId]?.[venueKey]?.CB;
-            const probLB = STATE.lookups.probabilities[f.opponentId]?.[venueKey]?.LB;
-            const probRB = STATE.lookups.probabilities[f.opponentId]?.[venueKey]?.RB;
-            const probMID = STATE.lookups.probabilities[f.opponentId]?.[venueKey]?.MID;
+            const probCB  = STATE.lookups.probabilities[f.opponentCode]?.[venueKey]?.CB;
+            const probLB  = STATE.lookups.probabilities[f.opponentCode]?.[venueKey]?.LB;
+            const probRB  = STATE.lookups.probabilities[f.opponentCode]?.[venueKey]?.RB;
+            const probMID = STATE.lookups.probabilities[f.opponentCode]?.[venueKey]?.MID;
 
             console.log(
                 `  Opponent: ${opp?.short_name} (${venueKey === 'true' ? 'H' : 'A'})`,
@@ -493,7 +438,7 @@ function sanityCheck() {
 function renderTable() {
     const { currentArchetype, startGW, sortBy } = STATE.ui;
     const { teams } = STATE.data;
-    const { fixturesByTeam, probabilities, teamsById } = STATE.lookups;
+    const { fixturesByTeam, probabilities, teamsByCode } = STATE.lookups;
     const endGW = parseInt(startGW) + CONFIG.UI.VISIBLE_GW_SPAN - 1;
 
     const thead = document.getElementById('fixture-header');
@@ -515,12 +460,12 @@ function renderTable() {
     thead.appendChild(headerRow);
 
     let rowData = teams.map(team => {
-        const teamId = team.id;
+        const teamCode = team.code;
         const fixtures = [];
         let metrics = [];
 
         for (let gw = parseInt(startGW); gw <= endGW; gw++) {
-            const fix = fixturesByTeam[teamId] ? fixturesByTeam[teamId][gw] : null;
+            const fix = fixturesByTeam[teamCode] ? fixturesByTeam[teamCode][gw] : null;
             
             if (!fix) {
                 fixtures.push({ type: 'BLANK' });
@@ -528,18 +473,19 @@ function renderTable() {
                 continue;
             }
 
-            const opponentId = fix.opponentId;
+            const opponentCode = fix.opponentCode;
             const isHome = fix.wasHome;
             const venueKey = String(isHome); 
 
             let prob = CONFIG.MODEL.MIN_PROB;
-            if (probabilities[opponentId] && 
-                probabilities[opponentId][venueKey] && 
-                probabilities[opponentId][venueKey][currentArchetype]) {
-                prob = probabilities[opponentId][venueKey][currentArchetype];
+            if (probabilities[opponentCode] && 
+                probabilities[opponentCode][venueKey] && 
+                probabilities[opponentCode][venueKey][currentArchetype]) {
+                prob = probabilities[opponentCode][venueKey][currentArchetype];
             }
 
-            const oppName = teamsById[opponentId] ? teamsById[opponentId].short_name : 'UNK';
+            const oppTeam = teamsByCode[opponentCode];
+            const oppName = oppTeam ? oppTeam.short_name : 'UNK';
             
             fixtures.push({
                 type: 'MATCH',
@@ -579,7 +525,6 @@ function renderTable() {
                 td.textContent = '-';
                 td.style.backgroundColor = '#f4f4f4';
             } else {
-                // wrap inner content instead of making the <td> itself flex
                 const wrapper = document.createElement('div');
                 wrapper.className = 'match-cell';
 
@@ -637,7 +582,7 @@ async function init() {
     const mainEl = document.getElementById('main-content');
     const errorEl = document.getElementById('error');
 
-        try {
+    try {
         const rawData = await loadData();
         STATE.data = rawData;
         processData();
@@ -661,4 +606,3 @@ async function init() {
 }
 
 document.addEventListener('DOMContentLoaded', init);
-
