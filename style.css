@@ -6,8 +6,8 @@
 
 body {
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
-    background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
-    color: #e0e0e0;
+    background: linear-gradient(135deg, #f5f7fa 0%, #e8ecf1 100%);
+    color: #2c3e50;
     min-height: 100vh;
     line-height: 1.6;
 }
@@ -21,13 +21,13 @@ body {
 header {
     text-align: center;
     padding: 30px 0;
-    border-bottom: 2px solid #0f3460;
+    border-bottom: 2px solid #d1d8e0;
     margin-bottom: 30px;
 }
 
 header h1 {
     font-size: 2.5rem;
-    background: linear-gradient(90deg, #00d4ff, #7b2cbf);
+    background: linear-gradient(90deg, #0984e3, #6c5ce7);
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
     background-clip: text;
@@ -35,7 +35,7 @@ header h1 {
 }
 
 .subtitle {
-    color: #888;
+    color: #636e72;
     font-size: 1rem;
 }
 
@@ -52,8 +52,8 @@ header h1 {
 .spinner {
     width: 50px;
     height: 50px;
-    border: 4px solid #0f3460;
-    border-top-color: #00d4ff;
+    border: 4px solid #dfe6e9;
+    border-top-color: #0984e3;
     border-radius: 50%;
     animation: spin 1s linear infinite;
     margin: 0 auto 20px;
@@ -79,9 +79,10 @@ header h1 {
     flex-wrap: wrap;
     gap: 15px;
     padding: 20px;
-    background: rgba(15, 52, 96, 0.5);
+    background: rgba(255, 255, 255, 0.8);
     border-radius: 12px;
     margin-bottom: 25px;
+    border: 1px solid #dfe6e9;
 }
 
 .filter-group {
@@ -92,17 +93,17 @@ header h1 {
 
 .filter-group label {
     font-size: 0.85rem;
-    color: #aaa;
+    color: #636e72;
     font-weight: 500;
 }
 
 .filter-group select,
 .filter-group input {
     padding: 10px 15px;
-    border: 1px solid #0f3460;
+    border: 1px solid #dfe6e9;
     border-radius: 6px;
-    background: #16213e;
-    color: #e0e0e0;
+    background: #ffffff;
+    color: #2c3e50;
     font-size: 0.95rem;
     cursor: pointer;
     min-width: 150px;
@@ -110,14 +111,14 @@ header h1 {
 
 .filter-group select:hover,
 .filter-group input:hover {
-    border-color: #00d4ff;
+    border-color: #0984e3;
 }
 
 .filter-group select:focus,
 .filter-group input:focus {
     outline: none;
-    border-color: #00d4ff;
-    box-shadow: 0 0 0 2px rgba(0, 212, 255, 0.2);
+    border-color: #0984e3;
+    box-shadow: 0 0 0 2px rgba(9, 132, 227, 0.2);
 }
 
 /* Stats Summary */
@@ -129,16 +130,16 @@ header h1 {
 }
 
 .stat-card {
-    background: rgba(15, 52, 96, 0.5);
+    background: rgba(255, 255, 255, 0.9);
     padding: 20px;
     border-radius: 12px;
     text-align: center;
-    border: 1px solid #0f3460;
+    border: 1px solid #dfe6e9;
 }
 
 .stat-card h3 {
     font-size: 0.9rem;
-    color: #888;
+    color: #636e72;
     margin-bottom: 10px;
     font-weight: 500;
 }
@@ -146,22 +147,22 @@ header h1 {
 .stat-card span {
     font-size: 2rem;
     font-weight: 700;
-    color: #00d4ff;
+    color: #0984e3;
 }
 
 /* Legend */
 .legend {
-    background: rgba(15, 52, 96, 0.3);
+    background: rgba(255, 255, 255, 0.7);
     padding: 20px;
     border-radius: 12px;
     margin-bottom: 25px;
-    border: 1px solid #0f3460;
+    border: 1px solid #dfe6e9;
 }
 
 .legend h3 {
     font-size: 1rem;
     margin-bottom: 15px;
-    color: #00d4ff;
+    color: #0984e3;
 }
 
 .legend-items {
@@ -178,20 +179,20 @@ header h1 {
 
 .legend-label {
     font-weight: 600;
-    color: #7b2cbf;
+    color: #6c5ce7;
     white-space: nowrap;
 }
 
 .legend-desc {
-    color: #aaa;
+    color: #636e72;
 }
 
 /* Results Table */
 .results {
     overflow-x: auto;
-    background: rgba(15, 52, 96, 0.3);
+    background: rgba(255, 255, 255, 0.9);
     border-radius: 12px;
-    border: 1px solid #0f3460;
+    border: 1px solid #dfe6e9;
 }
 
 #results-table {
@@ -203,13 +204,13 @@ header h1 {
 #results-table td {
     padding: 14px 12px;
     text-align: left;
-    border-bottom: 1px solid #0f3460;
+    border-bottom: 1px solid #dfe6e9;
 }
 
 #results-table th {
-    background: rgba(0, 0, 0, 0.3);
+    background: #f8f9fa;
     font-weight: 600;
-    color: #00d4ff;
+    color: #0984e3;
     font-size: 0.85rem;
     text-transform: uppercase;
     letter-spacing: 0.5px;
@@ -218,7 +219,7 @@ header h1 {
 }
 
 #results-table tbody tr:hover {
-    background: rgba(0, 212, 255, 0.05);
+    background: rgba(9, 132, 227, 0.05);
 }
 
 #results-table td {
@@ -249,7 +250,7 @@ header h1 {
 .prob-bar {
     flex: 1;
     height: 8px;
-    background: #0f3460;
+    background: #e9ecef;
     border-radius: 4px;
     overflow: hidden;
     min-width: 60px;
@@ -264,7 +265,7 @@ header h1 {
 .prob-low { background: linear-gradient(90deg, #dc3545, #ff6b6b); }
 .prob-med { background: linear-gradient(90deg, #ffc107, #ffdb58); }
 .prob-high { background: linear-gradient(90deg, #28a745, #51cf66); }
-.prob-very-high { background: linear-gradient(90deg, #00d4ff, #7b2cbf); }
+.prob-very-high { background: linear-gradient(90deg, #0984e3, #6c5ce7); }
 
 .prob-value {
     font-weight: 700;
@@ -272,28 +273,28 @@ header h1 {
     text-align: right;
 }
 
-.prob-value.low { color: #ff6b6b; }
-.prob-value.med { color: #ffdb58; }
-.prob-value.high { color: #51cf66; }
-.prob-value.very-high { color: #00d4ff; }
+.prob-value.low { color: #dc3545; }
+.prob-value.med { color: #f39c12; }
+.prob-value.high { color: #28a745; }
+.prob-value.very-high { color: #0984e3; }
 
 /* Multiplier styling */
-.mult-good { color: #51cf66; }
-.mult-neutral { color: #aaa; }
-.mult-bad { color: #ff6b6b; }
+.mult-good { color: #28a745; }
+.mult-neutral { color: #636e72; }
+.mult-bad { color: #dc3545; }
 
 /* Footer */
 footer {
     text-align: center;
     padding: 30px 0;
     margin-top: 40px;
-    border-top: 1px solid #0f3460;
-    color: #666;
+    border-top: 1px solid #dfe6e9;
+    color: #636e72;
     font-size: 0.9rem;
 }
 
 footer a {
-    color: #00d4ff;
+    color: #0984e3;
     text-decoration: none;
 }
 
@@ -335,7 +336,7 @@ footer p {
 .no-results {
     text-align: center;
     padding: 40px;
-    color: #888;
+    color: #636e72;
 }
 
 .no-results td {
