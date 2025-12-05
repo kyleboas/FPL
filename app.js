@@ -21,9 +21,9 @@ const CONFIG = {
         MID_FWD: 12
     },
     MODEL: {
-        K_FACTOR: 10,
-        MIN_PROB: 0.05,
-        MAX_PROB: 0.95
+        K_FACTOR: 0,      // not used anymore, but you can leave it
+        MIN_PROB: 0.0,    // no floor
+        MAX_PROB: 1.0     // cap at 100%
     },
     UI: {
         VISIBLE_GW_SPAN: 6,
@@ -280,19 +280,17 @@ function checkDefconHit(stats, archetype) {
 }
 
 // probabilities keyed by opponentCode
+// Meaning: for a given opponentCode / venue / archetype,
+// prob = (# of times one of their *opponents* hit DEFCON)
+//       / (total # of such player-appearances)
 function processProbabilities() {
     const { stats, teams } = STATE.data;
     const { playersById, fixturesByTeam, teamsById, teamsByCode } = STATE.lookups;
 
+    // opponentAgg[opponentCode][venueKey][archetype] = { hits, trials }
     const opponentAgg = {};
-    const leagueAgg = { 'true': {}, 'false': {} };
     const initAgg = () => ({ hits: 0, trials: 0 });
     const archetypes = ['CB', 'LB', 'RB', 'MID', 'FWD'];
-
-    archetypes.forEach(arch => {
-        leagueAgg['true'][arch] = initAgg();
-        leagueAgg['false'][arch] = initAgg();
-    });
 
     stats.forEach(statRecord => {
         const minutes = getVal(statRecord, 'minutes', 'minutes_played', 'minutes_x');
@@ -302,21 +300,20 @@ function processProbabilities() {
         const player = playersById[pID];
         if (!player) return;
 
-        // ✅ NEW: pass statRecord as second arg
         const archetype = deriveArchetype(player, statRecord);
         if (!archetype || archetype === 'GKP') return;
 
         const gw = getVal(statRecord, 'gw', 'gameweek', 'event', 'round');
         if (!gw) return;
 
-        // map player.team (id or code) → teamCode
+        // map player.team (id or code) → teamCode (e.g. 3 = ARS)
         const teamRef = getVal(player, 'team', 'team_id', 'teamid', 'team_code');
         let teamCode = null;
 
         if (teamsByCode[teamRef]) {
-            teamCode = teamRef;
+            teamCode = teamRef;                 // already a code
         } else if (teamsById[teamRef]) {
-            teamCode = teamsById[teamRef].code;
+            teamCode = teamsById[teamRef].code; // convert id → code
         }
 
         if (teamCode == null || !fixturesByTeam[teamCode]) return;
@@ -326,15 +323,11 @@ function processProbabilities() {
 
         const opponentCode = fixture.opponentCode;
         const wasHome = !!fixture.wasHome;
-        const venueKey = String(wasHome);
-
-        const isHit = checkDefconHit(statRecord, archetype);
-
-        const leagueBin = leagueAgg[venueKey][archetype];
-        leagueBin.trials++;
-        if (isHit) leagueBin.hits++;
+        const venueKey = String(wasHome); // 'true' or 'false'
 
         if (!opponentCode) return;
+
+        const isHit = checkDefconHit(statRecord, archetype);
 
         if (!opponentAgg[opponentCode]) {
             opponentAgg[opponentCode] = { 'true': {}, 'false': {} };
@@ -343,13 +336,13 @@ function processProbabilities() {
             opponentAgg[opponentCode][venueKey][archetype] = initAgg();
         }
 
-        const oppBin = opponentAgg[opponentCode][venueKey][archetype];
-        oppBin.trials++;
-        if (isHit) oppBin.hits++;
+        const bucket = opponentAgg[opponentCode][venueKey][archetype];
+        bucket.trials++;
+        if (isHit) bucket.hits++;
     });
 
+    // Turn aggregates into raw hit percentages
     STATE.lookups.probabilities = {};
-    const { K_FACTOR, MIN_PROB, MAX_PROB } = CONFIG.MODEL;
 
     teams.forEach(team => {
         const teamCode = team.code;
@@ -357,23 +350,29 @@ function processProbabilities() {
 
         ['true', 'false'].forEach(venueKey => {
             archetypes.forEach(arch => {
-                const lb = leagueAgg[venueKey][arch];
-                const leagueProb = lb.trials > 0 ? (lb.hits / lb.trials) : 0;
+                let hits = 0;
+                let trials = 0;
 
-                let hits = 0, trials = 0;
                 if (opponentAgg[teamCode] &&
                     opponentAgg[teamCode][venueKey] &&
                     opponentAgg[teamCode][venueKey][arch]) {
-                    hits = opponentAgg[teamCode][venueKey][arch].hits;
+                    hits   = opponentAgg[teamCode][venueKey][arch].hits;
                     trials = opponentAgg[teamCode][venueKey][arch].trials;
                 }
 
-                const smoothedProb = (hits + (K_FACTOR * leagueProb)) / (trials + K_FACTOR);
-                const finalProb = Math.max(MIN_PROB, Math.min(MAX_PROB, smoothedProb));
+                const prob = trials > 0 ? (hits / trials) : 0;
 
-                STATE.lookups.probabilities[teamCode][venueKey][arch] = finalProb;
+                STATE.lookups.probabilities[teamCode][venueKey][arch] = prob;
             });
         });
+    });
+
+    // Optional debug
+    console.log('=== DEFCON Opponent Aggregates ===');
+    Object.entries(STATE.lookups.probabilities).forEach(([oppCode, byVenue]) => {
+        const team = teamsByCode[oppCode];
+        const name = team ? team.short_name : oppCode;
+        console.log(`Opponent ${name} (${oppCode})`, byVenue);
     });
 }
 
