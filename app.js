@@ -1,5 +1,16 @@
-// FPL DEFCON Predictor - Main Application
-// Data source: https://github.com/olbauday/FPL-Elo-Insights
+// FPL DEFCON Predictor - Fixture Matrix Version
+// Data source: https://github.com/olbauday/FPL-Elo-Insights/main/data/2025-2026
+//
+// New behaviour:
+// - No player list.
+// - Builds a fixture matrix: rows = teams, columns = upcoming gameweeks.
+// - Each cell shows opponent + H/A + DEFCON hit probability for a selected archetype.
+//
+// Required HTML IDs:
+// - #loading, #error, #main-content (as before)
+// - #fixture-header  (inside <thead> of the fixture table)
+// - #fixture-body    (inside <tbody> of the fixture table)
+// - #archetype-filter <select> with values like: CB, RB, LB, MID, DEF_GKP, MID_FWD
 
 const DATA_BASE_URL = 'https://raw.githubusercontent.com/olbauday/FPL-Elo-Insights/main/data/2025-2026';
 const DATA_GW_URL = 'https://raw.githubusercontent.com/olbauday/FPL-Elo-Insights/main/data/2025-2026/By%20Tournament/Premier%20League';
@@ -8,12 +19,9 @@ const DEFCON_THRESHOLD_MID_FWD = 12;  // CBIRT threshold for mids/forwards
 const MAX_GAMEWEEKS = 38;  // Maximum gameweeks in a season
 
 // Default league-wide DEFCON probability when no data exists yet
-// This is the neutral baseline chance that a player of a given position group
-// hits the DEFCON threshold vs a random opponent.
 const DEFAULT_DEFCON_PROB = 0.28;
 
 // Strength of league-wide prior (in "virtual games") for smoothing per-opponent rates.
-// Higher = more regression to league average, lower = more noisy team-specific rates.
 const DEFCON_PRIOR_STRENGTH = 6;
 
 // Global state
@@ -22,13 +30,12 @@ let state = {
     playerMatchStats: [],
     matches: [],
     teams: [],
-    processedData: [],
+    teamLookup: {},            // id -> { id, name, shortName }
+    teamPositionProbs: null,   // from buildOpponentPositionProbabilities()
+    leaguePositionProbs: null, // from buildOpponentPositionProbabilities()
+    fixtureMatrix: null,       // { gameweeks: number[], rows: [ { teamId, name, shortName, fixtures: { [gw]: cell } } ] }
     filters: {
-        position: 'all',
-        team: 'all',
-        gameweek: 'next',
-        minMatches: 3,
-        sortBy: 'probability'
+        archetype: 'CB'        // CB, RB, LB, MID, DEF_GKP, MID_FWD
     }
 };
 
@@ -37,16 +44,12 @@ const elements = {
     loading: document.getElementById('loading'),
     error: document.getElementById('error'),
     mainContent: document.getElementById('main-content'),
-    resultsBody: document.getElementById('results-body'),
-    positionFilter: document.getElementById('position-filter'),
-    teamFilter: document.getElementById('team-filter'),
-    gameweekFilter: document.getElementById('gameweek-filter'),
-    minMatches: document.getElementById('min-matches'),
-    sortBy: document.getElementById('sort-by'),
-    totalPlayers: document.getElementById('total-players'),
-    highProbCount: document.getElementById('high-prob-count'),
-    medProbCount: document.getElementById('med-prob-count')
+    fixtureHeader: document.getElementById('fixture-header'),
+    fixtureBody: document.getElementById('fixture-body'),
+    archetypeFilter: document.getElementById('archetype-filter')
 };
+
+// --------------------- Utility helpers ---------------------
 
 // Normalize any team / player ID so "7", "7.0" and 7 all become "7"
 function normId(value) {
@@ -124,7 +127,6 @@ async function fetchAllGameweekData(filename) {
     const allData = [];
     const fetchPromises = [];
 
-    // Try to fetch from all gameweeks (1 to MAX_GAMEWEEKS)
     for (let gw = 1; gw <= MAX_GAMEWEEKS; gw++) {
         fetchPromises.push(
             fetchGameweekCSV(gw, filename)
@@ -135,7 +137,6 @@ async function fetchAllGameweekData(filename) {
 
     const results = await Promise.all(fetchPromises);
 
-    // Aggregate successful results
     results.forEach(result => {
         if (result.success && result.data.length > 0) {
             allData.push(...result.data);
@@ -147,7 +148,6 @@ async function fetchAllGameweekData(filename) {
 
 async function loadAllData() {
     try {
-        // Fetch players and teams from root (these exist at root level)
         const [players, teams] = await Promise.all([
             fetchRootCSV('players.csv'),
             fetchRootCSV('teams.csv')
@@ -158,7 +158,6 @@ async function loadAllData() {
 
         console.log('Loaded root data:', { players: players.length, teams: teams.length });
 
-        // Fetch player stats and matches from all gameweeks
         const [playerMatchStats, matches] = await Promise.all([
             fetchAllGameweekData('player_gameweek_stats.csv'),
             fetchAllGameweekData('matches.csv')
@@ -172,7 +171,6 @@ async function loadAllData() {
             matches: matches.length
         });
 
-        // Validate we have enough data
         if (players.length === 0 || teams.length === 0) {
             throw new Error('Failed to load essential player/team data');
         }
@@ -181,6 +179,8 @@ async function loadAllData() {
             console.warn('No gameweek data available yet - season may not have started');
         }
 
+        buildTeamLookup();
+
         return true;
     } catch (error) {
         console.error('Error loading data:', error);
@@ -188,8 +188,22 @@ async function loadAllData() {
     }
 }
 
-// Map a player row to its team row using FPL-Elo-Insights conventions:
-// players.team_id -> teams.code, and then teams.id is the canonical key for matches.
+// Build canonical team lookup
+function buildTeamLookup() {
+    const lookup = {};
+    state.teams.forEach(t => {
+        const id = normId(t.id || t.team_id || t.code);
+        if (!id) return;
+        lookup[id] = {
+            id,
+            name: t.name || t.team_name || 'Unknown',
+            shortName: t.short_name || (t.name ? t.name.substring(0, 3).toUpperCase() : id)
+        };
+    });
+    state.teamLookup = lookup;
+}
+
+// Map a player row to its team row using FPL-Elo-Insights conventions
 function getTeamFromPlayer(player) {
     const playerTeamKey = normId(player.team_id || player.team_code || player.team);
     if (!playerTeamKey) return null;
@@ -204,8 +218,7 @@ function getTeamFromPlayer(player) {
     return team || null;
 }
 
-// Map a team id coming from matches.csv (usually FPL "code" like 91.0)
-// to the canonical team id we use elsewhere (teams.id).
+// Map a team id coming from matches.csv to canonical id (teams.id)
 function mapMatchTeamId(rawTeamId) {
     const codeKey = normId(rawTeamId);
     if (!codeKey) return null;
@@ -215,45 +228,36 @@ function mapMatchTeamId(rawTeamId) {
         normId(t.id || t.team_id) === codeKey
     );
 
-    // Canonical id is teams.id (fallback to whatever we got if not found)
     return team ? normId(team.id || team.team_id || team.code) : codeKey;
 }
 
+// --------------------- Metrics & Probabilities ---------------------
+
 // Calculate CBIT for a defender/keeper match
-// CBIT = Interceptions + Clearances + Blocks + Tackles
 function calculateCBIT(matchStat) {
-    // FPL-Elo-Insights uses: tackles, interceptions, clearances, blocks
     const interceptions = parseFloat(matchStat.interceptions || matchStat.clearances_blocks_interceptions || 0);
     const clearances = parseFloat(matchStat.clearances || 0);
     const blocks = parseFloat(matchStat.blocks || 0);
     const tackles = parseFloat(matchStat.tackles || matchStat.tackles_won || 0);
-
-    // No clean sheets or bonus in this metric
     return interceptions + clearances + blocks + tackles;
 }
 
 // Calculate CBIRT for mids/forwards
-// CBIRT = Interceptions + Recoveries + Tackles
 function calculateCBIRT(matchStat, position) {
-    // FPL-Elo-Insights uses: tackles, interceptions, recoveries
     const interceptions = parseFloat(matchStat.interceptions || matchStat.clearances_blocks_interceptions || 0);
     const recoveries = parseFloat(matchStat.recoveries || matchStat.ball_recoveries || 0);
     const tackles = parseFloat(matchStat.tackles || matchStat.tackles_won || 0);
-
-    // No clean sheets or bonus in this metric
     return interceptions + recoveries + tackles;
 }
 
-// Get player position from element_type or position field
+// Get player position (GKP/DEF/MID/FWD)
 function getPosition(player) {
-    // Try numeric element_type first (FPL API standard: 1=GKP, 2=DEF, 3=MID, 4=FWD)
     const elementType = parseInt(player.element_type || player.position || player.pos || 0);
     const posMap = { 1: 'GKP', 2: 'DEF', 3: 'MID', 4: 'FWD' };
     if (posMap[elementType]) {
         return posMap[elementType];
     }
 
-    // Try string position codes
     const posStr = (player.singular_name_short || player.position || player.pos || '').toUpperCase();
     const strMap = {
         'GK': 'GKP', 'GKP': 'GKP', 'GOALKEEPER': 'GKP',
@@ -264,23 +268,7 @@ function getPosition(player) {
     return strMap[posStr] || 'UNK';
 }
 
-// Calculate score based on position
-function calculateScore(matchStat, position) {
-    if (position === 'DEF' || position === 'GKP') {
-        return calculateCBIT(matchStat);
-    }
-    return calculateCBIRT(matchStat, position);
-}
-
-// Get DEFCON threshold based on position
-function getThreshold(position) {
-    if (position === 'DEF' || position === 'GKP') {
-        return DEFCON_THRESHOLD_DEF;
-    }
-    return DEFCON_THRESHOLD_MID_FWD;
-}
-
-// Group positions into DEF+GKP vs MID+FWD buckets for opponent-history aggregation
+// Position group for opponent-history aggregation
 function getPositionGroup(position) {
     if (position === 'DEF' || position === 'GKP') {
         return 'DEF_GKP';
@@ -291,12 +279,39 @@ function getPositionGroup(position) {
     return null;
 }
 
-// Helper for opponent-history stats
+// Archetype -> position group mapping for UI
+function getPositionGroupFromArchetype(archetype) {
+    const key = (archetype || '').toUpperCase();
+    if (key === 'CB' || key === 'RB' || key === 'LB' || key === 'DEF' || key === 'GKP' || key === 'DEF_GKP') {
+        return 'DEF_GKP';
+    }
+    if (key === 'MID' || key === 'FWD' || key === 'MID_FWD') {
+        return 'MID_FWD';
+    }
+    // default to DEF_GKP if unknown
+    return 'DEF_GKP';
+}
+
+// Score per match based on position
+function calculateScore(matchStat, position) {
+    if (position === 'DEF' || position === 'GKP') {
+        return calculateCBIT(matchStat);
+    }
+    return calculateCBIRT(matchStat, position);
+}
+
+// DEFCON threshold by position
+function getThreshold(position) {
+    if (position === 'DEF' || position === 'GKP') {
+        return DEFCON_THRESHOLD_DEF;
+    }
+    return DEFCON_THRESHOLD_MID_FWD;
+}
+
 function createEmptyPositionStats() {
     return { hits: 0, n: 0 };
 }
 
-// Helper structure for per-team, per-location, per-position-group counts
 function createEmptyTeamHistoryEntry() {
     return {
         home: {
@@ -323,7 +338,6 @@ function buildMatchLocationLookup() {
         const awayTeamId = mapMatchTeamId(match.away_team || match.team_a || match.away_team_id);
         const gwKey      = normId(match.event || match.gameweek || match.round || match.gw);
 
-        // Create lookup keys: "teamId_opponentId_gameweek"
         if (homeTeamId && awayTeamId && gwKey) {
             lookup[`${homeTeamId}_${awayTeamId}_${gwKey}`] = 'home';
             lookup[`${awayTeamId}_${homeTeamId}_${gwKey}`] = 'away';
@@ -333,122 +347,7 @@ function buildMatchLocationLookup() {
     return lookup;
 }
 
-// Calculate opponent "CBIT/CBIRT allowed" multiplier with home/away split
-// Higher multiplier = opponent allows more defensive returns (easier fixture)
-function calculateOpponentMultipliers() {
-    const teamStats = {};
-    const matchLocationLookup = buildMatchLocationLookup();
-
-    // Initialize team stats with separate home/away tracking
-    state.teams.forEach(team => {
-        const teamId = normId(team.id || team.team_id || team.code);
-        if (!teamId) return;
-
-        teamStats[teamId] = {
-            name: team.name || team.team_name,
-            shortName: team.short_name || (team.name ? team.name.substring(0, 3).toUpperCase() : 'UNK'),
-            home: { totalAllowed: 0, matchCount: 0 },
-            away: { totalAllowed: 0, matchCount: 0 },
-            overall: { totalAllowed: 0, matchCount: 0 }
-        };
-    });
-
-    // Calculate what each team allows to opponents (split by home/away)
-    state.playerMatchStats.forEach(stat => {
-        // FPL-Elo-Insights uses opponent_team field -> matches teams.id
-        const opponentId = normId(stat.opponent_team || stat.opponent_id || stat.vs_team);
-        if (!opponentId || !teamStats[opponentId]) return;
-
-        // Link stats to players: player_gameweek_stats.id -> players.player_id/element
-        const playerId = stat.id || stat.element || stat.player_id;
-        const player = state.players.find(p =>
-            (p.player_id || p.id || p.element) == playerId
-        );
-        if (!player) return;
-
-        // Resolve player's actual team row and canonical team id (matches teams.id)
-        const playerTeam = getTeamFromPlayer(player);
-        if (!playerTeam) return;
-        const playerTeamId = normId(playerTeam.id || playerTeam.team_id || playerTeam.code);
-
-        const gameweek = stat.round || stat.event || stat.gameweek || stat.gw;
-        const gwKey = normId(gameweek);
-        const position = getPosition(player);
-        const score = calculateScore(stat, position);
-
-        // Determine if this was a home or away match for the opponent
-        const lookupKey = `${opponentId}_${playerTeamId}_${gwKey}`;
-        const location = matchLocationLookup[lookupKey];
-
-        if (location === 'home') {
-            // Opponent was at home (defending at home)
-            teamStats[opponentId].home.totalAllowed += score;
-            teamStats[opponentId].home.matchCount++;
-        } else if (location === 'away') {
-            // Opponent was away (defending away)
-            teamStats[opponentId].away.totalAllowed += score;
-            teamStats[opponentId].away.matchCount++;
-        }
-
-        // Always track overall
-        teamStats[opponentId].overall.totalAllowed += score;
-        teamStats[opponentId].overall.matchCount++;
-    });
-
-    // Calculate averages and league averages (separate for home/away)
-    let leagueHomeTotal = 0, leagueHomeCount = 0;
-    let leagueAwayTotal = 0, leagueAwayCount = 0;
-    let leagueOverallTotal = 0, leagueOverallCount = 0;
-
-    Object.values(teamStats).forEach(team => {
-        // Home average
-        if (team.home.matchCount > 0) {
-            team.home.avgAllowed = team.home.totalAllowed / team.home.matchCount;
-            leagueHomeTotal += team.home.avgAllowed;
-            leagueHomeCount++;
-        } else {
-            team.home.avgAllowed = 0;
-        }
-
-        // Away average
-        if (team.away.matchCount > 0) {
-            team.away.avgAllowed = team.away.totalAllowed / team.away.matchCount;
-            leagueAwayTotal += team.away.avgAllowed;
-            leagueAwayCount++;
-        } else {
-            team.away.avgAllowed = 0;
-        }
-
-        // Overall average (fallback)
-        if (team.overall.matchCount > 0) {
-            team.overall.avgAllowed = team.overall.totalAllowed / team.overall.matchCount;
-            leagueOverallTotal += team.overall.avgAllowed;
-            leagueOverallCount++;
-        } else {
-            team.overall.avgAllowed = 0;
-        }
-    });
-
-    const leagueHomeAvg = leagueHomeCount > 0 ? leagueHomeTotal / leagueHomeCount : 1;
-    const leagueAwayAvg = leagueAwayCount > 0 ? leagueAwayTotal / leagueAwayCount : 1;
-    const leagueOverallAvg = leagueOverallCount > 0 ? leagueOverallTotal / leagueOverallCount : 1;
-
-    // Calculate multipliers (ratio vs league average)
-    Object.values(teamStats).forEach(team => {
-        team.home.multiplier = leagueHomeAvg > 0 ? team.home.avgAllowed / leagueHomeAvg : 1;
-        team.away.multiplier = leagueAwayAvg > 0 ? team.away.avgAllowed / leagueAwayAvg : 1;
-        team.overall.multiplier = leagueOverallAvg > 0 ? team.overall.avgAllowed / leagueOverallAvg : 1;
-
-        // Fallback: if no home/away data, use overall
-        if (team.home.matchCount === 0) team.home.multiplier = team.overall.multiplier;
-        if (team.away.matchCount === 0) team.away.multiplier = team.overall.multiplier;
-    });
-
-    return teamStats;
-}
-
-// Smoothed probability using a Beta prior with mean = priorMean and strength = priorStrength
-// This keeps probabilities stable for small sample sizes.
+// Smoothed probability using a Beta prior
 function getSmoothedProbability(hits, n, priorMean, priorStrength) {
     const alpha0 = priorMean * priorStrength;
     const beta0  = (1 - priorMean) * priorStrength;
@@ -463,18 +362,16 @@ function getSmoothedProbability(hits, n, priorMean, priorStrength) {
     return alphaPost / (alphaPost + betaPost);
 }
 
-// Build historical DEFCON hit probabilities by opponent, location (home/away),
-// and position group (DEF_GKP vs MID_FWD).
-// This is the core engine driving DEFCON probabilities.
+// Core: build per-opponent, per-location, per-position-group DEFCON hit probabilities
 function buildOpponentPositionProbabilities() {
     const matchLocationLookup = buildMatchLocationLookup();
     const opponentHistory = {};
-    const leagueTotals = createEmptyTeamHistoryEntry(); // reused shape for league-level aggregation
+    const leagueTotals = createEmptyTeamHistoryEntry();
 
     const LOCATIONS = ['home', 'away', 'overall'];
     const GROUPS = ['DEF_GKP', 'MID_FWD'];
 
-    // 1) Accumulate hits and totals per opponent/location/positionGroup
+    // 1) Accumulate hits and totals
     state.playerMatchStats.forEach(stat => {
         const opponentId = normId(stat.opponent_team || stat.opponent_id || stat.vs_team);
         if (!opponentId) return;
@@ -502,7 +399,6 @@ function buildOpponentPositionProbabilities() {
 
         const threshold = getThreshold(position);
 
-        // Determine if the OPPONENT was at home or away in this match
         const lookupKey = `${opponentId}_${playerTeamId}_${gwKey}`;
         const location = matchLocationLookup[lookupKey]; // 'home' or 'away' from opponent POV
         if (location !== 'home' && location !== 'away') return;
@@ -513,14 +409,12 @@ function buildOpponentPositionProbabilities() {
 
         const teamEntry = opponentHistory[opponentId];
 
-        // Location-specific bucket (home/away)
         const locBucket = teamEntry[location][positionGroup];
         locBucket.n++;
         if (score >= threshold) {
             locBucket.hits++;
         }
 
-        // Overall bucket (regardless of home/away)
         const overallBucket = teamEntry.overall[positionGroup];
         overallBucket.n++;
         if (score >= threshold) {
@@ -528,7 +422,7 @@ function buildOpponentPositionProbabilities() {
         }
     });
 
-    // 2) Compute league totals by aggregating all teams
+    // 2) League totals
     Object.values(opponentHistory).forEach(teamEntry => {
         LOCATIONS.forEach(loc => {
             GROUPS.forEach(group => {
@@ -540,14 +434,14 @@ function buildOpponentPositionProbabilities() {
         });
     });
 
-    // 3) League-wide baseline probabilities (used for smoothing & fallbacks)
+    // 3) League-wide baselines
     const leaguePositionProbs = {
         home:   { DEF_GKP: 0, MID_FWD: 0 },
         away:   { DEF_GKP: 0, MID_FWD: 0 },
         overall:{ DEF_GKP: 0, MID_FWD: 0 }
     };
 
-    LOCATIONS.forEach(loc => {
+    ['home', 'away', 'overall'].forEach(loc => {
         GROUPS.forEach(group => {
             const stats = leagueTotals[loc][group];
             if (stats.n > 0) {
@@ -558,7 +452,7 @@ function buildOpponentPositionProbabilities() {
         });
     });
 
-    // 4) Convert raw counts into smoothed probabilities per opponent/location/group
+    // 4) Smoothed probabilities per opponent/location/group
     const teamPositionProbs = {};
     const priorStrength = DEFCON_PRIOR_STRENGTH;
 
@@ -570,11 +464,10 @@ function buildOpponentPositionProbabilities() {
         };
 
         GROUPS.forEach(group => {
-            LOCATIONS.forEach(loc => {
+            ['home', 'away', 'overall'].forEach(loc => {
                 const locStats = teamEntry[loc][group];
                 const overallStats = teamEntry.overall[group];
 
-                // Select league baseline for this bucket
                 const leagueLocBase     = leaguePositionProbs[loc][group];
                 const leagueOverallBase = leaguePositionProbs.overall[group];
                 const leagueBase = loc === 'overall'
@@ -591,7 +484,6 @@ function buildOpponentPositionProbabilities() {
                     prob = getSmoothedProbability(overallStats.hits, overallStats.n, leagueOverallBase, priorStrength);
                     nUsed = overallStats.n;
                 } else {
-                    // No history at all for this team+group: use league baseline
                     prob = leagueBase;
                     nUsed = 0;
                 }
@@ -607,13 +499,15 @@ function buildOpponentPositionProbabilities() {
     return { teamPositionProbs, leaguePositionProbs };
 }
 
-// Get upcoming fixtures
+// --------------------- Fixtures & Matrix ---------------------
+
+// Upcoming fixtures from matches
 function getUpcomingFixtures() {
     const fixtures = [];
 
     state.matches.forEach(match => {
-        // FPL-Elo-Insights uses: kickoff_time, event, home_team, away_team, finished
         const matchDate = new Date(match.kickoff_time || match.datetime || match.date || match.kickoff);
+
         const isFinished =
             match.finished === true ||
             match.finished === 'true' ||
@@ -621,7 +515,6 @@ function getUpcomingFixtures() {
             match.finished === 1 ||
             match.finished === '1';
 
-        // Only include fixtures that are not finished (future or upcoming matches)
         if (!isFinished) {
             const gwKey      = normId(match.event || match.gameweek || match.round || match.gw || 0);
             const homeTeamId = mapMatchTeamId(match.home_team || match.team_h || match.home_team_id);
@@ -637,238 +530,103 @@ function getUpcomingFixtures() {
         }
     });
 
-    // Sort by date
     fixtures.sort((a, b) => a.date - b.date);
-
     return fixtures;
 }
 
-// Process all player data
-// Core change: DEFCON probability now comes from opponent's historical
-// allowance vs that position group (DEF+GKP vs MID+FWD) at the given
-// defensive location (home/away), rather than from the player's own distribution.
-function processPlayerData() {
-    const opponentMultipliers = calculateOpponentMultipliers();
-    const { teamPositionProbs, leaguePositionProbs } = buildOpponentPositionProbabilities();
-    const upcomingFixtures = getUpcomingFixtures();
-    const processed = [];
+// Compute probabilities for a team vs an opponent in a given defensive location
+function getOpponentProbabilities(opponentId, defendingLocation) {
+    const groups = ['DEF_GKP', 'MID_FWD'];
+    const probs = {};
+    const { teamPositionProbs, leaguePositionProbs } = state;
 
-    // Group match stats by player
-    const playerStats = {};
-    state.playerMatchStats.forEach(stat => {
-        // player_gameweek_stats.id -> players.player_id
-        const playerId = stat.id || stat.element || stat.player_id;
-        if (!playerStats[playerId]) {
-            playerStats[playerId] = [];
-        }
-        playerStats[playerId].push(stat);
-    });
-
-    // Process each player
-    state.players.forEach(player => {
-        const playerId = player.player_id || player.id || player.element;
-        const position = getPosition(player);
-        const positionGroup = getPositionGroup(position);
-
-        // Ignore unknown positions altogether
-        if (!positionGroup) return;
-
-        const team = getTeamFromPlayer(player);
-        if (!team) return;
-
-        // Canonical normalized team id (matches matches.home_team / matches.away_team)
-        const teamId = normId(team.id || team.team_id || team.code);
-
-        const stats = playerStats[playerId] || [];
-        if (stats.length === 0) return;
-
-        // Calculate scores for each match
-        const scores = stats
-            .map(s => calculateScore(s, position))
-            .filter(s => !isNaN(s));
-
-        if (scores.length === 0) return;
-
-        // Calculate average score (still useful to show historical involvement)
-        const avgScore = scores.reduce((a, b) => a + b, 0) / scores.length;
-
-        // Find next fixture for this player's team
-        const nextFixture = upcomingFixtures.find(f =>
-            f.homeTeam === teamId || f.awayTeam === teamId
-        );
-
-        let opponentId = null;
-        let opponentMultiplier = 1;
-        let opponentName = 'TBD';
-        let isHome = null;
-        let fixtureLocation = '';
-
-        if (nextFixture) {
-            // Determine if player's team is home or away
-            isHome = nextFixture.homeTeam === teamId;
-            opponentId = isHome ? nextFixture.awayTeam : nextFixture.homeTeam;
-            fixtureLocation = isHome ? 'H' : 'A';
-
-            if (opponentMultipliers[opponentId]) {
-                // Use home/away specific multiplier based on opponent's defensive location
-                // If player is home, opponent defends away (and vice versa)
-                const opponentDefendsAt = isHome ? 'away' : 'home';
-                opponentMultiplier = opponentMultipliers[opponentId][opponentDefendsAt].multiplier || 1;
-                opponentName = opponentMultipliers[opponentId].shortName ||
-                    opponentMultipliers[opponentId].name || 'UNK';
-            } else {
-                // Fallback: look up opponent team directly from teams array
-                const opponentTeam = state.teams.find(t =>
-                    normId(t.id || t.team_id || t.code) === opponentId
-                );
-                if (opponentTeam) {
-                    opponentName = opponentTeam.short_name ||
-                        (opponentTeam.name ? opponentTeam.name.substring(0, 3).toUpperCase() : 'TBD');
-                }
-            }
-        }
-
-        // Adjusted score still uses historical avg * opponent multiplier for UI
-        const adjustedScore = avgScore * opponentMultiplier;
-
-        // --- New DEFCON probability logic ---
-        // Base fallback: league-wide overall probability for this position group
-        let probability = (leaguePositionProbs.overall && leaguePositionProbs.overall[positionGroup] != null)
-            ? leaguePositionProbs.overall[positionGroup]
+    groups.forEach(group => {
+        let prob = (leaguePositionProbs.overall && leaguePositionProbs.overall[group] != null)
+            ? leaguePositionProbs.overall[group]
             : DEFAULT_DEFCON_PROB;
 
-        if (nextFixture && opponentId) {
-            const defLocation = isHome ? 'away' : 'home'; // where opponent is defending
-            const teamEntry = teamPositionProbs[opponentId];
+        const teamEntry = teamPositionProbs[opponentId];
 
-            if (teamEntry && teamEntry[defLocation] && teamEntry[defLocation][positionGroup]) {
-                // Use opponent+location+position-group-specific probability (already smoothed)
-                probability = teamEntry[defLocation][positionGroup].prob;
-            } else if (teamEntry && teamEntry.overall && teamEntry.overall[positionGroup]) {
-                // Fallback to opponent overall vs this position group
-                probability = teamEntry.overall[positionGroup].prob;
-            } else {
-                // Final fallback: league baselines (home/away then overall)
-                const leagueLocBase  = leaguePositionProbs[defLocation] && leaguePositionProbs[defLocation][positionGroup];
-                const leagueOverall  = leaguePositionProbs.overall && leaguePositionProbs.overall[positionGroup];
-                probability = leagueLocBase != null
-                    ? leagueLocBase
-                    : (leagueOverall != null ? leagueOverall : DEFAULT_DEFCON_PROB);
-            }
+        if (teamEntry && teamEntry[defendingLocation] && teamEntry[defendingLocation][group]) {
+            prob = teamEntry[defendingLocation][group].prob;
+        } else if (teamEntry && teamEntry.overall && teamEntry.overall[group]) {
+            prob = teamEntry.overall[group].prob;
+        } else {
+            const leagueLocBase  = leaguePositionProbs[defendingLocation] && leaguePositionProbs[defendingLocation][group];
+            const leagueOverall  = leaguePositionProbs.overall && leaguePositionProbs.overall[group];
+            prob = leagueLocBase != null
+                ? leagueLocBase
+                : (leagueOverall != null ? leagueOverall : DEFAULT_DEFCON_PROB);
         }
 
-        probability = Math.max(0, Math.min(1, probability));
-
-        // Team name for display
-        const teamName = team.short_name ||
-            (team.name ? team.name.substring(0, 3).toUpperCase() : 'UNK');
-
-        processed.push({
-            id: playerId,
-            name: `${player.first_name || ''} ${player.second_name || player.web_name || ''}`.trim() || player.web_name,
-            webName: player.web_name || player.second_name,
-            team: teamName,
-            teamId: teamId,
-            position: position,
-            avgScore: avgScore,
-            adjustedScore: adjustedScore,
-            matchCount: scores.length,
-            scores: scores,
-            threshold: getThreshold(position),
-            opponent: opponentName,
-            opponentId: opponentId,
-            opponentMultiplier: opponentMultiplier,
-            probability: probability,
-            nextGameweek: nextFixture?.gameweek || null,
-            fixtureLocation: fixtureLocation,
-            isHome: isHome
-        });
+        probs[group] = Math.max(0, Math.min(1, prob));
     });
 
-    state.processedData = processed;
-    return processed;
+    return probs;
 }
 
-// Filter and sort data based on current filters
-function getFilteredData() {
-    let data = [...state.processedData];
+// Add a cell to a team's row
+function addFixtureCell(row, teamId, opponentId, isHome, gw) {
+    if (!row || !opponentId || !gw) return;
 
-    // Position filter
-    if (state.filters.position !== 'all') {
-        data = data.filter(p => p.position === state.filters.position);
-    }
+    const opponentMeta = state.teamLookup[opponentId];
+    const defendingLocation = isHome ? 'away' : 'home'; // opponent is defending
+    const probabilities = getOpponentProbabilities(opponentId, defendingLocation);
 
-    // Team filter
-    if (state.filters.team !== 'all') {
-        data = data.filter(p => p.teamId == state.filters.team);
-    }
-
-    // Min matches filter
-    data = data.filter(p => p.matchCount >= state.filters.minMatches);
-
-    // Sort
-    switch (state.filters.sortBy) {
-        case 'probability':
-            data.sort((a, b) => b.probability - a.probability);
-            break;
-        case 'average':
-            data.sort((a, b) => b.avgScore - a.avgScore);
-            break;
-        case 'name':
-            data.sort((a, b) => a.webName.localeCompare(b.webName));
-            break;
-    }
-
-    return data;
+    row.fixtures[gw] = {
+        gameweek: gw,
+        teamId,
+        opponentId,
+        opponentShortName: opponentMeta ? opponentMeta.shortName : opponentId,
+        location: isHome ? 'H' : 'A',
+        probabilities // { DEF_GKP: p, MID_FWD: p }
+    };
 }
 
-// Render results table
-function renderResults() {
-    const data = getFilteredData();
+// Build the fixture matrix: rows by team, columns by GW
+function buildFixtureMatrix() {
+    const { teamPositionProbs, leaguePositionProbs } = buildOpponentPositionProbabilities();
+    state.teamPositionProbs = teamPositionProbs;
+    state.leaguePositionProbs = leaguePositionProbs;
 
-    // Update stats
-    elements.totalPlayers.textContent = data.length;
-    elements.highProbCount.textContent = data.filter(p => p.probability >= 0.5).length;
-    elements.medProbCount.textContent = data.filter(p => p.probability >= 0.25 && p.probability < 0.5).length;
+    const fixtures = getUpcomingFixtures();
 
-    // Render table
-    if (data.length === 0) {
-        elements.resultsBody.innerHTML = `
-            <tr class="no-results">
-                <td colspan="9">No players match the current filters</td>
-            </tr>
-        `;
-        return;
-    }
+    const gwSet = new Set();
+    fixtures.forEach(f => {
+        if (f.gameweek && f.gameweek > 0) gwSet.add(f.gameweek);
+    });
+    const gameweeks = Array.from(gwSet).sort((a, b) => a - b);
 
-    elements.resultsBody.innerHTML = data.map(player => {
-        const probPercent = (player.probability * 100).toFixed(1);
-        const probClass = getProbabilityClass(player.probability);
-        const multClass = getMultiplierClass(player.opponentMultiplier);
-        const fixtureDisplay = player.fixtureLocation ? `${player.opponent} (${player.fixtureLocation})` : player.opponent;
+    const rowsByTeamId = {};
+    Object.values(state.teamLookup).forEach(team => {
+        rowsByTeamId[team.id] = {
+            teamId: team.id,
+            name: team.name,
+            shortName: team.shortName,
+            fixtures: {} // gw -> cell
+        };
+    });
 
-        return `
-            <tr>
-                <td><strong>${escapeHtml(player.webName)}</strong></td>
-                <td>${escapeHtml(player.team)}</td>
-                <td><span class="pos-badge pos-${player.position}">${player.position}</span></td>
-                <td>${player.avgScore.toFixed(1)}</td>
-                <td>${player.matchCount}</td>
-                <td>${escapeHtml(fixtureDisplay)}</td>
-                <td class="${multClass}">${player.opponentMultiplier.toFixed(2)}x</td>
-                <td>${player.adjustedScore.toFixed(1)}</td>
-                <td>
-                    <div class="prob-cell">
-                        <div class="prob-bar">
-                            <div class="prob-fill prob-${probClass}" style="width: ${probPercent}%"></div>
-                        </div>
-                        <span class="prob-value ${probClass}">${probPercent}%</span>
-                    </div>
-                </td>
-            </tr>
-        `;
-    }).join('');
+    fixtures.forEach(f => {
+        if (!f.homeTeam || !f.awayTeam || !f.gameweek) return;
+        const gw = f.gameweek;
+
+        // From home team's perspective
+        addFixtureCell(rowsByTeamId[f.homeTeam], f.homeTeam, f.awayTeam, true, gw);
+
+        // From away team's perspective
+        addFixtureCell(rowsByTeamId[f.awayTeam], f.awayTeam, f.homeTeam, false, gw);
+    });
+
+    const rows = Object.values(rowsByTeamId).sort((a, b) => a.name.localeCompare(b.name));
+
+    state.fixtureMatrix = {
+        gameweeks,
+        rows
+    };
 }
+
+// --------------------- Rendering ---------------------
 
 function getProbabilityClass(prob) {
     if (prob >= 0.6) return 'very-high';
@@ -877,83 +635,82 @@ function getProbabilityClass(prob) {
     return 'low';
 }
 
-function getMultiplierClass(mult) {
-    if (mult >= 1.15) return 'mult-good';
-    if (mult <= 0.85) return 'mult-bad';
-    return 'mult-neutral';
+function renderFixtureMatrix() {
+    const matrix = state.fixtureMatrix;
+    if (!matrix || !matrix.gameweeks.length) {
+        elements.fixtureHeader.innerHTML = '';
+        elements.fixtureBody.innerHTML = `
+            <tr class="no-results">
+                <td colspan="2">No upcoming fixtures available</td>
+            </tr>
+        `;
+        return;
+    }
+
+    const positionGroup = getPositionGroupFromArchetype(state.filters.archetype);
+
+    // Header row: Team + GWs
+    const headerHtml = `
+        <tr>
+            <th>Team</th>
+            ${matrix.gameweeks.map(gw => `<th>GW ${gw}</th>`).join('')}
+        </tr>
+    `;
+    elements.fixtureHeader.innerHTML = headerHtml;
+
+    // Body rows
+    const bodyHtml = matrix.rows.map(row => {
+        const cellsHtml = matrix.gameweeks.map(gw => {
+            const cell = row.fixtures[gw];
+            if (!cell) {
+                return `<td class="no-fixture">-</td>`;
+            }
+
+            const prob = cell.probabilities[positionGroup] ?? DEFAULT_DEFCON_PROB;
+            const probPercent = (prob * 100).toFixed(0);
+            const probClass = getProbabilityClass(prob);
+            const label = `${cell.opponentShortName} ${cell.location}`;
+
+            return `
+                <td class="fixture-cell prob-${probClass}">
+                    <div class="fixture-opponent">${label}</div>
+                    <div class="fixture-prob">${probPercent}%</div>
+                </td>
+            `;
+        }).join('');
+
+        return `
+            <tr>
+                <td class="team-cell"><strong>${row.shortName}</strong></td>
+                ${cellsHtml}
+            </tr>
+        `;
+    }).join('');
+
+    elements.fixtureBody.innerHTML = bodyHtml;
 }
 
-function escapeHtml(text) {
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML;
-}
+// --------------------- Events ---------------------
 
-// Populate filter dropdowns
-function populateFilters() {
-    // Team filter
-    const teams = [...state.teams].sort((a, b) =>
-        (a.name || '').localeCompare(b.name || '')
-    );
-
-    teams.forEach(team => {
-        const option = document.createElement('option');
-        // Use the same ID field priority as player data for consistency (normalized)
-        option.value = normId(team.id || team.team_id || team.code);
-        option.textContent = team.name || team.team_name;
-        elements.teamFilter.appendChild(option);
-    });
-
-    // Gameweek filter
-    const gameweeks = [...new Set(state.processedData.map(p => p.nextGameweek))]
-        .filter(g => g)
-        .sort((a, b) => a - b);
-
-    gameweeks.forEach(gw => {
-        const option = document.createElement('option');
-        option.value = gw;
-        option.textContent = `GW ${gw}`;
-        elements.gameweekFilter.appendChild(option);
-    });
-}
-
-// Set up event listeners
 function setupEventListeners() {
-    elements.positionFilter.addEventListener('change', (e) => {
-        state.filters.position = e.target.value;
-        renderResults();
-    });
-
-    elements.teamFilter.addEventListener('change', (e) => {
-        state.filters.team = e.target.value;
-        renderResults();
-    });
-
-    elements.gameweekFilter.addEventListener('change', (e) => {
-        state.filters.gameweek = e.target.value;
-        renderResults();
-    });
-
-    elements.minMatches.addEventListener('change', (e) => {
-        state.filters.minMatches = parseInt(e.target.value) || 1;
-        renderResults();
-    });
-
-    elements.sortBy.addEventListener('change', (e) => {
-        state.filters.sortBy = e.target.value;
-        renderResults();
-    });
+    if (elements.archetypeFilter) {
+        elements.archetypeFilter.addEventListener('change', (e) => {
+            state.filters.archetype = e.target.value;
+            renderFixtureMatrix();
+        });
+    }
 }
 
-// Initialize application
+// --------------------- Init ---------------------
+
 async function init() {
-    console.log('FPL DEFCON Predictor initializing...');
+    console.log('FPL DEFCON Fixture Matrix initializing...');
 
     const success = await loadAllData();
 
     if (!success) {
-        elements.loading.classList.add('hidden');
-        elements.error.classList.remove('hidden');
+        elements.loading?.classList.add('hidden');
+        elements.error?.classList.remove('hidden');
         return;
     }
 
@@ -964,25 +721,16 @@ async function init() {
         teams: state.teams.length
     });
 
-    // Process data
-    processPlayerData();
-    console.log('Processed players:', state.processedData.length);
+    buildFixtureMatrix();
+    console.log('Fixture matrix built');
 
-    // Populate filters
-    populateFilters();
-
-    // Set up event listeners
     setupEventListeners();
+    renderFixtureMatrix();
 
-    // Initial render
-    renderResults();
+    elements.loading?.classList.add('hidden');
+    elements.mainContent?.classList.remove('hidden');
 
-    // Show main content
-    elements.loading.classList.add('hidden');
-    elements.mainContent.classList.remove('hidden');
-
-    console.log('FPL DEFCON Predictor ready!');
+    console.log('FPL DEFCON Fixture Matrix ready!');
 }
 
-// Start the application
 document.addEventListener('DOMContentLoaded', init);
