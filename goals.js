@@ -354,35 +354,53 @@ function renderTable() {
     const { fixturesByTeam, teamGoals, teamsByCode } = STATE.lookups;
 
     // Pre-calculate cumulative goals for all teams up to each GW
+    // Track home, away, and combined separately so we can show the right stats
     const cumulativeGoalsByTeam = {};
     teams.forEach(team => {
         const teamCode = team.code;
-        cumulativeGoalsByTeam[teamCode] = {};
+        cumulativeGoalsByTeam[teamCode] = {
+            combined: {},
+            home: {},
+            away: {}
+        };
 
-        let cumulativeFor = 0;
-        let cumulativeAgainst = 0;
+        let combinedFor = 0, combinedAgainst = 0;
+        let homeFor = 0, homeAgainst = 0;
+        let awayFor = 0, awayAgainst = 0;
 
         // Calculate cumulative for all GWs (not just the filtered gwList)
         for (let gw = 1; gw <= CONFIG.UI.MAX_GW; gw++) {
             const fix = fixturesByTeam[teamCode] ? fixturesByTeam[teamCode][gw] : null;
 
-            // Apply venue filter when accumulating
-            let shouldCount = true;
-            if (venueFilter === 'home' && fix && !fix.wasHome) {
-                shouldCount = false;
-            }
-            if (venueFilter === 'away' && fix && fix.wasHome) {
-                shouldCount = false;
+            if (fix && fix.finished) {
+                const goalsFor = fix.goalsFor || 0;
+                const goalsAgainst = fix.goalsAgainst || 0;
+
+                // Always accumulate combined
+                combinedFor += goalsFor;
+                combinedAgainst += goalsAgainst;
+
+                // Accumulate home or away based on fixture
+                if (fix.wasHome) {
+                    homeFor += goalsFor;
+                    homeAgainst += goalsAgainst;
+                } else {
+                    awayFor += goalsFor;
+                    awayAgainst += goalsAgainst;
+                }
             }
 
-            if (fix && fix.finished && shouldCount) {
-                cumulativeFor += fix.goalsFor || 0;
-                cumulativeAgainst += fix.goalsAgainst || 0;
-            }
-
-            cumulativeGoalsByTeam[teamCode][gw] = {
-                for: cumulativeFor,
-                against: cumulativeAgainst
+            cumulativeGoalsByTeam[teamCode].combined[gw] = {
+                for: combinedFor,
+                against: combinedAgainst
+            };
+            cumulativeGoalsByTeam[teamCode].home[gw] = {
+                for: homeFor,
+                against: homeAgainst
+            };
+            cumulativeGoalsByTeam[teamCode].away[gw] = {
+                for: awayFor,
+                against: awayAgainst
             };
         }
     });
@@ -448,8 +466,21 @@ function renderTable() {
             const oppTeam = teamsByCode[opponentCode];
             const oppName = oppTeam ? oppTeam.short_name : 'UNK';
 
-            // Get opponent's cumulative goals up to this GW
-            const oppCumulative = cumulativeGoalsByTeam[opponentCode] ? cumulativeGoalsByTeam[opponentCode][gw] : null;
+            // Determine which venue stats to use for the opponent
+            // If we're home, opponent is away (use their away stats)
+            // If we're away, opponent is home (use their home stats)
+            // If combined filter, use combined stats
+            let oppVenue = 'combined';
+            if (venueFilter === 'home') {
+                oppVenue = 'away'; // We're home, so opponent is away
+            } else if (venueFilter === 'away') {
+                oppVenue = 'home'; // We're away, so opponent is home
+            }
+
+            // Get opponent's cumulative goals up to this GW for the appropriate venue
+            const oppCumulative = cumulativeGoalsByTeam[opponentCode]
+                ? cumulativeGoalsByTeam[opponentCode][oppVenue][gw]
+                : null;
 
             if (!oppCumulative) {
                 fixtures.push({ type: 'BLANK', cumulativeValue: null });
