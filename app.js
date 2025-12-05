@@ -500,15 +500,19 @@ function renderTable() {
     const tbody = document.getElementById('fixture-body');
 
     thead.innerHTML = '';
+    const headerRow = document.createElement('tr');
+
     const thTeam = document.createElement('th');
     thTeam.textContent = 'Team';
-    thead.appendChild(thTeam);
+    headerRow.appendChild(thTeam);
 
     for (let gw = parseInt(startGW); gw <= endGW; gw++) {
         const th = document.createElement('th');
         th.textContent = `GW ${gw}`;
-        thead.appendChild(th);
+        headerRow.appendChild(th);
     }
+
+    thead.appendChild(headerRow);
 
     let rowData = teams.map(team => {
         const teamId = team.id;
@@ -575,21 +579,24 @@ function renderTable() {
                 td.textContent = '-';
                 td.style.backgroundColor = '#f4f4f4';
             } else {
-                td.classList.add('match-cell');
+                // wrap inner content instead of making the <td> itself flex
+                const wrapper = document.createElement('div');
+                wrapper.className = 'match-cell';
+
                 const divOpp = document.createElement('div');
                 divOpp.className = 'match-opp';
                 divOpp.textContent = `${cell.opponent} ${cell.venue}`;
-                
+
                 const divProb = document.createElement('div');
                 divProb.className = 'match-prob';
                 divProb.textContent = `${(cell.prob * 100).toFixed(0)}%`;
-                
-                td.appendChild(divOpp);
-                td.appendChild(divProb);
-                
+
+                wrapper.appendChild(divOpp);
+                wrapper.appendChild(divProb);
+                td.appendChild(wrapper);
+
                 td.style.backgroundColor = getProbabilityColor(cell.prob);
-                if (cell.prob > 0.6) td.style.color = 'white';
-                else td.style.color = '#222';
+                td.style.color = cell.prob > 0.6 ? 'white' : '#222';
             }
             tr.appendChild(td);
         });
