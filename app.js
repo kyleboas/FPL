@@ -201,19 +201,67 @@ async function loadData() {
 // 4. CORE LOGIC
 // ==========================================
 
-function deriveArchetype(player) {
-    if (!player) return null;
-    const specific = player.detailed_position || player.role;
-    if (specific) {
-        if (['CB', 'LB', 'RB'].includes(specific)) return specific;
-        if (['CDM', 'CAM', 'RM', 'LM', 'RW', 'LW'].includes(specific)) return 'MID';
-        if (['ST', 'CF'].includes(specific)) return 'FWD';
+function deriveArchetype(player, statRecord) {
+    if (!player && !statRecord) return null;
+
+    const from = (obj, keys) => {
+        if (!obj) return undefined;
+        for (const k of keys) {
+            if (obj[k] !== undefined && obj[k] !== null && obj[k] !== '') {
+                return obj[k];
+            }
+        }
+        return undefined;
+    };
+
+    // 1) Try detailed / textual roles (CB, LB, CAM, etc.)
+    let specific = from(player, ['detailed_position', 'role', 'pos_detail']);
+    if (!specific) {
+        specific = from(statRecord, ['detailed_position', 'role', 'pos_detail']);
     }
-    const pos = player.position;
-    if (pos === 'GKP') return 'GKP'; 
-    if (pos === 'DEF') return 'CB';
-    if (pos === 'MID') return 'MID';
-    if (pos === 'FWD') return 'FWD';
+
+    if (specific && typeof specific === 'string') {
+        const s = specific.toUpperCase();
+
+        if (['CB', 'LCB', 'RCB'].includes(s)) return 'CB';
+        if (['LB', 'LWB'].includes(s))          return 'LB';
+        if (['RB', 'RWB'].includes(s))          return 'RB';
+        if (['CDM', 'DM', 'CM', 'CAM', 'RM', 'LM', 'RW', 'LW', 'AM', 'MID'].includes(s)) {
+            return 'MID';
+        }
+        if (['ST', 'CF', 'FW', 'FWD'].includes(s)) {
+            return 'FWD';
+        }
+    }
+
+    // 2) Try string position fields (GKP / DEF / MID / FWD, or similar)
+    let posStr = from(player, ['position', 'pos', 'position_short']);
+    if (!posStr) {
+        posStr = from(statRecord, ['position', 'pos', 'position_short']);
+    }
+
+    if (posStr) {
+        const p = String(posStr).toUpperCase();
+        if (['GKP', 'GK', 'GOALKEEPER'].includes(p)) return 'GKP';
+        if (['DEF', 'D', 'DEFENDER'].includes(p))    return 'CB';   // default DEF → CB bucket
+        if (['MID', 'M', 'MIDFIELDER'].includes(p))  return 'MID';
+        if (['FWD', 'FW', 'FORWARD', 'STRIKER'].includes(p)) return 'FWD';
+    }
+
+    // 3) Fallback: numeric element type (FPL-style: 1=GKP, 2=DEF, 3=MID, 4=FWD)
+    let elemType = from(player, ['element_type', 'position_id', 'type', 'type_id']);
+    if (elemType === undefined) {
+        elemType = from(statRecord, ['element_type', 'position_id', 'type', 'type_id']);
+    }
+
+    if (elemType !== undefined && elemType !== null && elemType !== '') {
+        const n = Number(elemType);
+        if (n === 1) return 'GKP';
+        if (n === 2) return 'CB';
+        if (n === 3) return 'MID';
+        if (n === 4) return 'FWD';
+    }
+
     return null;
 }
 
@@ -254,7 +302,8 @@ function processProbabilities() {
         const player = playersById[pID];
         if (!player) return;
 
-        const archetype = deriveArchetype(player);
+        // ✅ NEW: pass statRecord as second arg
+        const archetype = deriveArchetype(player, statRecord);
         if (!archetype || archetype === 'GKP') return;
 
         const gw = getVal(statRecord, 'gw', 'gameweek', 'event', 'round');
