@@ -254,7 +254,7 @@ function checkDefconHit(stats, archetype) {
 }
 
 function processProbabilities() {
-    const { stats, players } = STATE.data;
+    const { stats } = STATE.data;
     const { playersById } = STATE.lookups;
 
     const opponentAgg = {};
@@ -268,23 +268,31 @@ function processProbabilities() {
     });
 
     stats.forEach(statRecord => {
-        if ((statRecord.minutes || 0) <= 0) return;
+        // ---- minutes guard (handle different column names) ----
+        const minutes = getVal(statRecord, 'minutes', 'minutes_played', 'minutes_x');
+        if ((minutes || 0) <= 0) return;
 
         // Try to find player ID in common fields
         const pID = getVal(statRecord, 'player_id', 'element', 'id');
         const player = playersById[pID];
-        
         if (!player) return;
 
         const archetype = deriveArchetype(player);
         if (!archetype || archetype === 'GKP') return;
 
         const isHit = checkDefconHit(statRecord, archetype);
-        
-        const wasHome = getVal(statRecord, 'was_home', 'identifier') === true || String(getVal(statRecord, 'was_home')) === 'true';
-        const venueKey = String(wasHome); 
-        const opponentId = getVal(statRecord, 'opponent_team_id', 'opponent_team');
 
+        // ---- more robust was_home parsing ----
+        const wasHomeRaw = getVal(statRecord, 'was_home');
+        const wasHome =
+            wasHomeRaw === true ||
+            wasHomeRaw === 1 ||
+            wasHomeRaw === '1' ||
+            String(wasHomeRaw).toLowerCase() === 'true';
+
+        const venueKey = String(wasHome);
+
+        const opponentId = getVal(statRecord, 'opponent_team_id', 'opponent_team');
         if (!opponentId) return;
 
         // League Baseline
@@ -295,7 +303,9 @@ function processProbabilities() {
         // Opponent Specific
         if (!opponentAgg[opponentId]) opponentAgg[opponentId] = { 'true': {}, 'false': {} };
         if (!opponentAgg[opponentId][venueKey]) opponentAgg[opponentId][venueKey] = {};
-        if (!opponentAgg[opponentId][venueKey][archetype]) opponentAgg[opponentId][venueKey][archetype] = initAgg();
+        if (!opponentAgg[opponentId][venueKey][archetype]) {
+            opponentAgg[opponentId][venueKey][archetype] = initAgg();
+        }
 
         const oppBin = opponentAgg[opponentId][venueKey][archetype];
         oppBin.trials++;
@@ -591,14 +601,14 @@ async function init() {
     const mainEl = document.getElementById('main-content');
     const errorEl = document.getElementById('error');
 
-    try {
+        try {
         const rawData = await loadData();
         STATE.data = rawData;
         processData();
 
-        // expose for debugging
         window.STATE = STATE;
         window.sanityCheck = sanityCheck;
+        sanityCheck();
 
         loadingEl.style.display = 'none';
         mainEl.style.display = 'block';
