@@ -204,6 +204,51 @@
         .sorted-asc::after {
             content: ' ▲';
         }
+
+        /* Position Override Controls */
+        .position-select {
+            padding: 4px;
+            border-radius: 4px;
+            border: 1px solid #ccc;
+            font-size: 0.85em;
+            background-color: #fff;
+            cursor: pointer;
+        }
+
+        .position-select.has-override {
+            background-color: #fff3cd;
+            border-color: #ffc107;
+        }
+
+        .export-btn {
+            padding: 10px 20px;
+            background-color: var(--primary);
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-weight: bold;
+        }
+
+        .export-btn:hover {
+            opacity: 0.9;
+        }
+
+        .override-controls {
+            background: var(--card-bg);
+            padding: 15px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
+            display: flex;
+            gap: 15px;
+            align-items: center;
+        }
+
+        .override-count {
+            font-size: 0.9em;
+            color: #666;
+        }
     </style>
 </head>
 <body>
@@ -222,6 +267,14 @@
     <div id="loading">Loading Season Data...</div>
 
     <div id="main-content" style="display: none;">
+        <div class="override-controls">
+            <button id="export-overrides" class="export-btn">Export Position Overrides</button>
+            <span id="override-count" class="override-count">0 overrides set</span>
+            <div style="font-size: 0.85em; color: #666; margin-left: auto;">
+                Set player positions using the dropdowns in the table, then export to update your CSV file.
+            </div>
+        </div>
+
         <div class="controls">
             <div class="control-group">
                 <label for="position-filter">Position</label>
