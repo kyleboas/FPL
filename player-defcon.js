@@ -699,13 +699,36 @@ function setupEventListeners() {
     });
 
     // GW range
-    document.getElementById('gw-start').addEventListener('change', (e) => {
-        STATE.ui.startGW = parseInt(e.target.value, 10);
+    const startInput = document.getElementById('gw-start');
+    const endInput = document.getElementById('gw-end');
+
+    startInput.addEventListener('input', (e) => {
+        let val = parseInt(e.target.value, 10);
+        if (isNaN(val)) val = 1;
+        if (val < 1) val = 1;
+        if (val > CONFIG.UI.MAX_GW) val = CONFIG.UI.MAX_GW;
+        STATE.ui.startGW = val;
+
+        if (STATE.ui.endGW < val) {
+            STATE.ui.endGW = val;
+            endInput.value = String(val);
+        }
+
         renderTable();
     });
 
-    document.getElementById('gw-end').addEventListener('change', (e) => {
-        STATE.ui.endGW = parseInt(e.target.value, 10);
+    endInput.addEventListener('input', (e) => {
+        let val = parseInt(e.target.value, 10);
+        if (isNaN(val)) val = CONFIG.UI.MAX_GW;
+        if (val < 1) val = 1;
+        if (val > CONFIG.UI.MAX_GW) val = CONFIG.UI.MAX_GW;
+
+        if (val < STATE.ui.startGW) {
+            val = STATE.ui.startGW;
+            e.target.value = String(val);
+        }
+
+        STATE.ui.endGW = val;
         renderTable();
     });
 
