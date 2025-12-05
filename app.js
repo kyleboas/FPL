@@ -398,8 +398,60 @@ function getProbabilityColor(prob) {
     return `rgb(255, ${g}, ${b})`; 
 }
 
+function sanityCheck() {
+    console.log('=== DEFCON Sanity Check ===');
+
+    console.log('Players:', STATE.data.players.length);
+    console.log('Teams:', STATE.data.teams.length);
+    console.log('Raw fixtures rows:', STATE.data.fixtures.length);
+
+    // How many GW slots did we actually map into fixturesByTeam?
+    let mappedSlots = 0;
+    for (const [teamId, gwMap] of Object.entries(STATE.lookups.fixturesByTeam)) {
+        mappedSlots += Object.keys(gwMap).length;
+    }
+    console.log('Mapped fixture slots in fixturesByTeam:', mappedSlots);
+
+    // Each real fixture should appear twice (home + away),
+    // so this number should be roughly 2x the raw fixtures count.
+    console.log('Expected ~2x raw fixtures:', STATE.data.fixtures.length * 2);
+
+    // Pick a concrete team to inspect, e.g. Arsenal
+    const arsenal = STATE.data.teams.find(t => t.short_name === 'ARS');
+    if (!arsenal) {
+        console.warn('No team with short_name "ARS" found');
+        return;
+    }
+
+    console.log('Arsenal team object:', arsenal);
+    const arsenalMap = STATE.lookups.fixturesByTeam[arsenal.id];
+    console.log('Arsenal fixturesByTeam entry:', arsenalMap);
+
+    // Try a couple of gameweeks – adjust to ones you know should have fixtures
+    [1, 2, 7].forEach(gw => {
+        const f = arsenalMap ? arsenalMap[gw] : null;
+        console.log(`GW${gw} fixture for ARS:`, f);
+
+        if (f) {
+            const opp = STATE.lookups.teamsById[f.opponentId];
+            const venueKey = String(f.wasHome);
+            const probCB = STATE.lookups.probabilities[f.opponentId]?.[venueKey]?.CB;
+            const probLB = STATE.lookups.probabilities[f.opponentId]?.[venueKey]?.LB;
+            const probRB = STATE.lookups.probabilities[f.opponentId]?.[venueKey]?.RB;
+            const probMID = STATE.lookups.probabilities[f.opponentId]?.[venueKey]?.MID;
+
+            console.log(
+                `  Opponent: ${opp?.short_name} (${venueKey === 'true' ? 'H' : 'A'})`,
+                '\n  CB:', probCB,
+                'LB:', probLB,
+                'RB:', probRB,
+                'MID:', probMID
+            );
+        }
+    });
+}
+
 function renderTable() {
-    const { currentArchetype, startGW, sortBy } = STATE.ui;
     const { currentArchetype, startGW, sortBy } = STATE.ui;
     const { teams } = STATE.data;
     const { fixturesByTeam, probabilities, teamsById } = STATE.lookups;
@@ -543,6 +595,10 @@ async function init() {
         const rawData = await loadData();
         STATE.data = rawData;
         processData();
+
+        // expose for debugging
+        window.STATE = STATE;
+        window.sanityCheck = sanityCheck;
 
         loadingEl.style.display = 'none';
         mainEl.style.display = 'block';
