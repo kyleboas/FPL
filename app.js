@@ -40,10 +40,11 @@ const STATE = {
         fixtures: []
     },
     lookups: {
-        teamsById: {}, 
+        teamsById: {},
+        teamsByCode: {},  // New lookup: code -> team (for fixture/stats data that uses codes)
         playersById: {},
-        fixturesByTeam: {}, 
-        probabilities: {} 
+        fixturesByTeam: {},
+        probabilities: {}
     },
     ui: {
         currentArchetype: 'CB',
@@ -255,7 +256,16 @@ function checkDefconHit(stats, archetype) {
 
 function processProbabilities() {
     const { stats } = STATE.data;
-    const { playersById } = STATE.lookups;
+    const { playersById, teamsById, teamsByCode } = STATE.lookups;
+
+    // Helper to convert a team code to team ID (stats data may use codes)
+    const codeToId = (codeOrId) => {
+        // First check if it's already a valid team ID
+        if (teamsById[codeOrId]) return codeOrId;
+        // Otherwise, look up by code and return the team's ID
+        const team = teamsByCode[codeOrId];
+        return team ? team.id : null;
+    };
 
     const opponentAgg = {};
     const leagueAgg = { 'true': {}, 'false': {} };
@@ -292,7 +302,9 @@ function processProbabilities() {
 
         const venueKey = String(wasHome);
 
-        const opponentId = getVal(statRecord, 'opponent_team_id', 'opponent_team');
+        // Convert opponent code to ID (stats CSVs may use team codes, not IDs)
+        const opponentRaw = getVal(statRecord, 'opponent_team_id', 'opponent_team');
+        const opponentId = codeToId(opponentRaw);
         if (!opponentId) return;
 
         // League Baseline
@@ -347,13 +359,30 @@ function processData() {
     STATE.lookups.teamsById = {};
     STATE.data.teams.forEach(t => STATE.lookups.teamsById[t.id] = t);
 
+    // Create code -> team lookup (fixture data often uses team codes, not IDs)
+    STATE.lookups.teamsByCode = {};
+    STATE.data.teams.forEach(t => STATE.lookups.teamsByCode[t.code] = t);
+
     STATE.lookups.fixturesByTeam = {};
     STATE.data.teams.forEach(t => STATE.lookups.fixturesByTeam[t.id] = {});
 
+    // Helper to convert a team code to team ID (fixture data uses codes)
+    const codeToId = (codeOrId) => {
+        // First check if it's already a valid team ID
+        if (STATE.lookups.teamsById[codeOrId]) return codeOrId;
+        // Otherwise, look up by code and return the team's ID
+        const team = STATE.lookups.teamsByCode[codeOrId];
+        return team ? team.id : null;
+    };
+
     STATE.data.fixtures.forEach(fix => {
         // ✅ include home_team / away_team as fallbacks
-        const hID = getVal(fix, 'home_team_id', 'team_h', 'home_team');
-        const aID = getVal(fix, 'away_team_id', 'team_a', 'away_team');
+        const hRaw = getVal(fix, 'home_team_id', 'team_h', 'home_team');
+        const aRaw = getVal(fix, 'away_team_id', 'team_a', 'away_team');
+
+        // Convert codes to IDs (fixture CSVs use team codes, not IDs)
+        const hID = codeToId(hRaw);
+        const aID = codeToId(aRaw);
 
         const isFin = getVal(fix, 'finished') === true ||
                       String(getVal(fix, 'finished')) === 'true';
@@ -363,14 +392,14 @@ function processData() {
 
         if (hID != null && STATE.lookups.fixturesByTeam[hID]) {
             STATE.lookups.fixturesByTeam[hID][gw] = {
-                opponentId: aID,
+                opponentId: aID,  // Store the converted ID, not the raw code
                 wasHome: true,
                 finished: isFin
             };
         }
         if (aID != null && STATE.lookups.fixturesByTeam[aID]) {
             STATE.lookups.fixturesByTeam[aID][gw] = {
-                opponentId: hID,
+                opponentId: hID,  // Store the converted ID, not the raw code
                 wasHome: false,
                 finished: isFin
             };
