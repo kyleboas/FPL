@@ -196,6 +196,21 @@ function getTeamFromPlayer(player) {
     return team || null;
 }
 
+// Map a team id coming from matches.csv (usually FPL "code" like 91.0)
+// to the canonical team id we use elsewhere (teams.id).
+function mapMatchTeamId(rawTeamId) {
+    const codeKey = normId(rawTeamId);
+    if (!codeKey) return null;
+
+    const team = state.teams.find(t =>
+        normId(t.code || t.team_code) === codeKey ||   // matches uses code
+        normId(t.id || t.team_id) === codeKey          // just in case it ever uses id
+    );
+
+    // Canonical id is teams.id (fallback to whatever we got if not found)
+    return team ? normId(team.id || team.team_id || team.code) : codeKey;
+}
+
 // Calculate CBIT for a defender match
 // CBIT = Interceptions + Clearances + Blocks + Tackles
 function calculateCBIT(matchStat) {
@@ -261,10 +276,10 @@ function getThreshold(position) {
 function buildMatchLocationLookup() {
     const lookup = {};
 
-    state.matches.forEach(match => {
-        const homeTeamId = normId(match.home_team || match.team_h || match.home_team_id);
-        const awayTeamId = normId(match.away_team || match.team_a || match.away_team_id);
-        const gwKey = normId(match.event || match.gameweek || match.round || match.gw);
+        state.matches.forEach(match => {
+        const homeTeamId = mapMatchTeamId(match.home_team || match.team_h || match.home_team_id);
+        const awayTeamId = mapMatchTeamId(match.away_team || match.team_a || match.away_team_id);
+        const gwKey      = normId(match.event || match.gameweek || match.round || match.gw);
 
         // Create lookup keys: "teamId_opponentId_gameweek"
         if (homeTeamId && awayTeamId && gwKey) {
@@ -459,9 +474,9 @@ function getUpcomingFixtures() {
 
         // Only include fixtures that are not finished (future or upcoming matches)
         if (!isFinished) {
-            const gwKey = normId(match.event || match.gameweek || match.round || match.gw || 0);
-            const homeTeamId = normId(match.home_team || match.team_h || match.home_team_id);
-            const awayTeamId = normId(match.away_team || match.team_a || match.away_team_id);
+            const gwKey      = normId(match.event || match.gameweek || match.round || match.gw || 0);
+            const homeTeamId = mapMatchTeamId(match.home_team || match.team_h || match.home_team_id);
+            const awayTeamId = mapMatchTeamId(match.away_team || match.team_a || match.away_team_id);
 
             fixtures.push({
                 id: match.id || match.match_id || match.fixture_id,
