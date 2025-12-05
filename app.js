@@ -1,760 +1,615 @@
-// FPL DEFCON Predictor - Fixture Matrix Version
-// Data source: https://github.com/olbauday/FPL-Elo-Insights/main/data/2025-2026
-//
-// New behaviour:
-// - No player list.
-// - Builds a fixture matrix: rows = teams, columns = upcoming gameweeks.
-// - Each cell shows opponent + H/A + DEFCON hit probability for a selected archetype.
-//
-// Required HTML IDs:
-// - #loading, #error, #main-content (as before)
-// - #fixture-header  (inside <thead> of the fixture table)
-// - #fixture-body    (inside <tbody> of the fixture table)
-// - #archetype-filter <select> with values like: CB, RB, LB, MID, DEF_GKP, MID_FWD
+/**
+ * FPL DEFCON PREDICTOR - app.js
+ * * A vanilla JavaScript SPA to calculate and visualize defensive action probabilities
+ * based on opponent strength and position archetypes.
+ * * Core Features:
+ * - Bayesian shrinkage for probability smoothing.
+ * - Dynamic fixture matrix rendering.
+ * - Client-side CSV parsing and data aggregation.
+ */
 
-const DATA_BASE_URL = 'https://raw.githubusercontent.com/olbauday/FPL-Elo-Insights/main/data/2025-2026';
-const DATA_GW_URL = 'https://raw.githubusercontent.com/olbauday/FPL-Elo-Insights/main/data/2025-2026/By%20Tournament/Premier%20League';
-const DEFCON_THRESHOLD_DEF = 10;  // CBIT threshold for defenders/keepers
-const DEFCON_THRESHOLD_MID_FWD = 12;  // CBIRT threshold for mids/forwards
-const MAX_GAMEWEEKS = 38;  // Maximum gameweeks in a season
+// ==========================================
+// 1. CONFIGURATION & CONSTANTS
+// ==========================================
 
-// Default league-wide DEFCON probability when no data exists yet
-const DEFAULT_DEFCON_PROB = 0.28;
-
-// Strength of league-wide prior (in "virtual games") for smoothing per-opponent rates.
-const DEFCON_PRIOR_STRENGTH = 6;
-
-// Global state
-let state = {
-    players: [],
-    playerMatchStats: [],
-    matches: [],
-    teams: [],
-    teamLookup: {},            // id -> { id, name, shortName }
-    teamPositionProbs: null,   // from buildOpponentPositionProbabilities()
-    leaguePositionProbs: null, // from buildOpponentPositionProbabilities()
-    fixtureMatrix: null,       // { gameweeks: number[], rows: [ { teamId, name, shortName, fixtures: { [gw]: cell } } ] }
-    filters: {
-        archetype: 'CB'        // CB, RB, LB, MID, DEF_GKP, MID_FWD
+const CONFIG = {
+    PATHS: {
+        SEASON_BASE: 'https://raw.githubusercontent.com/olbauday/FPL-Elo-Insights/main/data/2025-2026',
+        PL_TOURNAMENT_BASE: 'https://raw.githubusercontent.com/olbauday/FPL-Elo-Insights/main/data/2025-2026/By%20Tournament/Premier%20League'
+    },
+    URLS: {
+        // season-level master files
+        PLAYERS: 'https://raw.githubusercontent.com/olbauday/FPL-Elo-Insights/main/data/2025-2026/players.csv',
+        TEAMS:   'https://raw.githubusercontent.com/olbauday/FPL-Elo-Insights/main/data/2025-2026/teams.csv'
+        // STATS/FIXTURES now come from per-GW folders, so no single URL here
+    },
+    THRESHOLDS: {
+        DEF: 10,
+        MID_FWD: 12
+    },
+    MODEL: {
+        K_FACTOR: 10,
+        MIN_PROB: 0.05,
+        MAX_PROB: 0.95
+    },
+    UI: {
+        VISIBLE_GW_SPAN: 6,
+        MAX_GW: 38
     }
 };
 
-// DOM Elements
-const elements = {
-    loading: document.getElementById('loading'),
-    error: document.getElementById('error'),
-    mainContent: document.getElementById('main-content'),
-    fixtureHeader: document.getElementById('fixture-header'),
-    fixtureBody: document.getElementById('fixture-body'),
-    archetypeFilter: document.getElementById('archetype-filter')
+// Application State
+const STATE = {
+    data: {
+        players: [],
+        teams: [],
+        stats: [],
+        fixtures: []
+    },
+    lookups: {
+        teamsById: {}, // map id -> team obj
+        playersById: {}, // map id -> player obj
+        fixturesByTeam: {}, // map teamId -> { gw -> { opponentId, wasHome, finished } }
+        probabilities: {} // [opponentId][isPlayerHome][archetype] -> { p, n }
+    },
+    ui: {
+        currentArchetype: 'CB', // Default
+        startGW: 1,             // Default from slider
+        sortBy: 'max'           // 'max' or 'avg'
+    }
 };
 
-// --------------------- Utility helpers ---------------------
+// ==========================================
+// 2. UTILITIES & PARSING
+// ==========================================
 
-// Normalize any team / player ID so "7", "7.0" and 7 all become "7"
-function normId(value) {
-    if (value === null || value === undefined) return null;
-    const trimmed = String(value).trim();
-    if (!trimmed) return null;
-    const num = Number(trimmed);
-    if (!Number.isNaN(num)) return String(num);
-    return trimmed;
-}
+/**
+ * Basic CSV Parser.
+ * Assumes standard CSV format with header row.
+ */
+const CSVParser = {
+    parse: (text) => {
+        if (!text) return [];
+        const lines = text.trim().split('\n');
+        if (lines.length < 2) return [];
 
-// CSV Parser
-function parseCSV(text) {
-    const lines = text.trim().split('\n');
-    if (lines.length === 0) return [];
+        const headers = lines[0].split(',').map(h => h.trim());
+        const result = [];
 
-    const headers = parseCSVLine(lines[0]);
-    const data = [];
+        for (let i = 1; i < lines.length; i++) {
+            const currentLine = lines[i].split(',');
+            if (currentLine.length !== headers.length) continue;
 
-    for (let i = 1; i < lines.length; i++) {
-        if (lines[i].trim()) {
-            const values = parseCSVLine(lines[i]);
-            const row = {};
-            headers.forEach((header, idx) => {
-                row[header.trim()] = values[idx]?.trim() || '';
+            const obj = {};
+            headers.forEach((header, index) => {
+                let val = currentLine[index].trim();
+                // Attempt numeric conversion
+                if (!isNaN(val) && val !== '') {
+                    val = Number(val);
+                } else if (val.toLowerCase() === 'true') {
+                    val = true;
+                } else if (val.toLowerCase() === 'false') {
+                    val = false;
+                }
+                obj[header] = val;
             });
-            data.push(row);
+            result.push(obj);
         }
+        return result;
     }
-    return data;
-}
+};
 
-function parseCSVLine(line) {
-    const result = [];
-    let current = '';
-    let inQuotes = false;
+/**
+ * Fetch helper to grab all data sources in parallel.
+ */
+/**
+ * Fetch helper to grab all data sources.
+ * - players / teams from season root
+ * - stats / fixtures from per-GW Premier League folders
+ */
+async function loadData() {
+    const fetchCSV = async (url) => {
+        const res = await fetch(url);
+        if (!res.ok) throw new Error(`Failed to load ${url} (${res.status})`);
+        const text = await res.text();
+        return CSVParser.parse(text);
+    };
 
-    for (let i = 0; i < line.length; i++) {
-        const char = line[i];
-        if (char === '"') {
-            inQuotes = !inQuotes;
-        } else if (char === ',' && !inQuotes) {
-            result.push(current);
-            current = '';
-        } else {
-            current += char;
+    // Tolerant version for per-GW files (some future GWs won’t exist yet)
+    const fetchCSVOptional = async (url) => {
+        try {
+            const res = await fetch(url);
+            if (!res.ok) {
+                console.warn(`Skipping ${url}: HTTP ${res.status}`);
+                return [];
+            }
+            const text = await res.text();
+            return CSVParser.parse(text);
+        } catch (e) {
+            console.warn(`Error fetching ${url}: ${e.message}`);
+            return [];
         }
-    }
-    result.push(current);
-    return result;
-}
+    };
 
-// Fetch data from GitHub
-async function fetchCSV(url) {
-    const response = await fetch(url);
-    if (!response.ok) {
-        throw new Error(`Failed to fetch ${url}: ${response.status}`);
-    }
-    const text = await response.text();
-    return parseCSV(text);
-}
+    // 1) Season-level players / teams
+    const [players, teams] = await Promise.all([
+        fetchCSV(CONFIG.URLS.PLAYERS),
+        fetchCSV(CONFIG.URLS.TEAMS)
+    ]);
 
-// Fetch CSV from root data directory
-async function fetchRootCSV(filename) {
-    return fetchCSV(`${DATA_BASE_URL}/${filename}`);
-}
+    // 2) GW-level stats + fixtures for Premier League
+    const allStats = [];
+    const allFixtures = [];
 
-// Fetch CSV from a specific gameweek directory
-async function fetchGameweekCSV(gameweek, filename) {
-    return fetchCSV(`${DATA_GW_URL}/GW${gameweek}/${filename}`);
-}
+    for (let gw = 1; gw <= CONFIG.UI.MAX_GW; gw++) {
+        const gwPath = `${CONFIG.PATHS.PL_TOURNAMENT_BASE}/GW${gw}`;
+        const statsUrl = `${gwPath}/player_gameweek_stats.csv`;
+        const fixturesUrl = `${gwPath}/fixtures.csv`;
 
-// Fetch data from all available gameweeks and aggregate
-async function fetchAllGameweekData(filename) {
-    const allData = [];
-    const fetchPromises = [];
-
-    for (let gw = 1; gw <= MAX_GAMEWEEKS; gw++) {
-        fetchPromises.push(
-            fetchGameweekCSV(gw, filename)
-                .then(data => ({ gw, data, success: true }))
-                .catch(() => ({ gw, data: [], success: false }))
-        );
-    }
-
-    const results = await Promise.all(fetchPromises);
-
-    results.forEach(result => {
-        if (result.success && result.data.length > 0) {
-            allData.push(...result.data);
-        }
-    });
-
-    return allData;
-}
-
-async function loadAllData() {
-    try {
-        const [players, teams] = await Promise.all([
-            fetchRootCSV('players.csv'),
-            fetchRootCSV('teams.csv')
+        const [gwStats, gwFixtures] = await Promise.all([
+            fetchCSVOptional(statsUrl),
+            fetchCSVOptional(fixturesUrl)
         ]);
 
-        state.players = players;
-        state.teams = teams;
-
-        console.log('Loaded root data:', { players: players.length, teams: teams.length });
-
-        const [playerMatchStats, matches] = await Promise.all([
-            fetchAllGameweekData('player_gameweek_stats.csv'),
-            fetchAllGameweekData('matches.csv')
-        ]);
-
-        state.playerMatchStats = playerMatchStats;
-        state.matches = matches;
-
-        console.log('Loaded gameweek data:', {
-            playerMatchStats: playerMatchStats.length,
-            matches: matches.length
-        });
-
-        if (players.length === 0 || teams.length === 0) {
-            throw new Error('Failed to load essential player/team data');
-        }
-
-        if (playerMatchStats.length === 0 || matches.length === 0) {
-            console.warn('No gameweek data available yet - season may not have started');
-        }
-
-        buildTeamLookup();
-
-        return true;
-    } catch (error) {
-        console.error('Error loading data:', error);
-        return false;
-    }
-}
-
-// Build canonical team lookup
-function buildTeamLookup() {
-    const lookup = {};
-    state.teams.forEach(t => {
-        const id = normId(t.id || t.team_id || t.code);
-        if (!id) return;
-        lookup[id] = {
-            id,
-            name: t.name || t.team_name || 'Unknown',
-            shortName: t.short_name || (t.name ? t.name.substring(0, 3).toUpperCase() : id)
-        };
-    });
-    state.teamLookup = lookup;
-}
-
-// Map a player row to its team row using FPL-Elo-Insights conventions
-function getTeamFromPlayer(player) {
-    const playerTeamKey = normId(player.team_id || player.team_code || player.team);
-    if (!playerTeamKey) return null;
-
-    const team = state.teams.find(t =>
-        normId(t.code) === playerTeamKey ||
-        normId(t.team_code) === playerTeamKey ||
-        normId(t.id) === playerTeamKey ||
-        normId(t.team_id) === playerTeamKey
-    );
-
-    return team || null;
-}
-
-// Robust player lookup from a player_gameweek_stats row.
-// FPL-Elo-Insights usually uses `element` for the FPL player id.
-function getPlayerFromStat(stat) {
-    // Prefer FPL-style fields first, then fall back to id
-    const candidateIds = [
-        stat.element,
-        stat.player_id,
-        stat.player,
-        stat.id
-    ]
-        .map(normId)
-        .filter(Boolean);
-
-    if (candidateIds.length === 0) return null;
-
-    for (const cand of candidateIds) {
-        const player = state.players.find(p =>
-            normId(p.element) === cand ||
-            normId(p.player_id) === cand ||
-            normId(p.id) === cand
-        );
-        if (player) return player;
-    }
-
-    return null;
-}
-
-// Map a team id coming from matches.csv to canonical id (teams.id)
-function mapMatchTeamId(rawTeamId) {
-    const codeKey = normId(rawTeamId);
-    if (!codeKey) return null;
-
-    const team = state.teams.find(t =>
-        normId(t.code || t.team_code) === codeKey ||
-        normId(t.id || t.team_id) === codeKey
-    );
-
-    return team ? normId(team.id || team.team_id || team.code) : codeKey;
-}
-
-// --------------------- Metrics & Probabilities ---------------------
-
-// Calculate CBIT for a defender/keeper match
-function calculateCBIT(matchStat) {
-    const interceptions = parseFloat(matchStat.interceptions || matchStat.clearances_blocks_interceptions || 0);
-    const clearances = parseFloat(matchStat.clearances || 0);
-    const blocks = parseFloat(matchStat.blocks || 0);
-    const tackles = parseFloat(matchStat.tackles || matchStat.tackles_won || 0);
-    return interceptions + clearances + blocks + tackles;
-}
-
-// Calculate CBIRT for mids/forwards
-function calculateCBIRT(matchStat, position) {
-    const interceptions = parseFloat(matchStat.interceptions || matchStat.clearances_blocks_interceptions || 0);
-    const recoveries = parseFloat(matchStat.recoveries || matchStat.ball_recoveries || 0);
-    const tackles = parseFloat(matchStat.tackles || matchStat.tackles_won || 0);
-    return interceptions + recoveries + tackles;
-}
-
-// Get player position (GKP/DEF/MID/FWD)
-function getPosition(player) {
-    const elementType = parseInt(player.element_type || player.position || player.pos || 0);
-    const posMap = { 1: 'GKP', 2: 'DEF', 3: 'MID', 4: 'FWD' };
-    if (posMap[elementType]) {
-        return posMap[elementType];
-    }
-
-    const posStr = (player.singular_name_short || player.position || player.pos || '').toUpperCase();
-    const strMap = {
-        'GK': 'GKP', 'GKP': 'GKP', 'GOALKEEPER': 'GKP',
-        'DEF': 'DEF', 'D': 'DEF', 'DEFENDER': 'DEF',
-        'MID': 'MID', 'M': 'MID', 'MIDFIELDER': 'MID',
-        'FWD': 'FWD', 'F': 'FWD', 'FW': 'FWD', 'FORWARD': 'FWD', 'ATT': 'FWD'
-    };
-    return strMap[posStr] || 'UNK';
-}
-
-// Position group for opponent-history aggregation
-function getPositionGroup(position) {
-    if (position === 'DEF' || position === 'GKP') {
-        return 'DEF_GKP';
-    }
-    if (position === 'MID' || position === 'FWD') {
-        return 'MID_FWD';
-    }
-    return null;
-}
-
-// Archetype -> position group mapping for UI
-function getPositionGroupFromArchetype(archetype) {
-    const key = (archetype || '').toUpperCase();
-    if (key === 'CB' || key === 'RB' || key === 'LB' || key === 'DEF' || key === 'GKP' || key === 'DEF_GKP') {
-        return 'DEF_GKP';
-    }
-    if (key === 'MID' || key === 'FWD' || key === 'MID_FWD') {
-        return 'MID_FWD';
-    }
-    // default to DEF_GKP if unknown
-    return 'DEF_GKP';
-}
-
-// Score per match based on position
-function calculateScore(matchStat, position) {
-    if (position === 'DEF' || position === 'GKP') {
-        return calculateCBIT(matchStat);
-    }
-    return calculateCBIRT(matchStat, position);
-}
-
-// DEFCON threshold by position
-function getThreshold(position) {
-    if (position === 'DEF' || position === 'GKP') {
-        return DEFCON_THRESHOLD_DEF;
-    }
-    return DEFCON_THRESHOLD_MID_FWD;
-}
-
-function createEmptyPositionStats() {
-    return { hits: 0, n: 0 };
-}
-
-function createEmptyTeamHistoryEntry() {
-    return {
-        home: {
-            DEF_GKP: createEmptyPositionStats(),
-            MID_FWD: createEmptyPositionStats()
-        },
-        away: {
-            DEF_GKP: createEmptyPositionStats(),
-            MID_FWD: createEmptyPositionStats()
-        },
-        overall: {
-            DEF_GKP: createEmptyPositionStats(),
-            MID_FWD: createEmptyPositionStats()
-        }
-    };
-}
-
-// Build a lookup to determine if a match was home or away for a team
-function buildMatchLocationLookup() {
-    const lookup = {};
-
-    state.matches.forEach(match => {
-        const homeTeamId = mapMatchTeamId(match.home_team || match.team_h || match.home_team_id);
-        const awayTeamId = mapMatchTeamId(match.away_team || match.team_a || match.away_team_id);
-        const gwKey      = normId(match.event || match.gameweek || match.round || match.gw);
-
-        if (homeTeamId && awayTeamId && gwKey) {
-            lookup[`${homeTeamId}_${awayTeamId}_${gwKey}`] = 'home';
-            lookup[`${awayTeamId}_${homeTeamId}_${gwKey}`] = 'away';
-        }
-    });
-
-    return lookup;
-}
-
-// Smoothed probability using a Beta prior
-function getSmoothedProbability(hits, n, priorMean, priorStrength) {
-    const alpha0 = priorMean * priorStrength;
-    const beta0  = (1 - priorMean) * priorStrength;
-
-    const alphaPost = alpha0 + hits;
-    const betaPost  = beta0 + (n - hits);
-
-    if (alphaPost <= 0 || betaPost <= 0) {
-        return priorMean;
-    }
-
-    return alphaPost / (alphaPost + betaPost);
-}
-
-// Core: build per-opponent, per-location, per-position-group DEFCON hit probabilities
-function buildOpponentPositionProbabilities() {
-    const matchLocationLookup = buildMatchLocationLookup();
-    const opponentHistory = {};
-    const leagueTotals = createEmptyTeamHistoryEntry();
-
-    const LOCATIONS = ['home', 'away', 'overall'];
-    const GROUPS = ['DEF_GKP', 'MID_FWD'];
-
-    // 1) Accumulate hits and totals
-    state.playerMatchStats.forEach(stat => {
-        const opponentId = normId(stat.opponent_team || stat.opponent_id || stat.vs_team);
-        if (!opponentId) return;
-
-        const player = getPlayerFromStat(stat);
-if (!player) return;
-
-        const playerTeam = getTeamFromPlayer(player);
-        if (!playerTeam) return;
-        const playerTeamId = normId(playerTeam.id || playerTeam.team_id || playerTeam.code);
-
-        const gameweek = stat.round || stat.event || stat.gameweek || stat.gw;
-        const gwKey = normId(gameweek);
-        if (!gwKey) return;
-
-        const position = getPosition(player);
-        const positionGroup = getPositionGroup(position);
-        if (!positionGroup) return;
-
-        const score = calculateScore(stat, position);
-        if (isNaN(score)) return;
-
-        const threshold = getThreshold(position);
-
-        const lookupKey = `${opponentId}_${playerTeamId}_${gwKey}`;
-        const location = matchLocationLookup[lookupKey]; // 'home' or 'away' from opponent POV
-        if (location !== 'home' && location !== 'away') return;
-
-        if (!opponentHistory[opponentId]) {
-            opponentHistory[opponentId] = createEmptyTeamHistoryEntry();
-        }
-
-        const teamEntry = opponentHistory[opponentId];
-
-        const locBucket = teamEntry[location][positionGroup];
-        locBucket.n++;
-        if (score >= threshold) {
-            locBucket.hits++;
-        }
-
-        const overallBucket = teamEntry.overall[positionGroup];
-        overallBucket.n++;
-        if (score >= threshold) {
-            overallBucket.hits++;
-        }
-    });
-
-    // 2) League totals
-    Object.values(opponentHistory).forEach(teamEntry => {
-        LOCATIONS.forEach(loc => {
-            GROUPS.forEach(group => {
-                const src = teamEntry[loc][group];
-                const dst = leagueTotals[loc][group];
-                dst.n += src.n;
-                dst.hits += src.hits;
-            });
-        });
-    });
-
-    // 3) League-wide baselines
-    const leaguePositionProbs = {
-        home:   { DEF_GKP: 0, MID_FWD: 0 },
-        away:   { DEF_GKP: 0, MID_FWD: 0 },
-        overall:{ DEF_GKP: 0, MID_FWD: 0 }
-    };
-
-    ['home', 'away', 'overall'].forEach(loc => {
-        GROUPS.forEach(group => {
-            const stats = leagueTotals[loc][group];
-            if (stats.n > 0) {
-                leaguePositionProbs[loc][group] = stats.hits / stats.n;
-            } else {
-                leaguePositionProbs[loc][group] = DEFAULT_DEFCON_PROB;
+        // Tag GW if not already present
+        gwStats.forEach(row => {
+            if (row.gw == null && row.gameweek != null) {
+                row.gw = row.gameweek;
+            } else if (row.gw == null) {
+                row.gw = gw;
             }
         });
+
+        gwFixtures.forEach(row => {
+            if (row.gw == null && row.gameweek != null) {
+                row.gw = row.gameweek;
+            } else if (row.gw == null) {
+                row.gw = gw;
+            }
+        });
+
+        allStats.push(...gwStats);
+        allFixtures.push(...gwFixtures);
+    }
+
+    return {
+        players,
+        teams,
+        stats: allStats,
+        fixtures: allFixtures
+    };
+}
+
+// ==========================================
+// 3. CORE LOGIC: ARCHETYPES & PROBABILITIES
+// ==========================================
+
+/**
+ * Maps player position data to our app archetypes:
+ * CB, LB, RB, MID, FWD.
+ * * Logic:
+ * 1. Use granular `specific_role` if available (e.g., from source).
+ * 2. Fallback to broad `position` (GKP, DEF, MID, FWD).
+ */
+function deriveArchetype(player) {
+    if (!player) return null;
+
+    // 1. Try granular role if it exists in data
+    const specific = player.detailed_position || player.role; // Adjust based on actual CSV headers
+    if (specific) {
+        if (['CB', 'LB', 'RB'].includes(specific)) return specific;
+        if (['CDM', 'CAM', 'RM', 'LM', 'RW', 'LW'].includes(specific)) return 'MID';
+        if (['ST', 'CF'].includes(specific)) return 'FWD';
+    }
+
+    // 2. Fallback based on FPL standard positions
+    // 1=GKP, 2=DEF, 3=MID, 4=FWD usually, but we use string codes here
+    const pos = player.position; 
+    
+    if (pos === 'GKP') return 'GKP'; // Excluded from table but useful for baselines if needed
+    
+    if (pos === 'DEF') {
+        // Simple mapping function constraint:
+        // Without detailed data, we can't perfectly distinguish CB vs FB.
+        // We will return 'CB' as a generic default for DEF if specific is missing,
+        // OR rely on a naming convention.
+        // For this exercise, we map generic DEF to CB to be safe, 
+        // or we could split specific IDs if we had a hardcoded list.
+        return 'CB'; 
+    }
+    
+    if (pos === 'MID') return 'MID';
+    if (pos === 'FWD') return 'FWD';
+
+    return null;
+}
+
+/**
+ * Calculates whether a player hit the DEFCON threshold in a specific match.
+ */
+function checkDefconHit(stats, archetype) {
+    const { clearances, interceptions, tackles, recoveries } = stats;
+    
+    // Safely handle missing keys by defaulting to 0
+    const clr = clearances || 0;
+    const int = interceptions || 0;
+    const tck = tackles || 0;
+    const rec = recoveries || 0;
+
+    if (['CB', 'LB', 'RB'].includes(archetype)) {
+        // Defender Rule: CLR + INT + TCK >= 10
+        return (clr + int + tck) >= CONFIG.THRESHOLDS.DEF;
+    } else if (['MID', 'FWD'].includes(archetype)) {
+        // Mid/Fwd Rule: CLR + INT + TCK + REC >= 12
+        return (clr + int + tck + rec) >= CONFIG.THRESHOLDS.MID_FWD;
+    }
+    
+    return false;
+}
+
+/**
+ * The Heavy Lifter: Aggregates stats and computes probabilities
+ * using Bayesian shrinkage.
+ */
+function processProbabilities() {
+    const { stats, players, teams } = STATE.data;
+    const { playersById } = STATE.lookups;
+
+    // Data Structures for Aggregation
+    // Structure: agg[opponentId][isPlayerHomeString][archetype] = { hits, trials }
+    // isPlayerHomeString: "true" (Home) or "false" (Away)
+    const opponentAgg = {};
+    
+    // League Baselines: baseline[isPlayerHomeString][archetype] = { hits, trials }
+    const leagueAgg = {
+        'true': {}, 
+        'false': {}
+    };
+
+    // Initialize Helpers
+    const initAgg = () => ({ hits: 0, trials: 0 });
+    const archetypes = ['CB', 'LB', 'RB', 'MID', 'FWD'];
+    
+    archetypes.forEach(arch => {
+        leagueAgg['true'][arch] = initAgg();
+        leagueAgg['false'][arch] = initAgg();
     });
 
-    // 4) Smoothed probabilities per opponent/location/group
-    const teamPositionProbs = {};
-    const priorStrength = DEFCON_PRIOR_STRENGTH;
+    // 1. Iterate over every historical appearance
+    stats.forEach(statRecord => {
+        if (statRecord.minutes <= 0) return; // Ignore bench warmers
 
-    Object.entries(opponentHistory).forEach(([teamId, teamEntry]) => {
-        teamPositionProbs[teamId] = {
-            home:   { DEF_GKP: { prob: 0, sampleSize: 0 }, MID_FWD: { prob: 0, sampleSize: 0 } },
-            away:   { DEF_GKP: { prob: 0, sampleSize: 0 }, MID_FWD: { prob: 0, sampleSize: 0 } },
-            overall:{ DEF_GKP: { prob: 0, sampleSize: 0 }, MID_FWD: { prob: 0, sampleSize: 0 } }
-        };
+        const player = playersById[statRecord.player_id];
+        if (!player) return;
 
-        GROUPS.forEach(group => {
-            ['home', 'away', 'overall'].forEach(loc => {
-                const locStats = teamEntry[loc][group];
-                const overallStats = teamEntry.overall[group];
+        const archetype = deriveArchetype(player);
+        if (!archetype || archetype === 'GKP') return;
 
-                const leagueLocBase     = leaguePositionProbs[loc][group];
-                const leagueOverallBase = leaguePositionProbs.overall[group];
-                const leagueBase = loc === 'overall'
-                    ? leagueOverallBase
-                    : (leagueLocBase || leagueOverallBase || DEFAULT_DEFCON_PROB);
+        const isHit = checkDefconHit(statRecord, archetype);
+        
+        // Normalize boolean to string key for consistent object access
+        const venueKey = String(statRecord.was_home); // "true" if player was home
+        const opponentId = statRecord.opponent_team_id;
 
-                let prob;
-                let nUsed = 0;
+        // A. Update League Baseline
+        const leagueBin = leagueAgg[venueKey][archetype];
+        leagueBin.trials++;
+        if (isHit) leagueBin.hits++;
 
-                if (locStats.n > 0) {
-                    prob = getSmoothedProbability(locStats.hits, locStats.n, leagueBase, priorStrength);
-                    nUsed = locStats.n;
-                } else if (overallStats.n > 0) {
-                    prob = getSmoothedProbability(overallStats.hits, overallStats.n, leagueOverallBase, priorStrength);
-                    nUsed = overallStats.n;
-                } else {
-                    prob = leagueBase;
-                    nUsed = 0;
+        // B. Update Opponent Specific Aggregates
+        if (!opponentAgg[opponentId]) opponentAgg[opponentId] = { 'true': {}, 'false': {} };
+        if (!opponentAgg[opponentId][venueKey][archetype]) opponentAgg[opponentId][venueKey][archetype] = initAgg();
+
+        const oppBin = opponentAgg[opponentId][venueKey][archetype];
+        oppBin.trials++;
+        if (isHit) oppBin.hits++;
+    });
+
+    // 2. Compute Probabilities with Shrinkage
+    STATE.lookups.probabilities = {};
+    const { K_FACTOR, MIN_PROB, MAX_PROB } = CONFIG.MODEL;
+
+    teams.forEach(team => {
+        const teamId = team.id;
+        STATE.lookups.probabilities[teamId] = { 'true': {}, 'false': {} };
+
+        ['true', 'false'].forEach(venueKey => {
+            archetypes.forEach(arch => {
+                // Get League Average for this Archetype + Venue
+                const lb = leagueAgg[venueKey][arch];
+                const leagueProb = lb.trials > 0 ? (lb.hits / lb.trials) : 0;
+
+                // Get Opponent Specific Data
+                let hits = 0;
+                let trials = 0;
+
+                if (opponentAgg[teamId] && opponentAgg[teamId][venueKey][arch]) {
+                    hits = opponentAgg[teamId][venueKey][arch].hits;
+                    trials = opponentAgg[teamId][venueKey][arch].trials;
                 }
 
-                teamPositionProbs[teamId][loc][group] = {
-                    prob: Math.max(0, Math.min(1, prob)),
-                    sampleSize: nUsed
-                };
+                // Bayesian Shrinkage Formula
+                // P = (hits + K * leagueProb) / (trials + K)
+                const smoothedProb = (hits + (K_FACTOR * leagueProb)) / (trials + K_FACTOR);
+
+                // Clamp
+                let finalProb = Math.max(MIN_PROB, Math.min(MAX_PROB, smoothedProb));
+
+                STATE.lookups.probabilities[teamId][venueKey][arch] = finalProb;
             });
         });
     });
 
-    return { teamPositionProbs, leaguePositionProbs };
+    console.log("Probabilities Processed", STATE.lookups.probabilities);
 }
 
-// --------------------- Fixtures & Matrix ---------------------
+// ==========================================
+// 4. DATA PROCESSING & INDEXING
+// ==========================================
 
-// Upcoming fixtures from matches
-function getUpcomingFixtures() {
-    const fixtures = [];
+function processData() {
+    // Index Players
+    STATE.data.players.forEach(p => {
+        STATE.lookups.playersById[p.id] = p;
+    });
 
-    state.matches.forEach(match => {
-        const matchDate = new Date(match.kickoff_time || match.datetime || match.date || match.kickoff);
+    // Index Teams
+    STATE.data.teams.forEach(t => {
+        STATE.lookups.teamsById[t.id] = t;
+    });
 
-        const isFinished =
-            match.finished === true ||
-            match.finished === 'true' ||
-            match.finished === 'True' ||
-            match.finished === 1 ||
-            match.finished === '1';
+    // Index Fixtures: Group by Team
+    STATE.lookups.fixturesByTeam = {};
+    
+    // Initialize array for all teams
+    STATE.data.teams.forEach(t => {
+        STATE.lookups.fixturesByTeam[t.id] = {};
+    });
 
-        if (!isFinished) {
-            const gwKey      = normId(match.event || match.gameweek || match.round || match.gw || 0);
-            const homeTeamId = mapMatchTeamId(match.home_team || match.team_h || match.home_team_id);
-            const awayTeamId = mapMatchTeamId(match.away_team || match.team_a || match.away_team_id);
+    STATE.data.fixtures.forEach(fix => {
+        // Processing Home Team's fixture
+        if (STATE.lookups.fixturesByTeam[fix.home_team_id]) {
+            STATE.lookups.fixturesByTeam[fix.home_team_id][fix.gw] = {
+                opponentId: fix.away_team_id,
+                wasHome: true,
+                finished: fix.finished === true || fix.finished === 'true'
+            };
+        }
 
+        // Processing Away Team's fixture
+        if (STATE.lookups.fixturesByTeam[fix.away_team_id]) {
+            STATE.lookups.fixturesByTeam[fix.away_team_id][fix.gw] = {
+                opponentId: fix.home_team_id,
+                wasHome: false, // Away team is NOT home
+                finished: fix.finished === true || fix.finished === 'true'
+            };
+        }
+    });
+
+    // Run Probability Engine
+    processProbabilities();
+}
+
+// ==========================================
+// 5. RENDERING & UI
+// ==========================================
+
+/**
+ * Returns a CSS color string based on probability.
+ * Low Prob (0.05) -> Transparent/Neutral
+ * High Prob (0.95) -> High Intensity Red/Orange
+ */
+function getProbabilityColor(prob) {
+    // 0 to 1 scale. 
+    // Let's go from Light Yellow to Dark Red for "Hot" zones.
+    // HSL: Start around 60 (Yellow) go down to 0 (Red). 
+    // Lightness: 90% down to 50%.
+    
+    // Using a simpler alpha approach for clean UI
+    // Base color red: 255, 50, 50
+    const alpha = (prob - 0.1) / 0.8; // Normalize roughly for visibility
+    const safeAlpha = Math.max(0, Math.min(1, alpha));
+    
+    return `rgba(255, 99, 71, ${safeAlpha})`; // Tomato red with variable opacity
+}
+
+function renderTable() {
+    const { currentArchetype, startGW, sortBy } = STATE.ui;
+    const { teams, teamsById } = STATE.data; // teams is array
+    const { fixturesByTeam, probabilities } = STATE.lookups;
+    const endGW = parseInt(startGW) + CONFIG.UI.VISIBLE_GW_SPAN - 1;
+
+    const thead = document.getElementById('fixture-header');
+    const tbody = document.getElementById('fixture-body');
+
+    // 1. Build Header
+    thead.innerHTML = '';
+    const thTeam = document.createElement('th');
+    thTeam.textContent = 'Team';
+    thTeam.style.textAlign = 'left';
+    thead.appendChild(thTeam);
+
+    for (let gw = parseInt(startGW); gw <= endGW; gw++) {
+        const th = document.createElement('th');
+        th.textContent = `GW ${gw}`;
+        th.style.width = '80px';
+        thead.appendChild(th);
+    }
+
+    // 2. Prepare Rows Data
+    let rowData = teams.map(team => {
+        const teamId = team.id;
+        const fixtures = [];
+        let metrics = []; // To calculate sort values
+
+        for (let gw = parseInt(startGW); gw <= endGW; gw++) {
+            const fix = fixturesByTeam[teamId] ? fixturesByTeam[teamId][gw] : null;
+            
+            if (!fix) {
+                // Blank Gameweek
+                fixtures.push({ type: 'BLANK' });
+                metrics.push(0); 
+                continue;
+            }
+
+            const opponentId = fix.opponentId;
+            const isHome = fix.wasHome; // Boolean
+            const venueKey = String(isHome); // "true" or "false"
+
+            // LOOKUP LOGIC:
+            // We want the probability that THIS team's player (Archetype) hits DEFCON.
+            // This happens against the OPPONENT.
+            // Condition: Opponent ID, and the VENUE of the player.
+            // e.g. Arsenal (Home) vs Liverpool.
+            // We look at stats conceded by Liverpool when Liverpool is Away (== Player Home).
+            
+            let prob = 0;
+            if (probabilities[opponentId] && 
+                probabilities[opponentId][venueKey] && 
+                probabilities[opponentId][venueKey][currentArchetype]) {
+                
+                prob = probabilities[opponentId][venueKey][currentArchetype];
+            } else {
+                // Fallback (shouldn't happen often due to league baseline)
+                prob = CONFIG.MODEL.MIN_PROB;
+            }
+
+            const oppName = teamsById[opponentId] ? teamsById[opponentId].short_name : 'UNK';
+            
             fixtures.push({
-                id: match.id || match.match_id || match.fixture_id,
-                gameweek: gwKey ? Number(gwKey) : 0,
-                homeTeam: homeTeamId,
-                awayTeam: awayTeamId,
-                date: matchDate
+                type: 'MATCH',
+                opponent: oppName,
+                venue: isHome ? '(H)' : '(A)',
+                prob: prob
             });
-        }
-    });
-
-    fixtures.sort((a, b) => a.date - b.date);
-    return fixtures;
-}
-
-// Compute probabilities for a team vs an opponent in a given defensive location
-function getOpponentProbabilities(opponentId, defendingLocation) {
-    const groups = ['DEF_GKP', 'MID_FWD'];
-    const probs = {};
-    const { teamPositionProbs, leaguePositionProbs } = state;
-
-    groups.forEach(group => {
-        let prob = (leaguePositionProbs.overall && leaguePositionProbs.overall[group] != null)
-            ? leaguePositionProbs.overall[group]
-            : DEFAULT_DEFCON_PROB;
-
-        const teamEntry = teamPositionProbs[opponentId];
-
-        if (teamEntry && teamEntry[defendingLocation] && teamEntry[defendingLocation][group]) {
-            prob = teamEntry[defendingLocation][group].prob;
-        } else if (teamEntry && teamEntry.overall && teamEntry.overall[group]) {
-            prob = teamEntry.overall[group].prob;
-        } else {
-            const leagueLocBase  = leaguePositionProbs[defendingLocation] && leaguePositionProbs[defendingLocation][group];
-            const leagueOverall  = leaguePositionProbs.overall && leaguePositionProbs.overall[group];
-            prob = leagueLocBase != null
-                ? leagueLocBase
-                : (leagueOverall != null ? leagueOverall : DEFAULT_DEFCON_PROB);
+            metrics.push(prob);
         }
 
-        probs[group] = Math.max(0, Math.min(1, prob));
-    });
+        // Compute Sort Metric
+        const validMetrics = metrics.filter(m => m > 0);
+        const maxVal = validMetrics.length ? Math.max(...validMetrics) : 0;
+        const avgVal = validMetrics.length ? (validMetrics.reduce((a,b)=>a+b,0) / validMetrics.length) : 0;
 
-    return probs;
-}
-
-// Add a cell to a team's row
-function addFixtureCell(row, teamId, opponentId, isHome, gw) {
-    if (!row || !opponentId || !gw) return;
-
-    const opponentMeta = state.teamLookup[opponentId];
-    const defendingLocation = isHome ? 'away' : 'home'; // opponent is defending
-    const probabilities = getOpponentProbabilities(opponentId, defendingLocation);
-
-    row.fixtures[gw] = {
-        gameweek: gw,
-        teamId,
-        opponentId,
-        opponentShortName: opponentMeta ? opponentMeta.shortName : opponentId,
-        location: isHome ? 'H' : 'A',
-        probabilities // { DEF_GKP: p, MID_FWD: p }
-    };
-}
-
-// Build the fixture matrix: rows by team, columns by GW
-function buildFixtureMatrix() {
-    const { teamPositionProbs, leaguePositionProbs } = buildOpponentPositionProbabilities();
-    state.teamPositionProbs = teamPositionProbs;
-    state.leaguePositionProbs = leaguePositionProbs;
-
-    const fixtures = getUpcomingFixtures();
-
-    const gwSet = new Set();
-    fixtures.forEach(f => {
-        if (f.gameweek && f.gameweek > 0) gwSet.add(f.gameweek);
-    });
-    const gameweeks = Array.from(gwSet).sort((a, b) => a - b);
-
-    const rowsByTeamId = {};
-    Object.values(state.teamLookup).forEach(team => {
-        rowsByTeamId[team.id] = {
-            teamId: team.id,
-            name: team.name,
-            shortName: team.shortName,
-            fixtures: {} // gw -> cell
+        return {
+            teamName: team.name,
+            fixtures: fixtures,
+            sortVal: sortBy === 'max' ? maxVal : avgVal
         };
     });
 
-    fixtures.forEach(f => {
-        if (!f.homeTeam || !f.awayTeam || !f.gameweek) return;
-        const gw = f.gameweek;
+    // 3. Sort Rows
+    rowData.sort((a, b) => b.sortVal - a.sortVal);
 
-        // From home team's perspective
-        addFixtureCell(rowsByTeamId[f.homeTeam], f.homeTeam, f.awayTeam, true, gw);
+    // 4. Render Body
+    tbody.innerHTML = '';
+    rowData.forEach(row => {
+        const tr = document.createElement('tr');
+        
+        // Name Cell
+        const tdName = document.createElement('td');
+        tdName.textContent = row.teamName;
+        tdName.style.fontWeight = 'bold';
+        tr.appendChild(tdName);
 
-        // From away team's perspective
-        addFixtureCell(rowsByTeamId[f.awayTeam], f.awayTeam, f.homeTeam, false, gw);
-    });
-
-    const rows = Object.values(rowsByTeamId).sort((a, b) => a.name.localeCompare(b.name));
-
-    state.fixtureMatrix = {
-        gameweeks,
-        rows
-    };
-}
-
-// --------------------- Rendering ---------------------
-
-function getProbabilityClass(prob) {
-    if (prob >= 0.6) return 'very-high';
-    if (prob >= 0.4) return 'high';
-    if (prob >= 0.25) return 'med';
-    return 'low';
-}
-
-function renderFixtureMatrix() {
-    const matrix = state.fixtureMatrix;
-    if (!matrix || !matrix.gameweeks.length) {
-        elements.fixtureHeader.innerHTML = '';
-        elements.fixtureBody.innerHTML = `
-            <tr class="no-results">
-                <td colspan="2">No upcoming fixtures available</td>
-            </tr>
-        `;
-        return;
-    }
-
-    const positionGroup = getPositionGroupFromArchetype(state.filters.archetype);
-
-    // Header row: Team + GWs
-    const headerHtml = `
-        <tr>
-            <th>Team</th>
-            ${matrix.gameweeks.map(gw => `<th>GW ${gw}</th>`).join('')}
-        </tr>
-    `;
-    elements.fixtureHeader.innerHTML = headerHtml;
-
-    // Body rows
-    const bodyHtml = matrix.rows.map(row => {
-        const cellsHtml = matrix.gameweeks.map(gw => {
-            const cell = row.fixtures[gw];
-            if (!cell) {
-                return `<td class="no-fixture">-</td>`;
+        // Fixture Cells
+        row.fixtures.forEach(cell => {
+            const td = document.createElement('td');
+            
+            if (cell.type === 'BLANK') {
+                td.textContent = '-';
+                td.style.backgroundColor = '#eee';
+            } else {
+                // Inner Content
+                const divOpp = document.createElement('div');
+                divOpp.textContent = `${cell.opponent} ${cell.venue}`;
+                divOpp.style.fontSize = '0.85em';
+                
+                const divProb = document.createElement('div');
+                divProb.textContent = `${(cell.prob * 100).toFixed(0)}%`;
+                divProb.style.fontWeight = 'bold';
+                
+                td.appendChild(divOpp);
+                td.appendChild(divProb);
+                
+                // Styling
+                td.style.backgroundColor = getProbabilityColor(cell.prob);
+                td.style.textAlign = 'center';
+                td.style.border = '1px solid #ddd';
+                
+                // Optional: dark text on light bg, white text on dark bg
+                if (cell.prob > 0.7) td.style.color = 'white';
+                else td.style.color = 'black';
             }
+            tr.appendChild(td);
+        });
 
-            const prob = cell.probabilities[positionGroup] ?? DEFAULT_DEFCON_PROB;
-            const probPercent = (prob * 100).toFixed(0);
-            const probClass = getProbabilityClass(prob);
-            const label = `${cell.opponentShortName} ${cell.location}`;
-
-            return `
-                <td class="fixture-cell prob-${probClass}">
-                    <div class="fixture-opponent">${label}</div>
-                    <div class="fixture-prob">${probPercent}%</div>
-                </td>
-            `;
-        }).join('');
-
-        return `
-            <tr>
-                <td class="team-cell"><strong>${row.shortName}</strong></td>
-                ${cellsHtml}
-            </tr>
-        `;
-    }).join('');
-
-    elements.fixtureBody.innerHTML = bodyHtml;
+        tbody.appendChild(tr);
+    });
 }
 
-// --------------------- Events ---------------------
+// ==========================================
+// 6. INITIALIZATION & EVENTS
+// ==========================================
 
 function setupEventListeners() {
-    if (elements.archetypeFilter) {
-        elements.archetypeFilter.addEventListener('change', (e) => {
-            state.filters.archetype = e.target.value;
-            renderFixtureMatrix();
-        });
-    }
-}
-
-// --------------------- Init ---------------------
-
-async function init() {
-    console.log('FPL DEFCON Fixture Matrix initializing...');
-
-    const success = await loadAllData();
-
-    if (!success) {
-        elements.loading?.classList.add('hidden');
-        elements.error?.classList.remove('hidden');
-        return;
-    }
-
-    console.log('Data loaded:', {
-        players: state.players.length,
-        matchStats: state.playerMatchStats.length,
-        matches: state.matches.length,
-        teams: state.teams.length
+    // Archetype Filter
+    const archSelect = document.getElementById('archetype-filter');
+    archSelect.addEventListener('change', (e) => {
+        STATE.ui.currentArchetype = e.target.value;
+        renderTable();
     });
 
-    buildFixtureMatrix();
-    console.log('Fixture matrix built');
+    // GW Slider
+    const slider = document.getElementById('gw-slider');
+    const gwLabel = document.getElementById('gw-label'); // Optional label
+    
+    // Initialize slider value
+    if (gwLabel) gwLabel.textContent = `GW ${slider.value}`;
+    STATE.ui.startGW = slider.value;
 
-    setupEventListeners();
-    renderFixtureMatrix();
+    slider.addEventListener('input', (e) => {
+        const val = e.target.value;
+        STATE.ui.startGW = val;
+        if (gwLabel) gwLabel.textContent = `GW ${val}`;
+        renderTable();
+    });
 
-    elements.loading?.classList.add('hidden');
-    elements.mainContent?.classList.remove('hidden');
-
-    console.log('FPL DEFCON Fixture Matrix ready!');
+    // Sort By
+    const sortSelect = document.getElementById('sort-by');
+    sortSelect.addEventListener('change', (e) => {
+        STATE.ui.sortBy = e.target.value;
+        renderTable();
+    });
 }
 
+async function init() {
+    const loadingEl = document.getElementById('loading');
+    const mainEl = document.getElementById('main-content');
+    const errorEl = document.getElementById('error');
+
+    try {
+        // 1. Load Data
+        const rawData = await loadData();
+        STATE.data = rawData;
+
+        // 2. Process Data
+        processData();
+
+        // 3. Update UI
+        loadingEl.style.display = 'none';
+        mainEl.style.display = 'block';
+
+        // 4. Initial Render
+        setupEventListeners();
+        renderTable();
+
+    } catch (err) {
+        console.error("Initialization Error:", err);
+        loadingEl.style.display = 'none';
+        errorEl.style.display = 'block';
+        errorEl.textContent = `Error loading data: ${err.message}. Ensure data files exist in /data/ folder.`;
+    }
+}
+
+// Start the app when DOM is ready
 document.addEventListener('DOMContentLoaded', init);
