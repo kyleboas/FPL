@@ -39,6 +39,16 @@ const elements = {
     medProbCount: document.getElementById('med-prob-count')
 };
 
+// Normalize any team / player ID so "7", "7.0" and 7 all become "7"
+function normId(value) {
+    if (value === null || value === undefined) return null;
+    const trimmed = String(value).trim();
+    if (!trimmed) return null;
+    const num = Number(trimmed);
+    if (!Number.isNaN(num)) return String(num);
+    return trimmed;
+}
+
 // CSV Parser
 function parseCSV(text) {
     const lines = text.trim().split('\n');
@@ -173,14 +183,14 @@ async function loadAllData() {
 // Map a player row to its team row using FPL-Elo-Insights conventions:
 // players.team_id -> teams.code, and then teams.id is the canonical key for matches.
 function getTeamFromPlayer(player) {
-    const playerTeamKey = player.team_id || player.team_code || player.team;
+    const playerTeamKey = normId(player.team_id || player.team_code || player.team);
     if (!playerTeamKey) return null;
 
     const team = state.teams.find(t =>
-        t.code == playerTeamKey ||
-        t.team_code == playerTeamKey ||
-        t.id == playerTeamKey ||
-        t.team_id == playerTeamKey
+        normId(t.code) === playerTeamKey ||
+        normId(t.team_code) === playerTeamKey ||
+        normId(t.id) === playerTeamKey ||
+        normId(t.team_id) === playerTeamKey
     );
 
     return team || null;
@@ -252,14 +262,14 @@ function buildMatchLocationLookup() {
     const lookup = {};
 
     state.matches.forEach(match => {
-        const homeTeam = match.home_team || match.team_h || match.home_team_id;
-        const awayTeam = match.away_team || match.team_a || match.away_team_id;
-        const gameweek = match.event || match.gameweek || match.round;
+        const homeTeamId = normId(match.home_team || match.team_h || match.home_team_id);
+        const awayTeamId = normId(match.away_team || match.team_a || match.away_team_id);
+        const gwKey = normId(match.event || match.gameweek || match.round || match.gw);
 
         // Create lookup keys: "teamId_opponentId_gameweek"
-        if (homeTeam && awayTeam && gameweek) {
-            lookup[`${homeTeam}_${awayTeam}_${gameweek}`] = 'home';
-            lookup[`${awayTeam}_${homeTeam}_${gameweek}`] = 'away';
+        if (homeTeamId && awayTeamId && gwKey) {
+            lookup[`${homeTeamId}_${awayTeamId}_${gwKey}`] = 'home';
+            lookup[`${awayTeamId}_${homeTeamId}_${gwKey}`] = 'away';
         }
     });
 
@@ -274,7 +284,9 @@ function calculateOpponentMultipliers() {
 
     // Initialize team stats with separate home/away tracking
     state.teams.forEach(team => {
-        const teamId = team.id || team.team_id || team.code;
+        const teamId = normId(team.id || team.team_id || team.code);
+        if (!teamId) return;
+
         teamStats[teamId] = {
             name: team.name || team.team_name,
             shortName: team.short_name || (team.name ? team.name.substring(0, 3).toUpperCase() : 'UNK'),
@@ -287,10 +299,10 @@ function calculateOpponentMultipliers() {
     // Calculate what each team allows to opponents (split by home/away)
     state.playerMatchStats.forEach(stat => {
         // FPL-Elo-Insights uses opponent_team field -> matches teams.id
-        const opponentId = stat.opponent_team || stat.opponent_id || stat.vs_team;
+        const opponentId = normId(stat.opponent_team || stat.opponent_id || stat.vs_team);
         if (!opponentId || !teamStats[opponentId]) return;
 
-        // Link stats to players: player_gameweek_stats.id -> players.player_id
+        // Link stats to players: player_gameweek_stats.id -> players.player_id/element
         const playerId = stat.id || stat.element || stat.player_id;
         const player = state.players.find(p =>
             (p.player_id || p.id || p.element) == playerId
@@ -300,14 +312,15 @@ function calculateOpponentMultipliers() {
         // Resolve player's actual team row and canonical team id (matches teams.id)
         const playerTeam = getTeamFromPlayer(player);
         if (!playerTeam) return;
-        const playerTeamId = playerTeam.id || playerTeam.team_id || playerTeam.code;
+        const playerTeamId = normId(playerTeam.id || playerTeam.team_id || playerTeam.code);
 
-        const gameweek = stat.round || stat.event || stat.gameweek;
+        const gameweek = stat.round || stat.event || stat.gameweek || stat.gw;
+        const gwKey = normId(gameweek);
         const position = getPosition(player);
         const score = calculateScore(stat, position);
 
         // Determine if this was a home or away match for the opponent
-        const lookupKey = `${opponentId}_${playerTeamId}_${gameweek}`;
+        const lookupKey = `${opponentId}_${playerTeamId}_${gwKey}`;
         const location = matchLocationLookup[lookupKey];
 
         if (location === 'home') {
@@ -437,16 +450,24 @@ function getUpcomingFixtures() {
     state.matches.forEach(match => {
         // FPL-Elo-Insights uses: kickoff_time, event, home_team, away_team, finished
         const matchDate = new Date(match.kickoff_time || match.datetime || match.date || match.kickoff);
-        const isFinished = match.finished === true || match.finished === 'true' || match.finished === 'True' || match.finished === 1 || match.finished === '1';
+        const isFinished =
+            match.finished === true ||
+            match.finished === 'true' ||
+            match.finished === 'True' ||
+            match.finished === 1 ||
+            match.finished === '1';
 
         // Only include fixtures that are not finished (future or upcoming matches)
-        // A fixture is upcoming if it's not finished yet, regardless of kickoff time
         if (!isFinished) {
+            const gwKey = normId(match.event || match.gameweek || match.round || match.gw || 0);
+            const homeTeamId = normId(match.home_team || match.team_h || match.home_team_id);
+            const awayTeamId = normId(match.away_team || match.team_a || match.away_team_id);
+
             fixtures.push({
                 id: match.id || match.match_id || match.fixture_id,
-                gameweek: parseInt(match.event || match.gameweek || match.round || match.gw || 0),
-                homeTeam: match.home_team || match.team_h || match.home_team_id,
-                awayTeam: match.away_team || match.team_a || match.away_team_id,
+                gameweek: gwKey ? Number(gwKey) : 0,
+                homeTeam: homeTeamId,
+                awayTeam: awayTeamId,
                 date: matchDate
             });
         }
@@ -486,8 +507,8 @@ function processPlayerData() {
         const team = getTeamFromPlayer(player);
         if (!team) return;
 
-        // Canonical team id (matches matches.home_team / matches.away_team)
-        const teamId = team.id || team.team_id || team.code;
+        // Canonical normalized team id (matches matches.home_team / matches.away_team)
+        const teamId = normId(team.id || team.team_id || team.code);
 
         const stats = playerStats[playerId] || [];
         if (stats.length === 0) return;
@@ -502,7 +523,7 @@ function processPlayerData() {
 
         // Find next fixture for this player's team
         const nextFixture = upcomingFixtures.find(f =>
-            f.homeTeam == teamId || f.awayTeam == teamId
+            f.homeTeam === teamId || f.awayTeam === teamId
         );
 
         let opponentId = null;
@@ -513,7 +534,7 @@ function processPlayerData() {
 
         if (nextFixture) {
             // Determine if player's team is home or away
-            isHome = nextFixture.homeTeam == teamId;
+            isHome = nextFixture.homeTeam === teamId;
             opponentId = isHome ? nextFixture.awayTeam : nextFixture.homeTeam;
             fixtureLocation = isHome ? 'H' : 'A';
 
@@ -527,9 +548,7 @@ function processPlayerData() {
             } else {
                 // Fallback: look up opponent team directly from teams array
                 const opponentTeam = state.teams.find(t =>
-                    t.id == opponentId ||
-                    t.team_id == opponentId ||
-                    t.code == opponentId
+                    normId(t.id || t.team_id || t.code) === opponentId
                 );
                 if (opponentTeam) {
                     opponentName = opponentTeam.short_name ||
@@ -681,8 +700,8 @@ function populateFilters() {
 
     teams.forEach(team => {
         const option = document.createElement('option');
-        // Use the same ID field priority as player data for consistency
-        option.value = team.id || team.team_id || team.code;
+        // Use the same ID field priority as player data for consistency (normalized)
+        option.value = normId(team.id || team.team_id || team.code);
         option.textContent = team.name || team.team_name;
         elements.teamFilter.appendChild(option);
     });
