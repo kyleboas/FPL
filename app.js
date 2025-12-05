@@ -14,7 +14,8 @@ const CONFIG = {
     },
     URLS: {
         PLAYERS: 'https://raw.githubusercontent.com/olbauday/FPL-Elo-Insights/main/data/2025-2026/players.csv',
-        TEAMS:   'https://raw.githubusercontent.com/olbauday/FPL-Elo-Insights/main/data/2025-2026/teams.csv'
+        TEAMS:   'https://raw.githubusercontent.com/olbauday/FPL-Elo-Insights/main/data/2025-2026/teams.csv',
+        POSITION_OVERRIDES: './data/player_position_overrides.csv'
     },
     THRESHOLDS: {
         DEF: 10,
@@ -43,7 +44,8 @@ const STATE = {
         teamsById: {},
         teamsByCode: {},
         fixturesByTeam: {}, // key: team.code -> { gw -> { opponentCode, wasHome, finished } }
-        probabilities: {}   // key: opponentCode -> { 'true'/'false' -> { archetype -> prob } }
+        probabilities: {},  // key: opponentCode -> { 'true'/'false' -> { archetype -> prob } }
+        positionOverrides: {} // key: player_id -> actual_position (LB, RB, CDM)
     },
     ui: {
         currentArchetype: 'CB',
@@ -164,10 +166,11 @@ async function loadData() {
     };
 
     updateStatus("Fetching Season Metadata...");
-    
-    const [players, teams] = await Promise.all([
+
+    const [players, teams, positionOverrides] = await Promise.all([
         fetchCSV(CONFIG.URLS.PLAYERS),
-        fetchCSV(CONFIG.URLS.TEAMS)
+        fetchCSV(CONFIG.URLS.TEAMS),
+        fetchCSVOptional(CONFIG.URLS.POSITION_OVERRIDES)
     ]);
 
     updateStatus(`Loaded ${players.length} Players and ${teams.length} Teams. Fetching GW Data...`);
@@ -208,7 +211,7 @@ async function loadData() {
         updateStatus(`Fetching Data... processed up to GW${Math.min(gw+batchSize, CONFIG.UI.MAX_GW)}`);
     }
 
-    return { players, teams, stats: allStats, fixtures: allFixtures };
+    return { players, teams, stats: allStats, fixtures: allFixtures, positionOverrides };
 }
 
 // ==========================================
@@ -217,6 +220,15 @@ async function loadData() {
 
 function deriveArchetype(player) {
     if (!player) return null;
+
+    // Check position overrides first
+    const pid = getVal(player, 'player_id', 'id');
+    if (pid != null && STATE.lookups.positionOverrides[pid]) {
+        const override = STATE.lookups.positionOverrides[pid];
+        // LB and RB return as-is, CDM maps to MID
+        if (['LB', 'RB'].includes(override)) return override;
+        if (override === 'CDM') return 'MID';
+    }
 
     // If you ever add detailed_position / role later, this still works
     const specific = player.detailed_position || player.role;
@@ -352,6 +364,18 @@ function processData() {
             STATE.lookups.playersById[pid] = p;
         }
     });
+
+    // Build position overrides lookup
+    STATE.lookups.positionOverrides = {};
+    if (STATE.data.positionOverrides && STATE.data.positionOverrides.length > 0) {
+        STATE.data.positionOverrides.forEach(override => {
+            const pid = getVal(override, 'player_id', 'id');
+            const position = override.actual_position;
+            if (pid != null && position) {
+                STATE.lookups.positionOverrides[pid] = position;
+            }
+        });
+    }
 
     STATE.lookups.teamsById = {};
     STATE.data.teams.forEach(t => STATE.lookups.teamsById[t.id] = t);
