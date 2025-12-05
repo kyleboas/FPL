@@ -26,7 +26,6 @@ const CONFIG = {
         MAX_PROB: 1.0     // cap at 100%
     },
     UI: {
-        VISIBLE_GW_SPAN: 6,
         MAX_GW: 38
     }
 };
@@ -40,16 +39,22 @@ const STATE = {
         fixtures: []
     },
     lookups: {
-        teamsById: {},
-        teamsByCode: {},   // key: team.code
         playersById: {},
+        teamsById: {},
+        teamsByCode: {},
         fixturesByTeam: {}, // key: team.code -> { gw -> { opponentCode, wasHome, finished } }
         probabilities: {}   // key: opponentCode -> { 'true'/'false' -> { archetype -> prob } }
     },
     ui: {
         currentArchetype: 'CB',
         startGW: 1,
-        sortBy: 'max'
+        endGW: 6,
+        excludedGWs: [],
+        sortMode: {
+            type: 'max',      // 'max' | 'avg' | 'column'
+            direction: 'desc',// 'asc' | 'desc'
+            gw: null          // number when type === 'column'
+        }
     }
 };
 
@@ -119,6 +124,15 @@ const getVal = (obj, ...keys) => {
     }
     return undefined;
 };
+
+// Parse excluded GWs from input string
+function parseExcludedGWs(inputValue) {
+    if (!inputValue) return [];
+    return inputValue
+        .split(',')
+        .map(s => parseInt(s.trim(), 10))
+        .filter(n => !isNaN(n) && n >= 1 && n <= CONFIG.UI.MAX_GW);
+}
 
 // ==========================================
 // 3. DATA LOADING
@@ -245,7 +259,6 @@ function processProbabilities() {
     const { stats, teams } = STATE.data;
     const { playersById, fixturesByTeam, teamsById, teamsByCode } = STATE.lookups;
 
-    // opponentAgg[opponentCode][venueKey][archetype] = { hits, trials }
     const opponentAgg = {};
     const initAgg = () => ({ hits: 0, trials: 0 });
     const archetypes = ['CB', 'LB', 'RB', 'MID', 'FWD'];
@@ -264,11 +277,10 @@ function processProbabilities() {
         const gw = getVal(statRecord, 'gw', 'gameweek', 'event', 'round');
         if (!gw) return;
 
-        // map player.team (id or code) → teamCode (e.g. 3 = ARS)
         const teamRef = getVal(player, 'team', 'team_id', 'teamid', 'team_code');
         let teamCode = null;
 
-        if (teamsByCode[teamRef]) {
+        if (STATE.lookups.teamsByCode[teamRef]) {
             teamCode = teamRef;                 // already a code
         } else if (teamsById[teamRef]) {
             teamCode = teamsById[teamRef].code; // convert id → code
@@ -299,7 +311,6 @@ function processProbabilities() {
         if (isHit) bucket.hits++;
     });
 
-    // Turn aggregates into raw hit percentages
     STATE.lookups.probabilities = {};
 
     teams.forEach(team => {
@@ -325,7 +336,6 @@ function processProbabilities() {
         });
     });
 
-    // Optional debug
     console.log('=== DEFCON Opponent Aggregates ===');
     Object.entries(STATE.lookups.probabilities).forEach(([oppCode, byVenue]) => {
         const team = teamsByCode[oppCode];
@@ -352,7 +362,6 @@ function processData() {
     STATE.lookups.fixturesByTeam = {};
     STATE.data.teams.forEach(t => STATE.lookups.fixturesByTeam[t.code] = {});
 
-    // fixtures.csv uses team codes; keep everything in codes
     STATE.data.fixtures.forEach(fix => {
         const hCode = getVal(fix, 'home_team', 'team_h', 'home_team_id');
         const aCode = getVal(fix, 'away_team', 'team_a', 'away_team_id');
@@ -392,11 +401,20 @@ function processData() {
 // 5. RENDERING
 // ==========================================
 
-function getProbabilityColor(prob) {
-    const intensity = Math.min(1, Math.max(0, (prob - 0.2) / 0.6));
+function getProbabilityColor(prob, archetype) {
+    // Looser / lower thresholds for mids
+    let start = 0.2;
+    let span  = 0.6;
+
+    if (archetype === 'MID') {
+        start = 0.10;   // start "heating up" earlier
+        span  = 0.40;   // saturate by ~50%
+    }
+
+    const intensity = Math.min(1, Math.max(0, (prob - start) / span));
     const g = Math.floor(255 * (1 - intensity));
     const b = Math.floor(255 * (1 - intensity));
-    return `rgb(255, ${g}, ${b})`; 
+    return `rgb(255, ${g}, ${b})`;
 }
 
 function sanityCheck() {
@@ -446,11 +464,35 @@ function sanityCheck() {
     });
 }
 
+// Handle clicking on a GW header to sort by that column
+function handleGwHeaderClick(gw) {
+    const mode = STATE.ui.sortMode;
+    if (mode.type === 'column' && mode.gw === gw) {
+        mode.direction = mode.direction === 'desc' ? 'asc' : 'desc';
+    } else {
+        mode.type = 'column';
+        mode.gw = gw;
+        mode.direction = 'desc';
+    }
+    renderTable();
+}
+
 function renderTable() {
-    const { currentArchetype, startGW, sortBy } = STATE.ui;
+    const { currentArchetype, sortMode } = STATE.ui;
+    const startGW = parseInt(STATE.ui.startGW, 10);
+    const endGW   = parseInt(STATE.ui.endGW, 10);
+    const excludedSet = new Set(STATE.ui.excludedGWs || []);
+
+    // Build GW list respecting range + exclusions
+    const gwList = [];
+    for (let gw = startGW; gw <= endGW; gw++) {
+        if (!excludedSet.has(gw)) {
+            gwList.push(gw);
+        }
+    }
+
     const { teams } = STATE.data;
     const { fixturesByTeam, probabilities, teamsByCode } = STATE.lookups;
-    const endGW = parseInt(startGW) + CONFIG.UI.VISIBLE_GW_SPAN - 1;
 
     const thead = document.getElementById('fixture-header');
     const tbody = document.getElementById('fixture-body');
@@ -462,31 +504,43 @@ function renderTable() {
     thTeam.textContent = 'Team';
     headerRow.appendChild(thTeam);
 
-    for (let gw = parseInt(startGW); gw <= endGW; gw++) {
+    gwList.forEach(gw => {
         const th = document.createElement('th');
         th.textContent = `GW ${gw}`;
+        th.dataset.gw = gw;
+        th.classList.add('gw-header');
+
+        // Apply sorted indicator class
+        if (sortMode.type === 'column' && sortMode.gw === gw) {
+            th.classList.add(sortMode.direction === 'desc' ? 'sorted-desc' : 'sorted-asc');
+        }
+
+        th.addEventListener('click', () => handleGwHeaderClick(gw));
+
         headerRow.appendChild(th);
-    }
+    });
 
     thead.appendChild(headerRow);
 
     let rowData = teams.map(team => {
         const teamCode = team.code;
         const fixtures = [];
+        const gwProbMap = {};
         let metrics = [];
 
-        for (let gw = parseInt(startGW); gw <= endGW; gw++) {
+        gwList.forEach(gw => {
             const fix = fixturesByTeam[teamCode] ? fixturesByTeam[teamCode][gw] : null;
             
             if (!fix) {
                 fixtures.push({ type: 'BLANK' });
-                metrics.push(0); 
-                continue;
+                metrics.push(0);
+                gwProbMap[gw] = 0;
+                return;
             }
 
             const opponentCode = fix.opponentCode;
             const isHome = fix.wasHome;
-            const venueKey = String(isHome); 
+            const venueKey = String(isHome);
 
             let prob = CONFIG.MODEL.MIN_PROB;
             if (probabilities[opponentCode] && 
@@ -505,7 +559,8 @@ function renderTable() {
                 prob: prob
             });
             metrics.push(prob);
-        }
+            gwProbMap[gw] = prob;
+        });
 
         const validMetrics = metrics.filter(m => m > 0);
         const maxVal = validMetrics.length ? Math.max(...validMetrics) : 0;
@@ -513,12 +568,27 @@ function renderTable() {
 
         return {
             teamName: team.name,
-            fixtures: fixtures,
-            sortVal: sortBy === 'max' ? maxVal : avgVal
+            fixtures,
+            gwProbMap,
+            maxVal,
+            avgVal
         };
     });
 
-    rowData.sort((a, b) => b.sortVal - a.sortVal);
+    // Sorting
+    if (sortMode.type === 'max') {
+        rowData.sort((a, b) => b.maxVal - a.maxVal);
+    } else if (sortMode.type === 'avg') {
+        rowData.sort((a, b) => b.avgVal - a.avgVal);
+    } else if (sortMode.type === 'column' && sortMode.gw != null) {
+        const dir = sortMode.direction === 'asc' ? 1 : -1;
+        const gw = sortMode.gw;
+        rowData.sort((a, b) => {
+            const pa = a.gwProbMap[gw] ?? 0;
+            const pb = b.gwProbMap[gw] ?? 0;
+            return dir * (pa - pb); // asc or desc
+        });
+    }
 
     tbody.innerHTML = '';
     rowData.forEach(row => {
@@ -551,8 +621,16 @@ function renderTable() {
                 wrapper.appendChild(divProb);
                 td.appendChild(wrapper);
 
-                td.style.backgroundColor = getProbabilityColor(cell.prob);
-                td.style.color = cell.prob > 0.6 ? 'white' : '#222';
+                td.style.backgroundColor = getProbabilityColor(cell.prob, currentArchetype);
+
+                // Use the same intensity idea for text color
+                const colorIntensityCutoff = 0.6; // tweak if you want
+                const whiteText =
+                    (currentArchetype === 'MID'  && cell.prob >= 0.45) ||
+                    (currentArchetype === 'FWD'  && cell.prob >= 0.50) ||
+                    (['CB','LB','RB'].includes(currentArchetype) && cell.prob >= 0.60);
+
+                td.style.color = whiteText ? 'white' : '#222';
             }
             tr.appendChild(td);
         });
@@ -571,19 +649,57 @@ function setupEventListeners() {
         renderTable();
     });
 
-    const slider = document.getElementById('gw-slider');
-    const gwLabel = document.getElementById('gw-label');
-    STATE.ui.startGW = slider.value;
+    const startInput = document.getElementById('gw-start');
+    const endInput = document.getElementById('gw-end');
+    const excludeInput = document.getElementById('gw-exclude');
 
-    slider.addEventListener('input', (e) => {
-        const val = e.target.value;
+    // Initialise state from DOM defaults
+    STATE.ui.startGW = parseInt(startInput.value, 10) || 1;
+    STATE.ui.endGW = parseInt(endInput.value, 10) || Math.min(STATE.ui.startGW + 5, CONFIG.UI.MAX_GW);
+    STATE.ui.excludedGWs = parseExcludedGWs(excludeInput.value);
+
+    startInput.addEventListener('input', (e) => {
+        let val = parseInt(e.target.value, 10);
+        if (isNaN(val)) val = 1;
+        if (val < 1) val = 1;
+        if (val > CONFIG.UI.MAX_GW) val = CONFIG.UI.MAX_GW;
         STATE.ui.startGW = val;
-        gwLabel.textContent = `Start GW: ${val}`;
+
+        // Keep endGW >= startGW
+        if (STATE.ui.endGW < val) {
+            STATE.ui.endGW = val;
+            endInput.value = String(val);
+        }
+
+        renderTable();
+    });
+
+    endInput.addEventListener('input', (e) => {
+        let val = parseInt(e.target.value, 10);
+        if (isNaN(val)) val = CONFIG.UI.MAX_GW;
+        if (val < 1) val = 1;
+        if (val > CONFIG.UI.MAX_GW) val = CONFIG.UI.MAX_GW;
+
+        // Ensure endGW >= startGW
+        if (val < STATE.ui.startGW) {
+            val = STATE.ui.startGW;
+            e.target.value = String(val);
+        }
+
+        STATE.ui.endGW = val;
+        renderTable();
+    });
+
+    excludeInput.addEventListener('input', (e) => {
+        STATE.ui.excludedGWs = parseExcludedGWs(e.target.value);
         renderTable();
     });
 
     document.getElementById('sort-by').addEventListener('change', (e) => {
-        STATE.ui.sortBy = e.target.value;
+        const val = e.target.value; // 'max' | 'avg'
+        STATE.ui.sortMode.type = val;
+        STATE.ui.sortMode.gw = null;
+        STATE.ui.sortMode.direction = 'desc';
         renderTable();
     });
 }
