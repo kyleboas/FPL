@@ -187,41 +187,28 @@ function getTeamFromPlayer(player) {
 }
 
 // Calculate CBIT for a defender match
-// CBIT = Clean Sheet Points + Bonus + Interceptions + Tackles (blocked passes proxy)
+// CBIT = Interceptions + Clearances + Blocks + Tackles
 function calculateCBIT(matchStat) {
-    const cleanSheet = parseFloat(matchStat.clean_sheets || matchStat.cleansheet || 0);
-    const bonus = parseFloat(matchStat.bonus || 0);
-    // Use clearances, blocks, interceptions as defensive stats
     // FPL-Elo-Insights uses: tackles, interceptions, clearances, blocks
     const interceptions = parseFloat(matchStat.interceptions || matchStat.clearances_blocks_interceptions || 0);
     const clearances = parseFloat(matchStat.clearances || 0);
     const blocks = parseFloat(matchStat.blocks || 0);
     const tackles = parseFloat(matchStat.tackles || matchStat.tackles_won || 0);
 
-    // Clean sheet gives 4 points for defenders, treat as 4 if they got one
-    const csPoints = cleanSheet >= 1 ? 4 : 0;
-
-    // Include clearances and blocks in the calculation
-    return csPoints + bonus + interceptions + clearances + blocks + tackles;
+    // No clean sheets or bonus in this metric
+    return interceptions + clearances + blocks + tackles;
 }
 
 // Calculate CBIRT for mids/forwards
-// CBIRT = Clean Sheet Points + Bonus + Interceptions + Recoveries + Tackles
+// CBIRT = Interceptions + Recoveries + Tackles
 function calculateCBIRT(matchStat, position) {
-    const cleanSheet = parseFloat(matchStat.clean_sheets || matchStat.cleansheet || 0);
-    const bonus = parseFloat(matchStat.bonus || 0);
     // FPL-Elo-Insights uses: tackles, interceptions, recoveries
     const interceptions = parseFloat(matchStat.interceptions || matchStat.clearances_blocks_interceptions || 0);
     const recoveries = parseFloat(matchStat.recoveries || matchStat.ball_recoveries || 0);
     const tackles = parseFloat(matchStat.tackles || matchStat.tackles_won || 0);
 
-    // Clean sheet gives 1 point for mids, 0 for forwards
-    let csPoints = 0;
-    if (position === 'MID' && cleanSheet >= 1) {
-        csPoints = 1;
-    }
-
-    return csPoints + bonus + interceptions + recoveries + tackles;
+    // No clean sheets or bonus in this metric
+    return interceptions + recoveries + tackles;
 }
 
 // Get player position from element_type or position field
