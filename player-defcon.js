@@ -507,20 +507,11 @@ function renderTable() {
                 return sID === pid && sGW === gw;
             });
 
-            if (!statRecord) {
-                fixtures.push({ type: 'BLANK' });
-                metrics.push(0);
-                gwProbMap[gw] = 0;
-                return;
-            }
-
-            const minutes = getVal(statRecord, 'minutes', 'minutes_played', 'minutes_x') || 0;
-            totalMinutes += minutes;
-
             // Get fixture for this team in this GW
             const fix = teamCode && fixturesByTeam[teamCode] ? fixturesByTeam[teamCode][gw] : null;
 
-            if (!fix || minutes === 0) {
+            // If no fixture exists for this GW, mark as BLANK
+            if (!fix) {
                 fixtures.push({ type: 'BLANK' });
                 metrics.push(0);
                 gwProbMap[gw] = 0;
@@ -532,6 +523,7 @@ function renderTable() {
             const finished = fix.finished;
             const venueKey = String(isHome);
 
+            // Calculate probability
             let prob = CONFIG.MODEL.MIN_PROB;
             if (probabilities[opponentCode] &&
                 probabilities[opponentCode][venueKey] &&
@@ -542,9 +534,17 @@ function renderTable() {
             const oppTeam = teamsByCode[opponentCode];
             const oppName = oppTeam ? oppTeam.short_name : 'UNK';
 
-            const defconHit = checkDefconHit(statRecord, archetype);
-            if (defconHit) {
-                totalDefconHits++;
+            // Handle stats if they exist (for past/current gameweeks)
+            let minutes = 0;
+            let defconHit = false;
+
+            if (statRecord) {
+                minutes = getVal(statRecord, 'minutes', 'minutes_played', 'minutes_x') || 0;
+                totalMinutes += minutes;
+                defconHit = checkDefconHit(statRecord, archetype);
+                if (defconHit) {
+                    totalDefconHits++;
+                }
             }
 
             fixtures.push({
