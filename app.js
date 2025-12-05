@@ -143,7 +143,7 @@ async function loadAllData() {
         // These files exist in By Tournament/Premier League/GW{x}/ subdirectories
         const [playerMatchStats, matches] = await Promise.all([
             fetchAllGameweekData('player_gameweek_stats.csv'),
-            fetchAllGameweekData('matches.csv')
+            fetchAllGameweekData('fixtures.csv')
         ]);
 
         state.playerMatchStats = playerMatchStats;
@@ -429,7 +429,7 @@ function getUpcomingFixtures() {
     const fixtures = [];
 
     state.matches.forEach(match => {
-        // FPL-Elo-Insights uses: kickoff_time, event, team_h, team_a, finished
+        // FPL-Elo-Insights uses: kickoff_time, event, home_team, away_team, finished
         const matchDate = new Date(match.kickoff_time || match.datetime || match.date || match.kickoff);
         const isFinished = match.finished === true || match.finished === 'true' || match.finished === 'True' || match.finished === 1 || match.finished === '1';
 
@@ -439,8 +439,8 @@ function getUpcomingFixtures() {
             fixtures.push({
                 id: match.id || match.match_id || match.fixture_id,
                 gameweek: parseInt(match.event || match.gameweek || match.gw || 0),
-                homeTeam: match.team_h || match.home_team_id || match.team_h_id,
-                awayTeam: match.team_a || match.away_team_id || match.team_a_id,
+                homeTeam: match.home_team || match.team_h || match.home_team_id || match.team_h_id,
+                awayTeam: match.away_team || match.team_a || match.away_team_id || match.team_a_id,
                 date: matchDate
             });
         }
@@ -518,9 +518,10 @@ function processPlayerData() {
             } else {
                 // Fallback: look up opponent team directly from teams array
                 const opponentTeam = state.teams.find(t =>
-                    (t.id || t.team_id || t.code) == opponentId ||
+                    t.id == opponentId ||
+                    t.team_id == opponentId ||
                     t.code == opponentId ||
-                    t.id == opponentId
+                    t.team == opponentId
                 );
                 if (opponentTeam) {
                     opponentName = opponentTeam.short_name || opponentTeam.name?.substring(0, 3).toUpperCase() || 'TBD';
@@ -532,11 +533,12 @@ function processPlayerData() {
         const probability = calculateProbability(scores, threshold, opponentMultiplier);
         const adjustedScore = avgScore * opponentMultiplier;
 
-        // Get team name - check all possible ID fields (id, team_id, code)
+        // Get team name - check all possible ID fields (id, team_id, code, team)
         const team = state.teams.find(t =>
-            (t.id || t.team_id || t.code) == teamId ||
+            t.id == teamId ||
+            t.team_id == teamId ||
             t.code == teamId ||
-            t.id == teamId
+            t.team == teamId
         );
         const teamName = team?.short_name || team?.name?.substring(0, 3).toUpperCase() || 'UNK';
 
