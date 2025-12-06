@@ -118,6 +118,11 @@ const getVal = (obj, ...keys) => {
     return undefined;
 };
 
+// Round a number to 2 decimal places
+const roundToTwo = (num) => {
+    return Math.round(num * 100) / 100;
+};
+
 // Parse excluded GWs from input string
 function parseExcludedGWs(inputValue) {
     if (!inputValue) return [];
@@ -438,15 +443,15 @@ function renderTable() {
 
         // Convert to per-match averages (goals per game).
         // If a team has no matches in the window, keep 0 so they appear neutral rather than extreme.
-        const combinedForPer     = combinedMatches > 0 ? combinedFor / combinedMatches : 0;
-        const combinedAgainstPer = combinedMatches > 0 ? combinedAgainst / combinedMatches : 0;
+        const combinedForPer     = combinedMatches > 0 ? roundToTwo(combinedFor / combinedMatches) : 0;
+        const combinedAgainstPer = combinedMatches > 0 ? roundToTwo(combinedAgainst / combinedMatches) : 0;
 
         // For home/away, if sample size is 0, fall back to combined average
-        const homeForPer     = homeMatches > 0 ? homeFor / homeMatches : combinedForPer;
-        const homeAgainstPer = homeMatches > 0 ? homeAgainst / homeMatches : combinedAgainstPer;
+        const homeForPer     = homeMatches > 0 ? roundToTwo(homeFor / homeMatches) : combinedForPer;
+        const homeAgainstPer = homeMatches > 0 ? roundToTwo(homeAgainst / homeMatches) : combinedAgainstPer;
 
-        const awayForPer     = awayMatches > 0 ? awayFor / awayMatches : combinedForPer;
-        const awayAgainstPer = awayMatches > 0 ? awayAgainst / awayMatches : combinedAgainstPer;
+        const awayForPer     = awayMatches > 0 ? roundToTwo(awayFor / awayMatches) : combinedForPer;
+        const awayAgainstPer = awayMatches > 0 ? roundToTwo(awayAgainst / awayMatches) : combinedAgainstPer;
 
         // Write the SAME per-match averages into every GW column for this team
         for (let gw = 1; gw <= CONFIG.UI.MAX_GW; gw++) {
@@ -558,8 +563,8 @@ function renderTable() {
 
         const validMetrics = metrics.filter(m => m !== null);
         const maxVal = validMetrics.length ? Math.max(...validMetrics) : 0;
-        const avgVal = validMetrics.length ? (validMetrics.reduce((a,b)=>a+b,0) / validMetrics.length) : 0;
-        const totalVal = validMetrics.reduce((a,b)=>a+b,0);
+        const avgVal = validMetrics.length ? roundToTwo(validMetrics.reduce((a,b)=>a+b,0) / validMetrics.length) : 0;
+        const totalVal = roundToTwo(validMetrics.reduce((a,b)=>a+b,0));
 
         return {
             teamName: team.name,
@@ -639,7 +644,7 @@ function renderTable() {
 
                 const divValue = document.createElement('div');
                 divValue.className = 'match-value';
-                divValue.textContent = cell.value;
+                divValue.textContent = roundToTwo(cell.value);
 
                 wrapper.appendChild(divOpp);
                 wrapper.appendChild(divValue);
