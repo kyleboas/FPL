@@ -16,6 +16,7 @@ const CONFIG = {
         PLAYERS: 'https://raw.githubusercontent.com/olbauday/FPL-Elo-Insights/main/data/2025-2026/players.csv',
         TEAMS: 'https://raw.githubusercontent.com/olbauday/FPL-Elo-Insights/main/data/2025-2026/teams.csv',
         FPL_API_BASE: 'https://fantasy.premierleague.com/api',
+        FPL_API_PROXY_BASE: 'https://cors.isomorphic-git.org/https://fantasy.premierleague.com/api',
         POSITION_OVERRIDES: './data/player_position_overrides.csv'
     },
     THRESHOLDS: {
@@ -213,10 +214,12 @@ async function loadData() {
 }
 
 async function fetchFPLTeam(teamId) {
+    const base = CONFIG.URLS.FPL_API_PROXY_BASE || CONFIG.URLS.FPL_API_BASE;
+
     try {
         // Fetch current gameweek from bootstrap-static
-        const bootstrapRes = await fetch(`${CONFIG.URLS.FPL_API_BASE}/bootstrap-static/`);
-        if (!bootstrapRes.ok) throw new Error('Failed to fetch FPL bootstrap data');
+        const bootstrapRes = await fetch(`${base}/bootstrap-static/`);
+        if (!bootstrapRes.ok) throw new Error(`Failed to fetch FPL bootstrap data (${bootstrapRes.status})`);
         const bootstrap = await bootstrapRes.json();
 
         // Find current or next gameweek
@@ -224,8 +227,8 @@ async function fetchFPLTeam(teamId) {
         const eventId = currentEvent ? currentEvent.id : 1;
 
         // Fetch team picks for current gameweek
-        const picksRes = await fetch(`${CONFIG.URLS.FPL_API_BASE}/entry/${teamId}/event/${eventId}/picks/`);
-        if (!picksRes.ok) throw new Error(`Failed to fetch team ${teamId} picks`);
+        const picksRes = await fetch(`${base}/entry/${teamId}/event/${eventId}/picks/`);
+        if (!picksRes.ok) throw new Error(`Failed to fetch team ${teamId} picks (${picksRes.status})`);
         const picksData = await picksRes.json();
 
         // Extract player IDs from picks
@@ -750,7 +753,8 @@ async function handleLoadTeam() {
 
         renderTable();
     } catch (error) {
-        showError(`Failed to load team: ${error.message}`);
+        console.error('Initialization error:', error);
+        showError('Failed to load team', error.message);
     } finally {
         loadBtn.disabled = false;
         loadBtn.textContent = 'Load My Team';
@@ -779,9 +783,9 @@ function setupEventListeners() {
     document.getElementById('sort-by').addEventListener('change', handleFilterChange);
 }
 
-function showError(message) {
+function showError(message, details) {
     const errorEl = document.getElementById('error');
-    errorEl.textContent = message;
+    errorEl.textContent = details ? `${message} (${details})` : message;
     errorEl.style.display = 'block';
     setTimeout(() => {
         errorEl.style.display = 'none';
