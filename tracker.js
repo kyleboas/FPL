@@ -16,7 +16,10 @@ const CONFIG = {
         PLAYERS: 'https://raw.githubusercontent.com/olbauday/FPL-Elo-Insights/main/data/2025-2026/players.csv',
         TEAMS: 'https://raw.githubusercontent.com/olbauday/FPL-Elo-Insights/main/data/2025-2026/teams.csv',
         FPL_API_BASE: 'https://fantasy.premierleague.com/api',
-        FPL_API_PROXY_BASE: 'https://api.allorigins.win/raw?url=',
+        FPL_API_PROXIES: [
+            'https://corsproxy.io/?',
+            'https://api.allorigins.win/raw?url='
+        ],
         POSITION_OVERRIDES: './data/player_position_overrides.csv'
     },
     THRESHOLDS: {
@@ -215,20 +218,43 @@ async function loadData() {
 
 async function fetchFPL(path) {
     const targetBase = CONFIG.URLS.FPL_API_BASE;
-    const proxyBase  = CONFIG.URLS.FPL_API_PROXY_BASE;
-
+    const proxies = CONFIG.URLS.FPL_API_PROXIES;
     const targetUrl = `${targetBase}${path}`;
 
-    // If proxyBase is set, wrap the target URL with the proxy
-    const finalUrl = proxyBase
-        ? `${proxyBase}${encodeURIComponent(targetUrl)}`
-        : targetUrl;
+    const errors = [];
 
-    const res = await fetch(finalUrl);
-    if (!res.ok) {
-        throw new Error(`FPL request failed (${res.status})`);
+    for (const proxyBase of proxies) {
+        const finalUrl = `${proxyBase}${encodeURIComponent(targetUrl)}`;
+
+        try {
+            const res = await fetch(finalUrl);
+
+            if (!res.ok) {
+                errors.push(`Proxy ${proxyBase} returned ${res.status}`);
+                continue;
+            }
+
+            const text = await res.text();
+
+            if (!text || text.trim() === '') {
+                errors.push(`Proxy ${proxyBase} returned empty response`);
+                continue;
+            }
+
+            try {
+                return JSON.parse(text);
+            } catch (parseErr) {
+                errors.push(`Proxy ${proxyBase} returned invalid JSON`);
+                continue;
+            }
+        } catch (fetchErr) {
+            const errMsg = fetchErr.message || fetchErr.name || 'Network error';
+            errors.push(`Proxy ${proxyBase} failed: ${errMsg}`);
+            continue;
+        }
     }
-    return res.json();
+
+    throw new Error(`All proxies failed: ${errors.join('; ')}`);
 }
 
 async function fetchFPLTeam(teamId) {
@@ -767,7 +793,12 @@ async function handleLoadTeam() {
         renderTable();
     } catch (error) {
         console.error('Load team error:', error);
-        showError('Failed to load team', error.message);
+        const errMsg = error.message || error.toString() || 'Unknown error';
+        if (errMsg.includes('All proxies failed')) {
+            showError('Failed to load team - FPL API unavailable. Please try again later.');
+        } else {
+            showError('Failed to load team', errMsg);
+        }
     } finally {
         loadBtn.disabled = false;
         loadBtn.textContent = 'Load My Team';
