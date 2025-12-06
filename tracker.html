@@ -172,7 +172,11 @@
             margin-top: 2px;
         }
 
-        /* Match Cell Styles */
+        /* ================================
+           IMPROVED READABILITY FOR TABLE
+           ================================ */
+
+        /* Bigger font overall inside the grid */
         .match-cell {
             display: flex;
             flex-direction: column;
@@ -180,17 +184,36 @@
             justify-content: center;
             min-height: 60px;
             gap: 2px;
-            font-size: 0.85em;
+            font-size: 0.95em;          /* was 0.85 */
+            line-height: 1.25;
+            padding: 6px 4px;
+            backdrop-filter: brightness(1.1);  /* slightly reduce opacity of dark cells */
         }
+
+        /* Opponent label */
         .match-opp {
-            font-weight: bold;
+            font-size: 1em;             /* was smaller */
+            font-weight: 700;           /* increased weight */
+            color: #111;                /* always dark for contrast */
         }
+
+        /* DEFCON line */
         .match-defcon {
-            font-size: 0.8em;
+            font-size: 0.9em;
+            font-weight: 600;
+            color: #111;                /* ensures readability on red backgrounds */
         }
+
+        /* GF | GA line */
         .match-goals {
-            font-size: 0.75em;
-            color: #666;
+            font-size: 0.85em;
+            font-weight: 500;
+            color: #222;                /* was too light before */
+        }
+
+        /* Make text stay readable even on dark heatmap colors */
+        .match-cell * {
+            text-shadow: 0 0 2px rgba(255,255,255,0.35); /* subtle contrast boost */
         }
 
         /* Status & Error */
