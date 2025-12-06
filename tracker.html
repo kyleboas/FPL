@@ -6,32 +6,19 @@
     <title>My FPL Team Tracker | FPL</title>
     <style>
         :root {
-            /* FPL Brand Colors */
             --primary: #37003c;
-            --primary-hover: #4e0055;
-            --accent: #00ff85;
-            --accent-hover: #00d670;
-            
-            /* UI Colors */
-            --bg: #f0f2f5;
-            --card-bg: #ffffff;
-            --text-main: #1a1a1a;
-            --text-muted: #6b7280;
-            --border: #e5e7eb;
-            
-            /* Shadows */
-            --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
-            --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
-            --sticky-shadow: 4px 0 8px -2px rgba(0, 0, 0, 0.1);
+            --secondary: #00ff85;
+            --bg: #f4f4f4;
+            --text: #333;
+            --card-bg: #fff;
         }
 
         body {
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
             background-color: var(--bg);
-            color: var(--text-main);
+            color: var(--text);
             margin: 0;
             padding: 20px;
-            line-height: 1.5;
         }
 
         .container {
@@ -39,217 +26,113 @@
             margin: 0 auto;
         }
 
-        /* --- Header & Nav --- */
         header {
-            margin-bottom: 24px;
-            background: var(--card-bg);
-            padding: 20px 24px;
-            border-radius: 12px;
-            box-shadow: var(--shadow-sm);
-            border-left: 6px solid var(--accent);
-            display: flex;
-            flex-direction: column;
-            gap: 10px;
+            margin-bottom: 20px;
+            border-bottom: 2px solid var(--primary);
+            padding-bottom: 10px;
         }
 
-        @media (min-width: 768px) {
-            header {
-                flex-direction: row;
-                justify-content: space-between;
-                align-items: center;
-            }
-        }
-
-        .header-content h1 {
+        h1 {
             color: var(--primary);
             margin: 0;
-            font-size: 1.5rem;
-            font-weight: 800;
-            letter-spacing: -0.02em;
-        }
-
-        .header-content p {
-            margin: 4px 0 0 0;
-            color: var(--text-muted);
-            font-size: 0.9rem;
         }
 
         .nav-links {
-            display: flex;
-            gap: 8px;
-            flex-wrap: wrap;
+            margin-top: 10px;
         }
 
         .nav-links a {
             color: var(--primary);
             text-decoration: none;
-            font-weight: 600;
-            font-size: 0.9rem;
-            padding: 8px 16px;
-            border-radius: 20px;
-            background-color: #f3f4f6;
-            transition: all 0.2s ease;
+            margin-right: 15px;
         }
 
         .nav-links a:hover {
-            background-color: var(--primary);
-            color: white;
-            text-decoration: none;
+            text-decoration: underline;
         }
 
-        /* --- Controls --- */
-        .controls, .watchlist-controls {
-            background: var(--card-bg);
-            padding: 20px;
-            border-radius: 12px;
-            box-shadow: var(--shadow-md);
-            display: grid;
-            gap: 16px;
-            align-items: end;
-            margin-bottom: 16px; /* Spacing between control blocks */
-            border: 1px solid var(--border);
-        }
-
-        /* Layout for Main Controls */
+        /* Controls */
         .controls {
-            grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-        }
-
-        /* Layout for Watchlist Controls */
-        .watchlist-controls {
-            grid-template-columns: 2fr 1.5fr auto;
-            margin-bottom: 24px; /* Larger gap before table */
-        }
-
-        @media (max-width: 768px) {
-            .watchlist-controls {
-                grid-template-columns: 1fr;
-            }
+            background: var(--card-bg);
+            padding: 15px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            display: flex;
+            flex-wrap: wrap;
+            gap: 20px;
+            align-items: center;
+            margin-bottom: 20px;
         }
 
         .control-group {
             display: flex;
             flex-direction: column;
-            gap: 6px;
+            gap: 5px;
         }
 
         label {
-            font-size: 0.75rem;
-            text-transform: uppercase;
-            letter-spacing: 0.05em;
-            font-weight: 700;
-            color: var(--text-muted);
+            font-size: 0.85rem;
+            font-weight: bold;
+            color: #666;
         }
 
         select, input[type="number"], input[type="text"] {
-            padding: 10px 12px;
-            border-radius: 6px;
-            border: 1px solid var(--border);
-            background-color: #f9fafb;
-            font-size: 0.9rem;
-            color: var(--text-main);
-            transition: border-color 0.2s, box-shadow 0.2s;
-            width: 100%;
-            box-sizing: border-box;
+            padding: 8px;
+            border-radius: 4px;
+            border: 1px solid #ccc;
         }
 
-        select:focus, input:focus {
-            outline: none;
-            border-color: var(--primary);
-            box-shadow: 0 0 0 3px rgba(55, 0, 60, 0.1);
-            background-color: #fff;
+        input[type="number"] {
+            width: 80px;
         }
 
-        /* --- Buttons --- */
         button {
-            padding: 10px 24px;
+            padding: 10px 20px;
             background-color: var(--primary);
             color: white;
             border: none;
-            border-radius: 6px;
+            border-radius: 4px;
             cursor: pointer;
-            font-weight: 600;
-            font-size: 0.9rem;
-            transition: all 0.2s ease;
-            height: 42px; /* Match input height roughly */
-            white-space: nowrap;
+            font-weight: bold;
         }
 
         button:hover {
-            background-color: var(--primary-hover);
-            transform: translateY(-1px);
-        }
-
-        button:active {
-            transform: translateY(0);
+            opacity: 0.9;
         }
 
         button:disabled {
-            background-color: #d1d5db;
+            background-color: #ccc;
             cursor: not-allowed;
-            transform: none;
         }
 
-        /* Secondary Button Style */
         button.secondary {
-            background-color: white;
-            border: 1px solid var(--border);
-            color: var(--text-muted);
+            background-color: #666;
         }
 
-        button.secondary:hover {
-            border-color: var(--primary);
-            color: var(--primary);
-            background-color: #f9fafb;
+        button.remove {
+            background-color: #c62828;
+            padding: 5px 10px;
+            font-size: 0.8rem;
         }
 
-        #load-team {
-            background-color: var(--accent);
-            color: var(--primary);
-        }
-        
-        #load-team:hover {
-            background-color: var(--accent-hover);
-        }
-
-        /* --- View Toggle (Segmented Control) --- */
-        .view-toggle {
-            display: flex;
-            background-color: #f3f4f6;
-            padding: 4px;
+        /* Watchlist Controls */
+        .watchlist-controls {
+            background: var(--card-bg);
+            padding: 15px;
             border-radius: 8px;
-            height: 42px;
-            box-sizing: border-box;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 15px;
+            align-items: flex-end;
         }
 
-        .view-toggle button {
-            flex: 1;
-            padding: 4px 12px;
-            background-color: transparent;
-            color: var(--text-muted);
-            border-radius: 6px;
-            font-size: 0.85rem;
-            height: 100%;
-            box-shadow: none;
-            transform: none;
-        }
-
-        .view-toggle button:hover {
-            background-color: rgba(0,0,0,0.05);
-            color: var(--text-main);
-            transform: none;
-        }
-
-        .view-toggle button.active {
-            background-color: white;
-            color: var(--primary);
-            box-shadow: 0 1px 2px rgba(0,0,0,0.1);
-            font-weight: 700;
-        }
-
-        /* --- Player Search Dropdown --- */
         .player-search-container {
             position: relative;
+            flex: 1;
+            min-width: 250px;
+            max-width: 400px;
         }
 
         #player-search-results {
@@ -258,256 +141,220 @@
             left: 0;
             right: 0;
             background: white;
-            border: 1px solid var(--border);
-            border-radius: 8px;
-            margin-top: 4px;
-            max-height: 250px;
+            border: 1px solid #ccc;
+            border-top: none;
+            max-height: 300px;
             overflow-y: auto;
-            z-index: 100;
-            box-shadow: var(--shadow-md);
-            display: none; /* Hidden by default */
+            z-index: 1000;
+            display: none;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
         }
 
-        /* Individual Search Result Item */
         .search-result-item {
-            padding: 10px 12px;
+            padding: 10px;
             cursor: pointer;
-            border-bottom: 1px solid #f3f4f6;
-            font-size: 0.9rem;
-            display: flex;
-            justify-content: space-between;
-        }
-        
-        .search-result-item:last-child {
-            border-bottom: none;
+            border-bottom: 1px solid #eee;
         }
 
         .search-result-item:hover {
-            background-color: #f3f4f6;
-            color: var(--primary);
-        }
-        
-        /* Show results when active */
-        .player-search-container:focus-within #player-search-results,
-        #player-search-results:hover {
-            display: block;
-        }
-        
-        /* But hide if empty content */
-        #player-search-results:empty {
-            display: none;
+            background-color: #f0f0f0;
         }
 
+        .search-result-name {
+            font-weight: bold;
+        }
 
-        /* --- Table --- */
+        .search-result-meta {
+            font-size: 0.85em;
+            color: #666;
+        }
+
+        .view-toggle {
+            display: flex;
+            gap: 5px;
+        }
+
+        .view-toggle button {
+            padding: 8px 15px;
+        }
+
+        .view-toggle button.active {
+            background-color: var(--secondary);
+            color: #000;
+        }
+
+        .player-type-badge {
+            display: inline-block;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-size: 0.7em;
+            font-weight: bold;
+            margin-left: 5px;
+        }
+
+        .badge-team {
+            background-color: #4CAF50;
+            color: white;
+        }
+
+        .badge-watchlist {
+            background-color: #FF9800;
+            color: white;
+        }
+
+        /* Table */
         .table-container {
             overflow-x: auto;
             background: var(--card-bg);
-            border-radius: 12px;
-            box-shadow: var(--shadow-md);
-            border: 1px solid var(--border);
-            position: relative;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
         }
 
         table {
             width: 100%;
-            border-collapse: separate;
-            border-spacing: 0;
+            border-collapse: collapse;
             font-size: 0.9rem;
         }
 
         th, td {
-            padding: 12px 16px;
+            padding: 10px;
             text-align: center;
-            border-bottom: 1px solid var(--border);
-            white-space: nowrap;
+            border-bottom: 1px solid #eee;
         }
 
         th {
             background-color: var(--primary);
             color: white;
-            font-weight: 600;
             position: sticky;
             top: 0;
-            z-index: 20;
-            text-transform: uppercase;
-            font-size: 0.75rem;
-            letter-spacing: 0.05em;
-            height: 40px;
+            z-index: 15;
         }
 
-        tbody tr:hover td {
-            background-color: #f8fafc;
-        }
-        
-        tbody tr:last-child td {
-            border-bottom: none;
-        }
-
-        /* Sticky Columns */
+        /* First column sticky */
         td:first-child, th:first-child {
             position: sticky;
             left: 0;
-            z-index: 15;
-            text-align: left;
-            border-right: 1px solid var(--border);
-        }
-
-        td:first-child {
             background-color: var(--card-bg);
-            box-shadow: 2px 0 5px rgba(0,0,0,0.05); 
+            z-index: 10;
+            border-right: 2px solid #eee;
+            text-align: left;
         }
-
         th:first-child {
-            z-index: 30;
             background-color: var(--primary);
-            box-shadow: 2px 0 5px rgba(0,0,0,0.2);
+            color: white;
+            z-index: 20;
         }
 
-        /* Player Info Styling */
+        /* Player info cell */
         .player-info {
             display: flex;
             flex-direction: column;
-            justify-content: center;
-            gap: 2px;
-            min-width: 180px;
+            gap: 3px;
+            min-width: 200px;
         }
 
         .player-name {
-            font-weight: 700;
-            font-size: 0.95rem;
-            color: var(--primary);
-        }
-        
-        /* Watchlist Indicator Styling (Optional, if JS adds it) */
-        .watchlist-tag {
-            background-color: #eab308;
-            color: white;
-            font-size: 0.65rem;
-            padding: 1px 4px;
-            border-radius: 3px;
-            margin-left: 6px;
-            vertical-align: middle;
+            font-weight: bold;
+            font-size: 0.95em;
         }
 
         .player-meta {
-            font-size: 0.75rem;
-            color: var(--text-muted);
-            background: #f3f4f6;
-            display: inline-block;
-            padding: 2px 6px;
-            border-radius: 4px;
-            align-self: flex-start;
-            margin-bottom: 2px;
+            font-size: 0.75em;
+            color: #666;
         }
 
         .player-stats {
-            font-size: 0.75rem;
-            color: var(--text-muted);
-            display: flex;
-            gap: 8px;
-        }
-        
-        .player-stats span {
-            display: inline-flex;
-            align-items: center;
-            gap: 4px;
+            font-size: 0.8em;
+            color: #333;
+            margin-top: 2px;
         }
 
-        /* Match Cell Styling */
+        /* ================================
+           IMPROVED READABILITY FOR TABLE
+           ================================ */
+
+        /* Bigger font overall inside the grid */
         .match-cell {
             display: flex;
             flex-direction: column;
             align-items: center;
             justify-content: center;
-            min-height: 50px;
-            gap: 4px;
-            font-size: 0.85rem;
+            min-height: 60px;
+            gap: 2px;
+            font-size: 0.95em;          /* was 0.85 */
+            line-height: 1.25;
+            padding: 6px 4px;
+            backdrop-filter: brightness(1.1);  /* slightly reduce opacity of dark cells */
         }
-        
+
+        /* Opponent label */
         .match-opp {
-            font-weight: 700;
-            color: var(--text-main);
+            font-size: 1em;             /* was smaller */
+            font-weight: 700;           /* increased weight */
+            color: #111;                /* always dark for contrast */
         }
-        
+
+        /* DEFCON line */
         .match-defcon {
-            font-size: 0.7rem;
+            font-size: 0.9em;
             font-weight: 600;
-            padding: 2px 6px;
-            border-radius: 10px;
-            background-color: #eee;
-            color: #444;
+            color: #111;                /* ensures readability on red backgrounds */
         }
-        
+
+        /* GF | GA line */
         .match-goals {
-            font-size: 0.7rem;
-            color: var(--text-muted);
+            font-size: 0.85em;
+            font-weight: 500;
+            color: #222;                /* was too light before */
         }
 
-        /* Sorting Arrows */
-        .gw-header {
-            cursor: pointer;
-            user-select: none;
-            transition: background 0.2s;
+        /* Make text stay readable even on dark heatmap colors */
+        .match-cell * {
+            text-shadow: 0 0 2px rgba(255,255,255,0.35); /* subtle contrast boost */
         }
-        .gw-header:hover {
-            background-color: var(--primary-hover);
-        }
-        .sorted-desc::after { content: ' ▼'; opacity: 0.7; }
-        .sorted-asc::after { content: ' ▲'; opacity: 0.7; }
 
-        /* Status & Messages */
+        /* Status & Error */
         #loading {
             text-align: center;
-            padding: 60px;
-            font-size: 1.1rem;
-            color: var(--text-muted);
-            font-weight: 500;
-            background: white;
-            border-radius: 12px;
-            box-shadow: var(--shadow-sm);
+            padding: 40px;
+            font-size: 1.2rem;
+            color: #666;
         }
 
         #error {
             display: none;
-            background: #fef2f2;
-            color: #991b1b;
-            padding: 16px;
+            background: #ffebee;
+            color: #c62828;
+            padding: 15px;
             border-radius: 8px;
-            margin-bottom: 24px;
-            border: 1px solid #fecaca;
-            font-weight: 500;
+            margin-bottom: 20px;
+            border: 1px solid #ef9a9a;
         }
 
         .status-bar {
-            margin-top: 16px;
-            padding: 12px 16px;
-            background: #eef2ff;
-            color: var(--primary);
-            border-radius: 8px;
-            font-size: 0.85rem;
-            font-weight: 500;
-            text-align: center;
-            border: 1px solid #e0e7ff;
+            font-size: 0.75rem;
+            color: #666;
+            margin-top: 10px;
+            padding: 10px;
+            background: #e0e0e0;
+            border-radius: 4px;
         }
 
-        /* Custom Scrollbar for the table */
-        .table-container::-webkit-scrollbar {
-            height: 10px;
-            width: 10px;
+        .gw-header {
+            cursor: pointer;
+            user-select: none;
         }
-        .table-container::-webkit-scrollbar-track {
-            background: #f1f1f1;
-            border-bottom-left-radius: 12px;
-            border-bottom-right-radius: 12px;
+
+        .gw-header:hover {
+            opacity: 0.8;
         }
-        .table-container::-webkit-scrollbar-thumb {
-            background: #d1d5db;
-            border-radius: 5px;
-            border: 2px solid #f1f1f1;
+
+        .sorted-desc::after {
+            content: ' ▼';
         }
-        .table-container::-webkit-scrollbar-thumb:hover {
-            background: #9ca3af;
+
+        .sorted-asc::after {
+            content: ' ▲';
         }
     </style>
 </head>
@@ -515,10 +362,8 @@
 
 <div class="container">
     <header>
-        <div class="header-content">
-            <h1>My FPL Team Tracker</h1>
-            <p>Track your FPL players with DEFCON and Goals analysis</p>
-        </div>
+        <h1>My FPL Team Tracker</h1>
+        <p>Track your FPL players with DEFCON and Goals analysis</p>
         <div class="nav-links">
             <a href="index.html">Team DEFCON View</a>
             <a href="player-defcon.html">Player DEFCON Stats</a>
@@ -530,17 +375,15 @@
     <div id="loading">Loading Season Data...</div>
 
     <div id="main-content" style="display: none;">
-        
-        <!-- Main Filter Controls -->
         <div class="controls">
             <div class="control-group">
                 <label for="team-id">FPL Team ID</label>
-                <input type="text" id="team-id" placeholder="Enter ID" style="min-width: 120px;">
+                <input type="text" id="team-id" placeholder="Enter your team ID" style="width: 150px;">
             </div>
 
             <div class="control-group">
                 <label>&nbsp;</label>
-                <button id="load-team">Load Team</button>
+                <button id="load-team">Load My Team</button>
             </div>
 
             <div class="control-group">
@@ -555,10 +398,10 @@
 
             <div class="control-group">
                 <label for="gw-exclude">Exclude GWs</label>
-                <input type="text" id="gw-exclude" placeholder="e.g. 10,15">
+                <input type="text" id="gw-exclude" placeholder="e.g. 10,15,20" style="width: 120px;">
             </div>
 
-            <div class="control-group" style="flex-grow: 1;">
+            <div class="control-group">
                 <label for="sort-by">Sort By</label>
                 <select id="sort-by">
                     <option value="defcon">DEFCON (Avg)</option>
@@ -569,22 +412,19 @@
             </div>
         </div>
 
-        <!-- Watchlist & View Controls -->
         <div class="watchlist-controls">
             <div class="control-group player-search-container">
                 <label for="player-search">Add to Watchlist</label>
-                <input type="text" id="player-search" placeholder="Search for a player..." autocomplete="off">
-                <div id="player-search-results">
-                    <!-- Search results populated by JS -->
-                </div>
+                <input type="text" id="player-search" placeholder="Search for a player..." style="width: 100%;">
+                <div id="player-search-results"></div>
             </div>
 
             <div class="control-group">
-                <label>View Mode</label>
+                <label>View</label>
                 <div class="view-toggle">
                     <button id="view-team" class="active">My Team</button>
-                    <button id="view-watchlist">Watchlist</button>
-                    <button id="view-both">Both</button>
+                    <button id="view-watchlist" class="secondary">Watchlist</button>
+                    <button id="view-both" class="secondary">Both</button>
                 </div>
             </div>
 
