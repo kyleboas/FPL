@@ -16,7 +16,7 @@ const CONFIG = {
         PLAYERS: 'https://raw.githubusercontent.com/olbauday/FPL-Elo-Insights/main/data/2025-2026/players.csv',
         TEAMS: 'https://raw.githubusercontent.com/olbauday/FPL-Elo-Insights/main/data/2025-2026/teams.csv',
         FPL_API_BASE: 'https://fantasy.premierleague.com/api',
-        FPL_API_PROXY_BASE: 'https://cors.isomorphic-git.org/https://fantasy.premierleague.com/api',
+        FPL_API_PROXY_BASE: 'https://api.allorigins.win/raw?url=',
         POSITION_OVERRIDES: './data/player_position_overrides.csv'
     },
     THRESHOLDS: {
@@ -213,26 +213,39 @@ async function loadData() {
     return { players, teams, stats: allStats, fixtures: allFixtures, positionOverrides };
 }
 
+async function fetchFPL(path) {
+    const targetBase = CONFIG.URLS.FPL_API_BASE;
+    const proxyBase  = CONFIG.URLS.FPL_API_PROXY_BASE;
+
+    const targetUrl = `${targetBase}${path}`;
+
+    // If proxyBase is set, wrap the target URL with the proxy
+    const finalUrl = proxyBase
+        ? `${proxyBase}${encodeURIComponent(targetUrl)}`
+        : targetUrl;
+
+    const res = await fetch(finalUrl);
+    if (!res.ok) {
+        throw new Error(`FPL request failed (${res.status})`);
+    }
+    return res.json();
+}
+
 async function fetchFPLTeam(teamId) {
-    const base = CONFIG.URLS.FPL_API_PROXY_BASE || CONFIG.URLS.FPL_API_BASE;
-
     try {
-        // Fetch current gameweek from bootstrap-static
-        const bootstrapRes = await fetch(`${base}/bootstrap-static/`);
-        if (!bootstrapRes.ok) throw new Error(`Failed to fetch FPL bootstrap data (${bootstrapRes.status})`);
-        const bootstrap = await bootstrapRes.json();
+        // Fetch current or next GW from bootstrap-static
+        const bootstrap = await fetchFPL('/bootstrap-static/');
 
-        // Find current or next gameweek
-        const currentEvent = bootstrap.events.find(e => e.is_current) || bootstrap.events.find(e => e.is_next);
+        const currentEvent =
+            bootstrap.events.find(e => e.is_current) ||
+            bootstrap.events.find(e => e.is_next);
+
         const eventId = currentEvent ? currentEvent.id : 1;
 
-        // Fetch team picks for current gameweek
-        const picksRes = await fetch(`${base}/entry/${teamId}/event/${eventId}/picks/`);
-        if (!picksRes.ok) throw new Error(`Failed to fetch team ${teamId} picks (${picksRes.status})`);
-        const picksData = await picksRes.json();
+        // Fetch team picks for that event
+        const picksData = await fetchFPL(`/entry/${teamId}/event/${eventId}/picks/`);
 
-        // Extract player IDs from picks
-        const playerIds = picksData.picks.map(pick => pick.element);
+        const playerIds = (picksData.picks || []).map(pick => pick.element);
 
         return { playerIds, eventId };
     } catch (error) {
@@ -753,7 +766,7 @@ async function handleLoadTeam() {
 
         renderTable();
     } catch (error) {
-        console.error('Initialization error:', error);
+        console.error('Load team error:', error);
         showError('Failed to load team', error.message);
     } finally {
         loadBtn.disabled = false;
