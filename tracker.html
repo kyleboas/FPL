@@ -105,6 +105,103 @@
             cursor: not-allowed;
         }
 
+        button.secondary {
+            background-color: #666;
+        }
+
+        button.remove {
+            background-color: #c62828;
+            padding: 5px 10px;
+            font-size: 0.8rem;
+        }
+
+        /* Watchlist Controls */
+        .watchlist-controls {
+            background: var(--card-bg);
+            padding: 15px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 15px;
+            align-items: flex-end;
+        }
+
+        .player-search-container {
+            position: relative;
+            flex: 1;
+            min-width: 250px;
+            max-width: 400px;
+        }
+
+        #player-search-results {
+            position: absolute;
+            top: 100%;
+            left: 0;
+            right: 0;
+            background: white;
+            border: 1px solid #ccc;
+            border-top: none;
+            max-height: 300px;
+            overflow-y: auto;
+            z-index: 1000;
+            display: none;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+
+        .search-result-item {
+            padding: 10px;
+            cursor: pointer;
+            border-bottom: 1px solid #eee;
+        }
+
+        .search-result-item:hover {
+            background-color: #f0f0f0;
+        }
+
+        .search-result-name {
+            font-weight: bold;
+        }
+
+        .search-result-meta {
+            font-size: 0.85em;
+            color: #666;
+        }
+
+        .view-toggle {
+            display: flex;
+            gap: 5px;
+        }
+
+        .view-toggle button {
+            padding: 8px 15px;
+        }
+
+        .view-toggle button.active {
+            background-color: var(--secondary);
+            color: #000;
+        }
+
+        .player-type-badge {
+            display: inline-block;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-size: 0.7em;
+            font-weight: bold;
+            margin-left: 5px;
+        }
+
+        .badge-team {
+            background-color: #4CAF50;
+            color: white;
+        }
+
+        .badge-watchlist {
+            background-color: #FF9800;
+            color: white;
+        }
+
         /* Table */
         .table-container {
             overflow-x: auto;
@@ -312,6 +409,28 @@
                     <option value="goals-against">Opp Goals Against (Avg)</option>
                     <option value="name">Player Name</option>
                 </select>
+            </div>
+        </div>
+
+        <div class="watchlist-controls">
+            <div class="control-group player-search-container">
+                <label for="player-search">Add to Watchlist</label>
+                <input type="text" id="player-search" placeholder="Search for a player..." style="width: 100%;">
+                <div id="player-search-results"></div>
+            </div>
+
+            <div class="control-group">
+                <label>View</label>
+                <div class="view-toggle">
+                    <button id="view-team" class="active">My Team</button>
+                    <button id="view-watchlist" class="secondary">Watchlist</button>
+                    <button id="view-both" class="secondary">Both</button>
+                </div>
+            </div>
+
+            <div class="control-group">
+                <label>&nbsp;</label>
+                <button id="clear-watchlist" class="secondary">Clear Watchlist</button>
             </div>
         </div>
 

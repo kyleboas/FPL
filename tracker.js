@@ -38,7 +38,8 @@ const STATE = {
         teams: [],
         stats: [],
         fixtures: [],
-        myPlayers: [] // User's FPL team players
+        myPlayers: [], // User's FPL team players
+        watchlist: [] // Watchlist player IDs
     },
     lookups: {
         playersById: {},
@@ -58,7 +59,8 @@ const STATE = {
             type: 'defcon',
             direction: 'desc',
             gw: null
-        }
+        },
+        viewMode: 'team' // 'team', 'watchlist', or 'both'
     },
     fplTeamId: null
 };
@@ -136,6 +138,66 @@ function parseExcludedGWs(inputValue) {
         .split(',')
         .map(s => parseInt(s.trim(), 10))
         .filter(n => !isNaN(n) && n >= 1 && n <= CONFIG.UI.MAX_GW);
+}
+
+// ==========================================
+// WATCHLIST MANAGEMENT
+// ==========================================
+
+const WATCHLIST_STORAGE_KEY = 'fpl-tracker-watchlist';
+
+function loadWatchlist() {
+    try {
+        const stored = localStorage.getItem(WATCHLIST_STORAGE_KEY);
+        if (stored) {
+            const parsed = JSON.parse(stored);
+            STATE.data.watchlist = Array.isArray(parsed) ? parsed : [];
+        } else {
+            STATE.data.watchlist = [];
+        }
+    } catch (e) {
+        console.error('Error loading watchlist:', e);
+        STATE.data.watchlist = [];
+    }
+}
+
+function saveWatchlist() {
+    try {
+        localStorage.setItem(WATCHLIST_STORAGE_KEY, JSON.stringify(STATE.data.watchlist));
+    } catch (e) {
+        console.error('Error saving watchlist:', e);
+    }
+}
+
+function addToWatchlist(playerId) {
+    if (!STATE.data.watchlist.includes(playerId)) {
+        STATE.data.watchlist.push(playerId);
+        saveWatchlist();
+        renderTable();
+    }
+}
+
+function removeFromWatchlist(playerId) {
+    const index = STATE.data.watchlist.indexOf(playerId);
+    if (index > -1) {
+        STATE.data.watchlist.splice(index, 1);
+        saveWatchlist();
+        renderTable();
+    }
+}
+
+function clearWatchlist() {
+    if (STATE.data.watchlist.length === 0) return;
+
+    if (confirm(`Remove all ${STATE.data.watchlist.length} players from watchlist?`)) {
+        STATE.data.watchlist = [];
+        saveWatchlist();
+        renderTable();
+    }
+}
+
+function isInWatchlist(playerId) {
+    return STATE.data.watchlist.includes(playerId);
 }
 
 // ==========================================
@@ -558,12 +620,33 @@ function calculatePlayerStats(player) {
 }
 
 function renderTable() {
-    const { myPlayers } = STATE.data;
+    const { myPlayers, watchlist } = STATE.data;
     const { playersById, fixturesByTeam, teamsById, teamsByCode, probabilities, teamGoals } = STATE.lookups;
-    const { startGW, endGW, excludedGWs, sortMode } = STATE.ui;
+    const { startGW, endGW, excludedGWs, sortMode, viewMode } = STATE.ui;
 
-    if (myPlayers.length === 0) {
-        document.getElementById('status-bar').textContent = 'No players loaded. Enter your FPL Team ID and click "Load My Team".';
+    // Determine which players to display based on view mode
+    let displayPlayerIds = [];
+    if (viewMode === 'team') {
+        displayPlayerIds = myPlayers;
+    } else if (viewMode === 'watchlist') {
+        displayPlayerIds = watchlist;
+    } else { // both
+        // Combine both, ensuring no duplicates
+        displayPlayerIds = [...new Set([...myPlayers, ...watchlist])];
+    }
+
+    if (displayPlayerIds.length === 0) {
+        let message = 'No players to display. ';
+        if (viewMode === 'team') {
+            message += 'Enter your FPL Team ID and click "Load My Team".';
+        } else if (viewMode === 'watchlist') {
+            message += 'Search for players to add to your watchlist.';
+        } else {
+            message += 'Load your team or add players to watchlist.';
+        }
+        document.getElementById('status-bar').textContent = message;
+        document.getElementById('fixture-header').innerHTML = '';
+        document.getElementById('fixture-body').innerHTML = '';
         return;
     }
 
@@ -575,12 +658,14 @@ function renderTable() {
     }
 
     // Build player rows
-    const playerRows = myPlayers.map(playerId => {
+    const playerRows = displayPlayerIds.map(playerId => {
         const player = playersById[playerId];
         if (!player) return null;
 
         const playerName = getVal(player, 'name', 'web_name', 'full_name') || 'Unknown';
         const teamRef = getVal(player, 'team', 'team_id', 'teamid', 'team_code');
+        const inTeam = myPlayers.includes(playerId);
+        const inWatchlist = watchlist.includes(playerId);
 
         let teamCode, teamName;
         if (teamsByCode[teamRef]) {
@@ -657,7 +742,9 @@ function renderTable() {
             gwData,
             avgDefcon: defconCount > 0 ? defconSum / defconCount : 0,
             avgGoalsFor: goalsCount > 0 ? goalsForSum / goalsCount : 0,
-            avgGoalsAgainst: goalsCount > 0 ? goalsAgainstSum / goalsCount : 0
+            avgGoalsAgainst: goalsCount > 0 ? goalsAgainstSum / goalsCount : 0,
+            inTeam,
+            inWatchlist
         };
     }).filter(row => row !== null);
 
@@ -724,13 +811,29 @@ function renderTable() {
             `;
         }).join('');
 
+        // Generate badges
+        let badges = '';
+        if (row.inTeam) {
+            badges += '<span class="player-type-badge badge-team">MY TEAM</span>';
+        }
+        if (row.inWatchlist) {
+            badges += '<span class="player-type-badge badge-watchlist">WATCHLIST</span>';
+        }
+
+        // Generate remove button
+        let removeBtn = '';
+        if (row.inWatchlist) {
+            removeBtn = `<button class="remove" onclick="removeFromWatchlist(${row.playerId})">Remove from Watchlist</button>`;
+        }
+
         return `
             <tr>
                 <td>
                     <div class="player-info">
-                        <div class="player-name">${row.playerName}</div>
+                        <div class="player-name">${row.playerName}${badges}</div>
                         <div class="player-meta">${row.teamName} | ID: ${row.playerId}</div>
                         <div class="player-stats">Pts: ${row.totalPoints} | Pts/90: ${row.pointsPer90}</div>
+                        ${removeBtn}
                     </div>
                 </td>
                 ${cells}
@@ -742,8 +845,15 @@ function renderTable() {
     document.getElementById('fixture-body').innerHTML = bodyHTML;
 
     // Update status
-    document.getElementById('status-bar').textContent =
-        `Showing ${playerRows.length} players for GW${startGW}-${endGW}`;
+    let statusText = `Showing ${playerRows.length} player${playerRows.length !== 1 ? 's' : ''} for GW${startGW}-${endGW}`;
+    if (viewMode === 'both' && myPlayers.length > 0 && watchlist.length > 0) {
+        statusText += ` (${myPlayers.length} in team, ${watchlist.length} in watchlist)`;
+    } else if (viewMode === 'watchlist' && watchlist.length > 0) {
+        statusText += ` in watchlist`;
+    } else if (viewMode === 'team' && myPlayers.length > 0) {
+        statusText += ` from your team`;
+    }
+    document.getElementById('status-bar').textContent = statusText;
 
     // Add column header click handlers
     setupGWHeaderHandlers();
@@ -763,6 +873,95 @@ function setupGWHeaderHandlers() {
             renderTable();
         });
     });
+}
+
+// ==========================================
+// PLAYER SEARCH
+// ==========================================
+
+function searchPlayers(query) {
+    if (!query || query.length < 2) return [];
+
+    const lowerQuery = query.toLowerCase();
+    const { playersById } = STATE.lookups;
+
+    const results = Object.values(playersById).filter(player => {
+        const name = (getVal(player, 'name', 'web_name', 'full_name') || '').toLowerCase();
+        return name.includes(lowerQuery);
+    });
+
+    // Sort by relevance (starts with query first, then contains)
+    results.sort((a, b) => {
+        const aName = (getVal(a, 'name', 'web_name', 'full_name') || '').toLowerCase();
+        const bName = (getVal(b, 'name', 'web_name', 'full_name') || '').toLowerCase();
+
+        const aStarts = aName.startsWith(lowerQuery);
+        const bStarts = bName.startsWith(lowerQuery);
+
+        if (aStarts && !bStarts) return -1;
+        if (!aStarts && bStarts) return 1;
+        return aName.localeCompare(bName);
+    });
+
+    return results.slice(0, 20); // Limit to 20 results
+}
+
+function renderSearchResults(results) {
+    const container = document.getElementById('player-search-results');
+
+    if (results.length === 0) {
+        container.style.display = 'none';
+        return;
+    }
+
+    const { teamsById, teamsByCode } = STATE.lookups;
+
+    const html = results.map(player => {
+        const playerId = getVal(player, 'player_id', 'id');
+        const playerName = getVal(player, 'name', 'web_name', 'full_name') || 'Unknown';
+        const teamRef = getVal(player, 'team', 'team_id', 'teamid', 'team_code');
+
+        let teamName = 'Unknown';
+        if (teamsByCode[teamRef]) {
+            teamName = teamsByCode[teamRef].short_name || teamsByCode[teamRef].name;
+        } else if (teamsById[teamRef]) {
+            teamName = teamsById[teamRef].short_name || teamsById[teamRef].name;
+        }
+
+        const archetype = deriveArchetype(player) || 'N/A';
+        const alreadyInWatchlist = isInWatchlist(playerId);
+        const inTeam = STATE.data.myPlayers.includes(playerId);
+
+        let badges = '';
+        if (inTeam) badges += '<span class="player-type-badge badge-team" style="margin-left: 5px;">TEAM</span>';
+        if (alreadyInWatchlist) badges += '<span class="player-type-badge badge-watchlist" style="margin-left: 5px;">WATCHLIST</span>';
+
+        return `
+            <div class="search-result-item" data-player-id="${playerId}">
+                <div class="search-result-name">${playerName}${badges}</div>
+                <div class="search-result-meta">${teamName} | ${archetype} | ID: ${playerId}</div>
+            </div>
+        `;
+    }).join('');
+
+    container.innerHTML = html;
+    container.style.display = 'block';
+
+    // Add click handlers
+    container.querySelectorAll('.search-result-item').forEach(item => {
+        item.addEventListener('click', () => {
+            const playerId = parseInt(item.dataset.playerId, 10);
+            addToWatchlist(playerId);
+            document.getElementById('player-search').value = '';
+            container.style.display = 'none';
+        });
+    });
+}
+
+function handlePlayerSearch() {
+    const query = document.getElementById('player-search').value;
+    const results = searchPlayers(query);
+    renderSearchResults(results);
 }
 
 // ==========================================
@@ -825,6 +1024,56 @@ function setupEventListeners() {
     document.getElementById('gw-end').addEventListener('change', handleFilterChange);
     document.getElementById('gw-exclude').addEventListener('input', handleFilterChange);
     document.getElementById('sort-by').addEventListener('change', handleFilterChange);
+
+    // Watchlist event listeners
+    document.getElementById('player-search').addEventListener('input', handlePlayerSearch);
+
+    // View mode toggles
+    document.getElementById('view-team').addEventListener('click', () => {
+        STATE.ui.viewMode = 'team';
+        updateViewToggleUI();
+        renderTable();
+    });
+
+    document.getElementById('view-watchlist').addEventListener('click', () => {
+        STATE.ui.viewMode = 'watchlist';
+        updateViewToggleUI();
+        renderTable();
+    });
+
+    document.getElementById('view-both').addEventListener('click', () => {
+        STATE.ui.viewMode = 'both';
+        updateViewToggleUI();
+        renderTable();
+    });
+
+    document.getElementById('clear-watchlist').addEventListener('click', clearWatchlist);
+
+    // Close search results when clicking outside
+    document.addEventListener('click', (e) => {
+        const searchContainer = document.querySelector('.player-search-container');
+        if (searchContainer && !searchContainer.contains(e.target)) {
+            document.getElementById('player-search-results').style.display = 'none';
+        }
+    });
+}
+
+function updateViewToggleUI() {
+    const buttons = {
+        'team': document.getElementById('view-team'),
+        'watchlist': document.getElementById('view-watchlist'),
+        'both': document.getElementById('view-both')
+    };
+
+    Object.entries(buttons).forEach(([mode, btn]) => {
+        if (mode === STATE.ui.viewMode) {
+            btn.classList.add('active');
+            btn.classList.remove('secondary');
+        } else {
+            btn.classList.remove('active');
+            btn.classList.add('secondary');
+        }
+    });
 }
 
 function showError(message, details) {
@@ -851,10 +1100,20 @@ async function init() {
 
         processData();
 
+        // Load watchlist from localStorage
+        loadWatchlist();
+
         document.getElementById('loading').style.display = 'none';
         document.getElementById('main-content').style.display = 'block';
 
         setupEventListeners();
+
+        // Render table if watchlist has items
+        if (STATE.data.watchlist.length > 0) {
+            STATE.ui.viewMode = 'watchlist';
+            updateViewToggleUI();
+            renderTable();
+        }
 
         console.log('=== Tracker Initialized ===');
     } catch (error) {
@@ -862,5 +1121,8 @@ async function init() {
         showError(`Failed to load data: ${error.message}`);
     }
 }
+
+// Expose functions globally for inline onclick handlers
+window.removeFromWatchlist = removeFromWatchlist;
 
 document.addEventListener('DOMContentLoaded', init);
