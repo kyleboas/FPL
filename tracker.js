@@ -15,12 +15,8 @@ const CONFIG = {
     URLS: {
         PLAYERS: 'https://raw.githubusercontent.com/olbauday/FPL-Elo-Insights/main/data/2025-2026/players.csv',
         TEAMS: 'https://raw.githubusercontent.com/olbauday/FPL-Elo-Insights/main/data/2025-2026/teams.csv',
-        FPL_API_BASE: 'https://fantasy.premierleague.com/api',
-        FPL_API_PROXIES: [
-            'https://corsproxy.io/?',
-            'https://api.allorigins.win/raw?url='
-        ],
-        POSITION_OVERRIDES: './data/player_position_overrides.csv'
+        POSITION_OVERRIDES: './data/player_position_overrides.csv',
+        MY_TRACKED_PLAYERS: './data/my_tracked_players.csv'
     },
     THRESHOLDS: {
         DEF: 10,
@@ -169,10 +165,11 @@ async function loadData() {
 
     updateStatus("Fetching Season Metadata...");
 
-    const [players, teams, positionOverrides] = await Promise.all([
+    const [players, teams, positionOverrides, myTrackedPlayers] = await Promise.all([
         fetchCSV(CONFIG.URLS.PLAYERS),
         fetchCSV(CONFIG.URLS.TEAMS),
-        fetchCSVOptional(CONFIG.URLS.POSITION_OVERRIDES)
+        fetchCSVOptional(CONFIG.URLS.POSITION_OVERRIDES),
+        fetchCSVOptional(CONFIG.URLS.MY_TRACKED_PLAYERS)
     ]);
 
     updateStatus(`Loaded ${players.length} Players and ${teams.length} Teams. Fetching GW Data...`);
@@ -213,7 +210,7 @@ async function loadData() {
         updateStatus(`Fetching Data... processed up to GW${Math.min(gw+batchSize, CONFIG.UI.MAX_GW)}`);
     }
 
-    return { players, teams, stats: allStats, fixtures: allFixtures, positionOverrides };
+    return { players, teams, stats: allStats, fixtures: allFixtures, positionOverrides, myTrackedPlayers };
 }
 
 async function fetchFPL(path) {
@@ -563,7 +560,7 @@ function renderTable() {
     const { startGW, endGW, excludedGWs, sortMode } = STATE.ui;
 
     if (myPlayers.length === 0) {
-        document.getElementById('status-bar').textContent = 'No players loaded. Enter your FPL Team ID and click "Load My Team".';
+        document.getElementById('status-bar').textContent = 'No players found in my_tracked_players.csv. Add player IDs to the CSV file and refresh.';
         return;
     }
 
@@ -819,8 +816,6 @@ function handleFilterChange() {
 }
 
 function setupEventListeners() {
-    document.getElementById('load-team').addEventListener('click', handleLoadTeam);
-
     document.getElementById('gw-start').addEventListener('change', handleFilterChange);
     document.getElementById('gw-end').addEventListener('change', handleFilterChange);
     document.getElementById('gw-exclude').addEventListener('input', handleFilterChange);
@@ -849,12 +844,26 @@ async function init() {
         STATE.data.fixtures = data.fixtures;
         STATE.data.positionOverrides = data.positionOverrides || [];
 
+        // Load tracked players from CSV
+        const trackedPlayers = data.myTrackedPlayers || [];
+        STATE.data.myPlayers = trackedPlayers
+            .map(row => getVal(row, 'player_id', 'id'))
+            .filter(id => id != null);
+
         processData();
 
         document.getElementById('loading').style.display = 'none';
         document.getElementById('main-content').style.display = 'block';
 
         setupEventListeners();
+
+        // Auto-render table if we have tracked players
+        if (STATE.data.myPlayers.length > 0) {
+            renderTable();
+        } else {
+            document.getElementById('status-bar').textContent =
+                'No players found in my_tracked_players.csv. Add player IDs to the CSV file and refresh.';
+        }
 
         console.log('=== Tracker Initialized ===');
     } catch (error) {
