@@ -370,22 +370,15 @@ function renderTable() {
     const { teams } = STATE.data;
     const { fixturesByTeam, teamGoals, teamsByCode } = STATE.lookups;
 
-    // Pre-calculate cumulative goals for all teams up to each GW
-    // Track home, away, and combined separately so we can show the right stats
-    // Use formFilter to determine rolling window (0 = all time, N = last N gameweeks)
-        // Pre-calculate cumulative goals for all teams up to each GW
-    // Track home, away, and combined separately so we can show the right stats.
-    // formFilter semantics:
-    //   - 0  = All completed GWs before the anchor
-    //   - N>0 = Last N completed GWs before the anchor
-    //
-    // anchorGw = min(columnGw, latestCompletedGW + 1)
-    // windowEnd   = anchorGw - 1  (only completed GWs)
-    // windowStart = max(1, windowEnd - formFilter + 1)
+    // Pre-calculate opponent goals metric over the active form window.
+    // We store per-match averages (goals for/against per game) for each team,
+    // split by venue (combined, home, away). This lets us answer:
+    //   - statType === 'against' -> goals conceded per match (weak defenses).
+    //   - statType === 'for'     -> goals scored per match (attack strength).
     const cumulativeGoalsByTeam = {};
     const latestCompletedGW = STATE.latestGW || 0;
 
-        teams.forEach(team => {
+    teams.forEach(team => {
         const teamCode = team.code;
         cumulativeGoalsByTeam[teamCode] = {
             combined: {},
@@ -416,10 +409,10 @@ function renderTable() {
             windowStart = Math.max(1, windowEnd - formFilter + 1);
         }
 
-        // Sum goals in this SINGLE window
-        let combinedFor = 0, combinedAgainst = 0;
-        let homeFor = 0, homeAgainst = 0;
-        let awayFor = 0, awayAgainst = 0;
+        // Aggregate raw totals AND match counts in this SINGLE window
+        let combinedFor = 0, combinedAgainst = 0, combinedMatches = 0;
+        let homeFor = 0, homeAgainst = 0, homeMatches = 0;
+        let awayFor = 0, awayAgainst = 0, awayMatches = 0;
 
         for (let w = windowStart; w <= windowEnd; w++) {
             const fix = fixturesByTeam[teamCode] ? fixturesByTeam[teamCode][w] : null;
@@ -429,30 +422,45 @@ function renderTable() {
 
                 combinedFor += goalsFor;
                 combinedAgainst += goalsAgainst;
+                combinedMatches += 1;
 
                 if (fix.wasHome) {
                     homeFor += goalsFor;
                     homeAgainst += goalsAgainst;
+                    homeMatches += 1;
                 } else {
                     awayFor += goalsFor;
                     awayAgainst += goalsAgainst;
+                    awayMatches += 1;
                 }
             }
         }
 
-        // Write the SAME totals into every GW column for this team
+        // Convert to per-match averages (goals per game).
+        // If a team has no matches in the window, keep 0 so they appear neutral rather than extreme.
+        const combinedForPer     = combinedMatches > 0 ? combinedFor / combinedMatches : 0;
+        const combinedAgainstPer = combinedMatches > 0 ? combinedAgainst / combinedMatches : 0;
+
+        // For home/away, if sample size is 0, fall back to combined average
+        const homeForPer     = homeMatches > 0 ? homeFor / homeMatches : combinedForPer;
+        const homeAgainstPer = homeMatches > 0 ? homeAgainst / homeMatches : combinedAgainstPer;
+
+        const awayForPer     = awayMatches > 0 ? awayFor / awayMatches : combinedForPer;
+        const awayAgainstPer = awayMatches > 0 ? awayAgainst / awayMatches : combinedAgainstPer;
+
+        // Write the SAME per-match averages into every GW column for this team
         for (let gw = 1; gw <= CONFIG.UI.MAX_GW; gw++) {
             cumulativeGoalsByTeam[teamCode].combined[gw] = {
-                for: combinedFor,
-                against: combinedAgainst
+                for: combinedForPer,
+                against: combinedAgainstPer
             };
             cumulativeGoalsByTeam[teamCode].home[gw] = {
-                for: homeFor,
-                against: homeAgainst
+                for: homeForPer,
+                against: homeAgainstPer
             };
             cumulativeGoalsByTeam[teamCode].away[gw] = {
-                for: awayFor,
-                against: awayAgainst
+                for: awayForPer,
+                against: awayAgainstPer
             };
         }
     });
@@ -524,12 +532,17 @@ function renderTable() {
                 return;
             }
 
-            // The value to display depends on what we're tracking
-            // "for" means opponent's goals FOR (their attack strength)
-            // "against" means opponent's goals AGAINST (their defense weakness)
-            const oppCumulativeValue = statType === 'for' ? oppCumulative.for : oppCumulative.against;
+            // The value to display depends on what we're tracking.
+            // We now use PER-MATCH averages from cumulativeGoalsByTeam:
+            //   - statType === 'for'     -> opponent goals FOR per match (attack strength).
+            //   - statType === 'against' -> opponent goals AGAINST per match (defensive weakness).
+            // Lower "for" = weaker attack (better defensive fixture).
+            // Higher "against" = leakier defense (better attacking fixture).
+            const oppCumulativeValue = statType === 'for'
+                ? oppCumulative.for
+                : oppCumulative.against;
 
-            // For metrics, use the opponent's cumulative value at this GW
+            // For metrics, use the opponent's per-match value at this GW
             const value = oppCumulativeValue;
 
             fixtures.push({
@@ -559,23 +572,33 @@ function renderTable() {
     });
 
     // Sorting
-    // For "goals for": ascending (lower opponent goals is better - weaker attacks)
-    // For "goals against": descending (higher opponent goals is better - weaker defenses)
+    // We sort on the per-match metric:
+    //   - statType === 'against' -> higher goals conceded per match is better (weaker defenses).
+    //   - statType === 'for'     -> lower goals scored per match is better (weaker attacks).
     const sortMultiplier = statType === 'for' ? 1 : -1;
 
     if (sortMode.type === 'max') {
+        // Best single fixture in the window
         rowData.sort((a, b) => sortMultiplier * (a.maxVal - b.maxVal));
     } else if (sortMode.type === 'avg') {
+        // Average fixture difficulty across the window
         rowData.sort((a, b) => sortMultiplier * (a.avgVal - b.avgVal));
     } else if (sortMode.type === 'total') {
+        // Sum across GWs of the per-match metric
         rowData.sort((a, b) => sortMultiplier * (a.totalVal - b.totalVal));
     } else if (sortMode.type === 'column' && sortMode.gw != null) {
+        // Column mode uses the raw per-match metric in the chosen direction:
+        //   - 'asc'  = lowest metric first
+        //   - 'desc' = highest metric first
+        // Default direction (set in handleGwHeaderClick):
+        //   - statType === 'for'     -> 'asc' (weakest attacks at the top)
+        //   - statType === 'against' -> 'desc' (worst defenses at the top)
         const dir = sortMode.direction === 'asc' ? 1 : -1;
         const gw = sortMode.gw;
         rowData.sort((a, b) => {
             const va = a.gwValueMap[gw] ?? -1;
             const vb = b.gwValueMap[gw] ?? -1;
-            return dir * sortMultiplier * (va - vb);
+            return dir * (va - vb);
         });
     }
 
