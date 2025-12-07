@@ -43,7 +43,7 @@ const STATE = {
     },
     ui: {
         position: 'CB',          // DEFCON position filter
-        venueFilter: 'combined', // Goals venue: 'combined', 'home', or 'away'
+        venueFilter: 'combined', // Goals venue: 'combined' or 'homeaway'
         goalsType: 'for',        // 'for' or 'against'
         formFilter: 0,           // 0 = all time, 1-12 = last N GWs
         startGW: 1,
@@ -598,8 +598,10 @@ function renderTable() {
 
             // Get Goals value (opponent's goals based on our perspective)
             let goalsValue = 0;
+            // When 'homeaway' is selected, show opponent's stats for their actual venue
+            // (when we're home, opponent is away, and vice versa)
             const venueType = venueFilter === 'combined' ? 'combined' :
-                             (fix.wasHome ? 'away' : 'home'); // When we're home, opponent is away
+                             (fix.wasHome ? 'away' : 'home');
 
             const oppGoals = cumulativeGoalsByTeam[oppCode]?.[venueType]?.[gw];
             if (oppGoals) {
