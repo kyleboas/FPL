@@ -14,7 +14,8 @@ const CONFIG = {
     },
     URLS: {
         PLAYERS: 'https://raw.githubusercontent.com/olbauday/FPL-Elo-Insights/main/data/2025-2026/players.csv',
-        TEAMS:   'https://raw.githubusercontent.com/olbauday/FPL-Elo-Insights/main/data/2025-2026/teams.csv'
+        TEAMS:   'https://raw.githubusercontent.com/olbauday/FPL-Elo-Insights/main/data/2025-2026/teams.csv',
+        POSITION_OVERRIDES: './data/player_position_overrides.csv'
     },
     THRESHOLDS: {
         DEF: 10,
@@ -39,7 +40,8 @@ const STATE = {
         teamsByCode: {},
         fixturesByTeam: {},   // teamCode -> { gw -> { opponentCode, wasHome, finished, goalsFor, goalsAgainst } }
         probabilities: {},    // opponentCode -> { 'true'/'false' -> { archetype -> prob } }
-        teamGoals: {}         // teamCode -> { venueKey -> { gw -> { for, against } } }
+        teamGoals: {},        // teamCode -> { venueKey -> { gw -> { for, against } } }
+        positionOverrides: {} // player_id -> actual_position (LB, RB, CDM)
     },
     ui: {
         position: 'CB',          // DEFCON position filter
@@ -168,9 +170,10 @@ async function loadData() {
 
     updateStatus("Fetching Season Metadata...");
 
-    const [players, teams] = await Promise.all([
+    const [players, teams, positionOverrides] = await Promise.all([
         fetchCSV(CONFIG.URLS.PLAYERS),
-        fetchCSV(CONFIG.URLS.TEAMS)
+        fetchCSV(CONFIG.URLS.TEAMS),
+        fetchCSVOptional(CONFIG.URLS.POSITION_OVERRIDES)
     ]);
 
     updateStatus(`Loaded ${players.length} Players and ${teams.length} Teams. Fetching GW Data...`);
@@ -211,25 +214,40 @@ async function loadData() {
         updateStatus(`Fetching Data... processed up to GW${Math.min(gw+batchSize, CONFIG.UI.MAX_GW)}`);
     }
 
-    return { players, teams, stats: allStats, fixtures: allFixtures };
+    return { players, teams, stats: allStats, fixtures: allFixtures, positionOverrides };
 }
 
 // ==========================================
 // CORE LOGIC - DEFCON
 // ==========================================
 
-function getPlayerArchetype(player) {
-    const detailedPos = (getVal(player, 'detailed_position', 'role') || '').toUpperCase();
+function deriveArchetype(player) {
+    if (!player) return null;
 
-    if (['CB'].includes(detailedPos)) return 'CB';
-    if (['LB', 'LWB'].includes(detailedPos)) return 'LB';
-    if (['RB', 'RWB'].includes(detailedPos)) return 'RB';
+    // Check position overrides first
+    const pid = getVal(player, 'player_id', 'id');
+    if (pid != null && STATE.lookups.positionOverrides[pid]) {
+        const override = STATE.lookups.positionOverrides[pid];
+        // LB and RB return as-is, CDM maps to MID
+        if (['LB', 'RB'].includes(override)) return override;
+        if (override === 'CDM') return 'MID';
+    }
 
-    const generalPos = (getVal(player, 'position') || '').toUpperCase();
+    // If you ever add detailed_position / role later, this still works
+    const specific = player.detailed_position || player.role;
+    if (specific) {
+        if (['CB', 'LB', 'RB'].includes(specific)) return specific;
+        if (['CDM', 'CAM', 'RM', 'LM', 'RW', 'LW'].includes(specific)) return 'MID';
+        if (['ST', 'CF'].includes(specific)) return 'FWD';
+    }
 
-    if (generalPos === 'DEF') return 'CB';
-    if (generalPos === 'MID') return 'MID';
-    if (generalPos === 'FWD') return 'FWD';
+    // FPL-Elo players.csv: position = "Defender", "Midfielder", "Forward", "Goalkeeper"
+    const posRaw = (player.position || '').toString().toLowerCase();
+
+    if (posRaw.startsWith('goal')) return 'GKP';
+    if (posRaw.startsWith('def'))  return 'CB';   // treat generic defender as CB archetype
+    if (posRaw.startsWith('mid'))  return 'MID';
+    if (posRaw.startsWith('for'))  return 'FWD';
 
     return null;
 }
@@ -250,7 +268,7 @@ function checkDefconHit(stats, archetype) {
 
 function processDefconData() {
     const { stats, players, teams } = STATE.data;
-    const { playersById, teamsByCode } = STATE.lookups;
+    const { playersById, teamsByCode, teamsById, fixturesByTeam } = STATE.lookups;
 
     const archetypes = ['CB', 'LB', 'RB', 'MID', 'FWD'];
 
@@ -272,22 +290,35 @@ function processDefconData() {
         const player = playersById[playerId];
         if (!player) return;
 
-        const archetype = getPlayerArchetype(player);
+        const archetype = deriveArchetype(player);
         if (!archetype || archetype === 'GKP') return;
 
-        const minutes = getVal(stat, 'minutes', 'minutes_played') || 0;
-        if (minutes < 45) return;
+        const minutes = getVal(stat, 'minutes', 'minutes_played', 'minutes_x') || 0;
+        if (minutes <= 0) return;
 
-        const teamId = getVal(player, 'team', 'team_id');
-        const team = STATE.lookups.teamsById[teamId];
-        if (!team) return;
+        const gw = getVal(stat, 'gw', 'gameweek', 'event', 'round');
+        if (!gw) return;
 
-        const gw = getVal(stat, 'gw', 'gameweek', 'event');
-        const fixture = STATE.lookups.fixturesByTeam[team.code]?.[gw];
-        if (!fixture || !fixture.finished) return;
+        // Handle team reference - could be ID or code
+        const teamRef = getVal(player, 'team', 'team_id', 'teamid', 'team_code');
+        let teamCode = null;
+
+        if (teamsByCode[teamRef]) {
+            teamCode = teamRef;                 // already a code
+        } else if (teamsById[teamRef]) {
+            teamCode = teamsById[teamRef].code; // convert id → code
+        }
+
+        if (teamCode == null || !fixturesByTeam[teamCode]) return;
+
+        const fixture = fixturesByTeam[teamCode][gw];
+        if (!fixture) return;
 
         const opponentCode = fixture.opponentCode;
-        const venueKey = String(fixture.wasHome);
+        const wasHome = !!fixture.wasHome;
+        const venueKey = String(wasHome);
+
+        if (!opponentCode) return;
 
         const isHit = checkDefconHit(stat, archetype);
 
@@ -319,7 +350,12 @@ function processDefconData() {
         });
     });
 
-    console.log('=== DEFCON Probabilities Processed ===');
+    console.log('=== DEFCON Opponent Aggregates ===');
+    Object.entries(STATE.lookups.probabilities).forEach(([oppCode, byVenue]) => {
+        const team = teamsByCode[oppCode];
+        const name = team ? team.short_name : oppCode;
+        console.log(`Opponent ${name} (${oppCode})`, byVenue);
+    });
 }
 
 // ==========================================
@@ -426,6 +462,18 @@ function processData() {
             STATE.lookups.playersById[pid] = p;
         }
     });
+
+    // Build position overrides lookup
+    STATE.lookups.positionOverrides = {};
+    if (STATE.data.positionOverrides && STATE.data.positionOverrides.length > 0) {
+        STATE.data.positionOverrides.forEach(override => {
+            const pid = getVal(override, 'player_id', 'id');
+            const position = override.actual_position;
+            if (pid != null && position) {
+                STATE.lookups.positionOverrides[pid] = position;
+            }
+        });
+    }
 
     STATE.lookups.teamsById = {};
     STATE.data.teams.forEach(t => STATE.lookups.teamsById[t.id] = t);
@@ -678,6 +726,44 @@ function renderTable() {
                 if (fixB) sumB += (fixB.defconProb + (fixB.goalsValue / maxGoals)) / 2;
             });
             return sortMode.direction === 'desc' ? sumB - sumA : sumA - sumB;
+        });
+    } else if (sortMode.type === 'defcon-avg') {
+        tableData.sort((a, b) => {
+            let sumA = 0, countA = 0, sumB = 0, countB = 0;
+            gwList.forEach(gw => {
+                const fixA = a.fixtures[gw];
+                const fixB = b.fixtures[gw];
+                if (fixA) {
+                    sumA += fixA.defconProb;
+                    countA++;
+                }
+                if (fixB) {
+                    sumB += fixB.defconProb;
+                    countB++;
+                }
+            });
+            const avgA = countA > 0 ? sumA / countA : 0;
+            const avgB = countB > 0 ? sumB / countB : 0;
+            return sortMode.direction === 'desc' ? avgB - avgA : avgA - avgB;
+        });
+    } else if (sortMode.type === 'goals-avg') {
+        tableData.sort((a, b) => {
+            let sumA = 0, countA = 0, sumB = 0, countB = 0;
+            gwList.forEach(gw => {
+                const fixA = a.fixtures[gw];
+                const fixB = b.fixtures[gw];
+                if (fixA) {
+                    sumA += fixA.goalsValue;
+                    countA++;
+                }
+                if (fixB) {
+                    sumB += fixB.goalsValue;
+                    countB++;
+                }
+            });
+            const avgA = countA > 0 ? sumA / countA : 0;
+            const avgB = countB > 0 ? sumB / countB : 0;
+            return sortMode.direction === 'desc' ? avgB - avgA : avgA - avgB;
         });
     } else if (sortMode.type === 'column' && sortMode.gw != null) {
         tableData.sort((a, b) => {
