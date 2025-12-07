@@ -168,30 +168,30 @@
         }
 
         .combined-opponent {
-            font-size: 0.85em;
-            font-weight: 600;
-            margin-bottom: 3px;
-        }
+          font-size: 0.9em;      /* was 0.85em */
+          font-weight: 700;      /* a little bolder */
+          margin-bottom: 3px;
+      }
 
-        .combined-stats {
-            font-size: 0.85em;
-            display: flex;
-            gap: 5px;
-            align-items: center;
-        }
+      .combined-stats {
+          font-size: 0.9em;      /* was 0.85em */
+          display: flex;
+          gap: 6px;
+          align-items: center;
+      }
 
-        .stat-defcon {
-            font-weight: bold;
-            color: var(--primary);
-        }
+      .stat-defcon {
+          font-weight: 700;
+          color: var(--primary);
+      }
+
+      .stat-goals {
+          font-weight: 700;
+          color: #b43b0f;        /* bit darker for contrast */
+      }
 
         .stat-separator {
             color: #999;
-        }
-
-        .stat-goals {
-            font-weight: bold;
-            color: #d84315;
         }
 
         /* Status & Error */
@@ -237,6 +237,54 @@
         .sorted-asc::after {
             content: ' ▲';
         }
+        
+        @media (max-width: 600px) {
+    body {
+        padding: 8px;
+    }
+
+    .container {
+        max-width: 100%;
+        margin: 0;
+    }
+
+    /* Make the table go edge-to-edge and reduce the need to zoom */
+    .table-container {
+        width: calc(100vw - 16px);
+        margin: 0 -8px;
+    }
+
+    /* Bigger text but tighter padding so it still fits */
+    table {
+        font-size: 1rem;
+    }
+
+    th, td {
+        padding: 6px 4px;
+    }
+
+    .combined-cell {
+        padding: 4px 2px;
+        min-height: 44px; /* good tap target on mobile */
+    }
+
+    /* Keep the team column narrow but readable */
+    th:first-child,
+    td:first-child {
+        min-width: 3.5rem;
+        padding-left: 6px;
+    }
+
+    /* Controls: stack more compactly */
+    .controls {
+        padding: 10px;
+        gap: 12px;
+    }
+
+    .control-group label {
+        font-size: 0.8rem;
+    }
+}
     </style>
 </head>
 <body>
