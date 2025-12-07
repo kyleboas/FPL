@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>FPL DEFCON Predictor</title>
+    <title>Combined DEFCON & Goals | FPL</title>
     <style>
         :root {
             --primary: #37003c;
@@ -76,7 +76,7 @@
             color: #666;
         }
 
-        select, input[type="range"], input[type="number"], input[type="text"] {
+        select, input[type="number"], input[type="text"] {
             padding: 8px;
             border-radius: 4px;
             border: 1px solid #ccc;
@@ -84,6 +84,34 @@
 
         input[type="number"] {
             width: 80px;
+        }
+
+        /* Toggle Switch */
+        .toggle-group {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+
+        .toggle-switch {
+            display: inline-flex;
+            background: #e0e0e0;
+            border-radius: 20px;
+            padding: 3px;
+        }
+
+        .toggle-option {
+            padding: 6px 12px;
+            border-radius: 17px;
+            cursor: pointer;
+            font-size: 0.85rem;
+            transition: all 0.3s;
+            white-space: nowrap;
+        }
+
+        .toggle-option.active {
+            background: var(--primary);
+            color: white;
         }
 
         /* Table */
@@ -112,7 +140,7 @@
             position: sticky;
             top: 0;
         }
-        
+
         /* First column sticky */
         td:first-child, th:first-child {
             position: sticky;
@@ -128,16 +156,43 @@
             z-index: 20;
         }
 
-        /* Match Cell Styles */
-        .match-cell {
+        /* Combined Cell Styles - Two rows per cell */
+        .combined-cell {
             display: flex;
             flex-direction: column;
             align-items: center;
             justify-content: center;
-            min-height: 40px;
+            min-height: 50px;
+            gap: 2px;
+            padding: 5px;
         }
-        .match-opp { font-size: 0.8em; margin-bottom: 2px; }
-        .match-prob { font-weight: bold; }
+
+        .combined-opponent {
+            font-size: 0.85em;
+            font-weight: 600;
+            margin-bottom: 3px;
+        }
+
+        .combined-stats {
+            font-size: 0.85em;
+            display: flex;
+            gap: 5px;
+            align-items: center;
+        }
+
+        .stat-defcon {
+            font-weight: bold;
+            color: var(--primary);
+        }
+
+        .stat-separator {
+            color: #999;
+        }
+
+        .stat-goals {
+            font-weight: bold;
+            color: #d84315;
+        }
 
         /* Status & Error */
         #loading {
@@ -165,18 +220,35 @@
             background: #e0e0e0;
             border-radius: 4px;
         }
+
+        .gw-header {
+            cursor: pointer;
+            user-select: none;
+        }
+
+        .gw-header:hover {
+            opacity: 0.8;
+        }
+
+        .sorted-desc::after {
+            content: ' ▼';
+        }
+
+        .sorted-asc::after {
+            content: ' ▲';
+        }
     </style>
 </head>
 <body>
 
 <div class="container">
     <header>
-        <h1>FPL DEFCON Matrix</h1>
-        <p>Defensive Action Probability Calculator</p>
+        <h1>Combined DEFCON & Goals</h1>
+        <p>Team defensive probabilities and goals in one view</p>
         <div class="nav-links">
+            <a href="index.html">Team DEFCON View</a>
             <a href="player-defcon.html">Player DEFCON Stats</a>
             <a href="goals.html">Goals Statistics</a>
-            <a href="combined.html">Combined DEFCON & Goals</a>
             <a href="tracker.html">My Team Tracker</a>
         </div>
     </header>
@@ -187,14 +259,38 @@
     <div id="main-content" style="display: none;">
         <div class="controls">
             <div class="control-group">
-                <label for="archetype-filter">Position Archetype</label>
-                <select id="archetype-filter">
-                    <option value="CB" selected>Center Back (CB)</option>
-                    <option value="LB">Left Back (LB)</option>
-                    <option value="RB">Right Back (RB)</option>
-                    <option value="MID">Midfielder (MID)</option>
-                    <option value="FWD">Forward (FWD)</option>
+                <label for="position-filter">DEFCON Position</label>
+                <select id="position-filter">
+                    <option value="CB" selected>Center Backs</option>
+                    <option value="LB">Left Backs</option>
+                    <option value="RB">Right Backs</option>
+                    <option value="MID">Midfielders</option>
+                    <option value="FWD">Forwards</option>
                 </select>
+            </div>
+
+            <div class="control-group">
+                <label>Goals Venue Split</label>
+                <div class="toggle-switch" id="venue-toggle">
+                    <div class="toggle-option active" data-value="combined">Combined</div>
+                    <div class="toggle-option" data-value="homeaway">Home/Away</div>
+                </div>
+            </div>
+
+            <div class="control-group">
+                <label>Goals Type</label>
+                <div class="toggle-switch" id="goals-type-toggle">
+                    <div class="toggle-option active" data-value="for">Goals For</div>
+                    <div class="toggle-option" data-value="against">Goals Against</div>
+                </div>
+            </div>
+
+            <div class="control-group">
+                <label for="form-filter">Goals Form Window</label>
+                <div style="display: flex; align-items: center; gap: 10px;">
+                    <input type="range" id="form-filter" min="0" max="12" value="0" step="1">
+                    <span style="font-weight: bold; color: var(--primary); min-width: 100px; text-align: center;" id="form-filter-value">All Time</span>
+                </div>
             </div>
 
             <div class="control-group">
@@ -215,8 +311,9 @@
             <div class="control-group">
                 <label for="sort-by">Sort Order</label>
                 <select id="sort-by">
-                    <option value="max" selected>Highest Single Prob</option>
-                    <option value="avg">Highest Average Prob</option>
+                    <option value="max" selected>Highest Combined Value</option>
+                    <option value="avg">Highest Average</option>
+                    <option value="total">Highest Total</option>
                 </select>
             </div>
         </div>
@@ -238,8 +335,7 @@
     </div>
 </div>
 
-<script src="app.js"></script>
+<script src="combined.js"></script>
 
 </body>
 </html>
-
