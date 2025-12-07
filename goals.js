@@ -655,7 +655,7 @@ function renderTable() {
                 // Adjust text color for readability - use 75% of max value as threshold
                 const textThreshold = globalMaxValue * 0.75;
                 const needsWhiteText = cell.value >= textThreshold;
-                td.style.color = needsWhiteText ? 'white' : '#222';
+                td.style.color = needsWhiteText ? 'white' : '#fff';
 
                 // Style future fixtures slightly differently
                 if (cell.type === 'FUTURE') {
