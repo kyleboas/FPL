@@ -1,0 +1,432 @@
+/**
+ * FPL Goals Statistics
+ * Team-level goals analysis using ES6 modules
+ */
+
+import {
+    CONFIG,
+    getVal,
+    roundToTwo,
+    parseExcludedGWs,
+    loadAllData,
+    buildFixturesLookup,
+    buildGWList,
+    processGoalsData,
+    calculateCumulativeGoals,
+    getGoalsColor
+} from './modules/index.js';
+
+// Application State
+const STATE = {
+    data: {
+        players: [],
+        teams: [],
+        stats: [],
+        fixtures: []
+    },
+    lookups: {
+        playersById: {},
+        teamsById: {},
+        teamsByCode: {},
+        fixturesByTeam: {},
+        teamGoals: {}
+    },
+    ui: {
+        statType: 'for',
+        venueFilter: 'combined',
+        formFilter: 0,
+        startGW: 1,
+        endGW: 6,
+        excludedGWs: [],
+        sortMode: {
+            type: 'max',
+            direction: 'desc',
+            gw: null
+        }
+    },
+    latestGW: 0
+};
+
+// ==========================================
+// DATA PROCESSING
+// ==========================================
+
+function processData() {
+    STATE.lookups.playersById = {};
+    STATE.data.players.forEach(p => {
+        const pid = getVal(p, 'player_id', 'id');
+        if (pid != null) {
+            STATE.lookups.playersById[pid] = p;
+        }
+    });
+
+    STATE.lookups.teamsById = {};
+    STATE.data.teams.forEach(t => STATE.lookups.teamsById[t.id] = t);
+
+    STATE.lookups.teamsByCode = {};
+    STATE.data.teams.forEach(t => STATE.lookups.teamsByCode[t.code] = t);
+
+    STATE.lookups.fixturesByTeam = buildFixturesLookup({
+        fixtures: STATE.data.fixtures,
+        teams: STATE.data.teams
+    });
+
+    const goalsResult = processGoalsData({
+        fixtures: STATE.data.fixtures,
+        teams: STATE.data.teams,
+        fixturesByTeam: STATE.lookups.fixturesByTeam
+    });
+
+    STATE.lookups.teamGoals = goalsResult.teamGoals;
+    STATE.latestGW = goalsResult.latestGW;
+
+    const debugEl = document.getElementById('status-bar');
+    if (debugEl) {
+        debugEl.textContent =
+            `Data Ready: ${STATE.data.teams.length} Teams, ` +
+            `${STATE.data.fixtures.length} Fixtures processed.`;
+    }
+}
+
+// ==========================================
+// RENDERING
+// ==========================================
+
+function handleGwHeaderClick(gw) {
+    const mode = STATE.ui.sortMode;
+    if (mode.type === 'column' && mode.gw === gw) {
+        mode.direction = mode.direction === 'desc' ? 'asc' : 'desc';
+    } else {
+        mode.type = 'column';
+        mode.gw = gw;
+        mode.direction = STATE.ui.statType === 'for' ? 'asc' : 'desc';
+    }
+    renderTable();
+}
+
+function updateFormFilterDisplay(value) {
+    const displayEl = document.getElementById('form-filter-value');
+    if (!displayEl) return;
+
+    if (value === 0) {
+        displayEl.textContent = 'All Time';
+    } else {
+        displayEl.textContent = `Last ${value} GW${value > 1 ? 's' : ''}`;
+    }
+}
+
+function renderTable() {
+    const { statType, venueFilter, sortMode, formFilter } = STATE.ui;
+    const startGW = parseInt(STATE.ui.startGW, 10);
+    const endGW = parseInt(STATE.ui.endGW, 10);
+
+    const gwList = buildGWList(startGW, endGW, STATE.ui.excludedGWs);
+
+    const { teams } = STATE.data;
+    const { fixturesByTeam, teamsByCode } = STATE.lookups;
+
+    // Calculate cumulative goals
+    const cumulativeGoalsByTeam = calculateCumulativeGoals({
+        teams,
+        fixturesByTeam,
+        latestGW: STATE.latestGW,
+        formFilter,
+        maxGW: CONFIG.UI.MAX_GW
+    });
+
+    const thead = document.getElementById('fixture-header');
+    const tbody = document.getElementById('fixture-body');
+
+    thead.innerHTML = '';
+    const headerRow = document.createElement('tr');
+
+    const thTeam = document.createElement('th');
+    thTeam.textContent = 'Team';
+    headerRow.appendChild(thTeam);
+
+    gwList.forEach(gw => {
+        const th = document.createElement('th');
+        th.textContent = `GW ${gw}`;
+        th.dataset.gw = gw;
+        th.classList.add('gw-header');
+
+        if (sortMode.type === 'column' && sortMode.gw === gw) {
+            th.classList.add(sortMode.direction === 'desc' ? 'sorted-desc' : 'sorted-asc');
+        }
+
+        th.addEventListener('click', () => handleGwHeaderClick(gw));
+        headerRow.appendChild(th);
+    });
+
+    thead.appendChild(headerRow);
+
+    let rowData = teams.map(team => {
+        const teamCode = team.code;
+        const fixtures = [];
+        const gwValueMap = {};
+        let metrics = [];
+
+        gwList.forEach(gw => {
+            const fix = fixturesByTeam[teamCode] ? fixturesByTeam[teamCode][gw] : null;
+
+            if (!fix) {
+                fixtures.push({ type: 'BLANK', cumulativeValue: null });
+                gwValueMap[gw] = null;
+                return;
+            }
+
+            const opponentCode = fix.opponentCode;
+            const isHome = fix.wasHome;
+            const oppTeam = teamsByCode[opponentCode];
+            const oppName = oppTeam ? oppTeam.short_name : 'UNK';
+
+            let oppVenue = 'combined';
+            if (venueFilter === 'homeaway') {
+                oppVenue = isHome ? 'away' : 'home';
+            }
+
+            const oppCumulative = cumulativeGoalsByTeam[opponentCode]
+                ? cumulativeGoalsByTeam[opponentCode][oppVenue][gw]
+                : null;
+
+            if (!oppCumulative) {
+                fixtures.push({ type: 'BLANK', cumulativeValue: null });
+                gwValueMap[gw] = null;
+                return;
+            }
+
+            const oppCumulativeValue = statType === 'for'
+                ? oppCumulative.for
+                : oppCumulative.against;
+
+            const value = oppCumulativeValue;
+
+            fixtures.push({
+                type: fix.finished ? 'MATCH' : 'FUTURE',
+                opponent: oppName,
+                venue: isHome ? '(H)' : '(A)',
+                value: value,
+                isFinished: fix.finished
+            });
+            metrics.push(value);
+            gwValueMap[gw] = value;
+        });
+
+        const validMetrics = metrics.filter(m => m !== null);
+        const maxVal = validMetrics.length ? Math.max(...validMetrics) : 0;
+        const avgVal = validMetrics.length ? roundToTwo(validMetrics.reduce((a, b) => a + b, 0) / validMetrics.length) : 0;
+        const totalVal = roundToTwo(validMetrics.reduce((a, b) => a + b, 0));
+
+        return {
+            teamName: team.name,
+            fixtures,
+            gwValueMap,
+            maxVal,
+            avgVal,
+            totalVal
+        };
+    });
+
+    // Sorting
+    const sortMultiplier = statType === 'for' ? 1 : -1;
+
+    if (sortMode.type === 'max') {
+        rowData.sort((a, b) => sortMultiplier * (a.maxVal - b.maxVal));
+    } else if (sortMode.type === 'avg') {
+        rowData.sort((a, b) => sortMultiplier * (a.avgVal - b.avgVal));
+    } else if (sortMode.type === 'total') {
+        rowData.sort((a, b) => sortMultiplier * (a.totalVal - b.totalVal));
+    } else if (sortMode.type === 'column' && sortMode.gw != null) {
+        const dir = sortMode.direction === 'asc' ? 1 : -1;
+        const gw = sortMode.gw;
+        rowData.sort((a, b) => {
+            const va = a.gwValueMap[gw] ?? -1;
+            const vb = b.gwValueMap[gw] ?? -1;
+            return dir * (va - vb);
+        });
+    }
+
+    // Calculate global max for color scaling
+    let globalMaxValue = 0;
+    rowData.forEach(row => {
+        row.fixtures.forEach(cell => {
+            if ((cell.type === 'MATCH' || cell.type === 'FUTURE') && cell.value != null) {
+                globalMaxValue = Math.max(globalMaxValue, cell.value);
+            }
+        });
+    });
+
+    tbody.innerHTML = '';
+    rowData.forEach(row => {
+        const tr = document.createElement('tr');
+
+        const tdName = document.createElement('td');
+        tdName.textContent = row.teamName;
+        tdName.style.fontWeight = 'bold';
+        tr.appendChild(tdName);
+
+        row.fixtures.forEach(cell => {
+            const td = document.createElement('td');
+
+            if (cell.type === 'BLANK' || cell.type === 'FILTERED') {
+                td.textContent = '-';
+                td.style.backgroundColor = '#f4f4f4';
+                td.style.color = '#999';
+            } else if (cell.type === 'MATCH' || cell.type === 'FUTURE') {
+                const wrapper = document.createElement('div');
+                wrapper.className = 'match-cell';
+
+                const divOpp = document.createElement('div');
+                divOpp.className = 'match-opp';
+                divOpp.textContent = `${cell.opponent} ${cell.venue}`;
+
+                const divValue = document.createElement('div');
+                divValue.className = 'match-value';
+                divValue.textContent = roundToTwo(cell.value);
+
+                wrapper.appendChild(divOpp);
+                wrapper.appendChild(divValue);
+                td.appendChild(wrapper);
+
+                td.style.backgroundColor = getGoalsColor(cell.value, statType, globalMaxValue);
+
+                const textThreshold = globalMaxValue * 0.75;
+                const needsWhiteText = cell.value >= textThreshold;
+                td.style.color = needsWhiteText ? 'white' : '#222';
+
+                if (cell.type === 'FUTURE') {
+                    td.style.opacity = '0.8';
+                    td.style.fontStyle = 'italic';
+                }
+            }
+            tr.appendChild(td);
+        });
+
+        tbody.appendChild(tr);
+    });
+}
+
+// ==========================================
+// EVENT LISTENERS
+// ==========================================
+
+function setupEventListeners() {
+    document.getElementById('stat-type').addEventListener('change', (e) => {
+        STATE.ui.statType = e.target.value;
+        renderTable();
+    });
+
+    const venueToggle = document.getElementById('venue-toggle');
+    venueToggle.querySelectorAll('.toggle-option').forEach(option => {
+        option.addEventListener('click', (e) => {
+            const value = e.target.dataset.value;
+            STATE.ui.venueFilter = value;
+
+            venueToggle.querySelectorAll('.toggle-option').forEach(opt => {
+                opt.classList.remove('active');
+            });
+            e.target.classList.add('active');
+
+            renderTable();
+        });
+    });
+
+    const formFilterSlider = document.getElementById('form-filter');
+    formFilterSlider.addEventListener('input', (e) => {
+        const value = parseInt(e.target.value, 10);
+        STATE.ui.formFilter = value;
+        updateFormFilterDisplay(value);
+        renderTable();
+    });
+
+    const startInput = document.getElementById('gw-start');
+    const endInput = document.getElementById('gw-end');
+    const excludeInput = document.getElementById('gw-exclude');
+
+    STATE.ui.startGW = parseInt(startInput.value, 10) || 1;
+    STATE.ui.endGW = parseInt(endInput.value, 10) || Math.min(STATE.ui.startGW + 5, CONFIG.UI.MAX_GW);
+    STATE.ui.excludedGWs = parseExcludedGWs(excludeInput.value, CONFIG.UI.MAX_GW);
+
+    startInput.addEventListener('input', (e) => {
+        let val = parseInt(e.target.value, 10);
+        if (isNaN(val)) val = 1;
+        if (val < 1) val = 1;
+        if (val > CONFIG.UI.MAX_GW) val = CONFIG.UI.MAX_GW;
+        STATE.ui.startGW = val;
+
+        if (STATE.ui.endGW < val) {
+            STATE.ui.endGW = val;
+            endInput.value = String(val);
+        }
+
+        renderTable();
+    });
+
+    endInput.addEventListener('input', (e) => {
+        let val = parseInt(e.target.value, 10);
+        if (!isNaN(val) && val >= 1 && val <= CONFIG.UI.MAX_GW) {
+            STATE.ui.endGW = val;
+            renderTable();
+        }
+    });
+
+    endInput.addEventListener('blur', (e) => {
+        let val = parseInt(e.target.value, 10);
+        if (isNaN(val)) val = CONFIG.UI.MAX_GW;
+        if (val < 1) val = 1;
+        if (val > CONFIG.UI.MAX_GW) val = CONFIG.UI.MAX_GW;
+
+        if (val < STATE.ui.startGW) {
+            val = STATE.ui.startGW;
+        }
+
+        e.target.value = String(val);
+        STATE.ui.endGW = val;
+        renderTable();
+    });
+
+    excludeInput.addEventListener('input', (e) => {
+        STATE.ui.excludedGWs = parseExcludedGWs(e.target.value, CONFIG.UI.MAX_GW);
+        renderTable();
+    });
+
+    document.getElementById('sort-by').addEventListener('change', (e) => {
+        const val = e.target.value;
+        STATE.ui.sortMode.type = val;
+        STATE.ui.sortMode.gw = null;
+        STATE.ui.sortMode.direction = 'desc';
+        renderTable();
+    });
+}
+
+// ==========================================
+// INITIALIZATION
+// ==========================================
+
+async function init() {
+    const loadingEl = document.getElementById('loading');
+    const mainEl = document.getElementById('main-content');
+    const errorEl = document.getElementById('error');
+
+    try {
+        const rawData = await loadAllData(false);
+        STATE.data = rawData;
+        processData();
+
+        window.STATE = STATE;
+
+        loadingEl.style.display = 'none';
+        mainEl.style.display = 'block';
+
+        setupEventListeners();
+        renderTable();
+
+    } catch (err) {
+        console.error("Initialization Error:", err);
+        loadingEl.style.display = 'none';
+        errorEl.style.display = 'block';
+        errorEl.textContent = `Error: ${err.message}. Check console for details.`;
+    }
+}
+
+document.addEventListener('DOMContentLoaded', init);
