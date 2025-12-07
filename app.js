@@ -654,7 +654,7 @@ function renderTable() {
                     (currentArchetype === 'FWD'  && cell.prob >= 0.50) ||
                     (['CB','LB','RB'].includes(currentArchetype) && cell.prob >= 0.60);
 
-                td.style.color = whiteText ? 'white' : '#222';
+                td.style.color = whiteText ? 'white' : '#fff';
             }
             tr.appendChild(td);
         });

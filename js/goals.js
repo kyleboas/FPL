@@ -292,7 +292,7 @@ function renderTable() {
 
                 const textThreshold = globalMaxValue * 0.75;
                 const needsWhiteText = cell.value >= textThreshold;
-                td.style.color = needsWhiteText ? 'white' : '#222';
+                td.style.color = needsWhiteText ? 'white' : '#fff';
 
                 if (cell.type === 'FUTURE') {
                     td.style.opacity = '0.8';

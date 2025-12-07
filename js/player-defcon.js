@@ -457,7 +457,7 @@ function renderTable() {
 
                 td.appendChild(wrapper);
                 td.style.backgroundColor = getProbabilityColor(cell.prob, row.archetype);
-                td.style.color = shouldUseWhiteText(cell.prob, row.archetype) ? 'white' : '#222';
+                td.style.color = shouldUseWhiteText(cell.prob, row.archetype) ? 'white' : '#fff';
             }
             tr.appendChild(td);
         });
