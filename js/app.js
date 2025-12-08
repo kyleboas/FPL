@@ -254,7 +254,7 @@ function renderTable() {
                 td.appendChild(wrapper);
 
                 td.style.backgroundColor = getProbabilityColor(cell.prob, STATE.ui.currentArchetype);
-                td.style.color = shouldUseWhiteText(cell.prob, STATE.ui.currentArchetype) ? '#fff' : '#fff';
+                td.style.color = shouldUseWhiteText(cell.prob, STATE.ui.currentArchetype) ? '#fff' : '#000';
             }
             tr.appendChild(td);
         });
