@@ -290,12 +290,14 @@ function renderTable() {
 
                 td.style.backgroundColor = getGoalsColor(cell.value, statType, globalMaxValue);
 
-                // Adjust text color for readability (match new palette)
-                const baseTextColor = '#1e293b'; // same family as body text
-
-                const textThreshold = globalMaxValue * 0.75;
-                const needsWhiteText = cell.value >= textThreshold;
-                td.style.color = needsWhiteText ? '#ffffff' : baseTextColor;
+                // Adjust text color for readability
+                if (cell.value <= 0.8) {
+                    divOpp.style.color = '#000';
+                    divValue.style.color = '#000';
+                } else {
+                    divOpp.style.color = '#fff';
+                    divValue.style.color = '#fff';
+                }
 
                 // Style future fixtures slightly differently
                 if (cell.type === 'FUTURE') {

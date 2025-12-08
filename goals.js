@@ -654,15 +654,11 @@ function renderTable() {
 
                 // Adjust text color for readability
                 if (cell.value <= 0.8) {
-                    // Black for values below 0.8
                     divOpp.style.color = '#000';
                     divValue.style.color = '#000';
                 } else {
-                    const textThreshold = globalMaxValue * 0.75;
-                    const needsWhiteText = cell.value >= textThreshold;
-                    const textColor = needsWhiteText ? 'white' : 'black';
-                    divOpp.style.color = textColor;
-                    divValue.style.color = textColor;
+                    divOpp.style.color = '#fff';
+                    divValue.style.color = '#fff';
                 } 
 
                 // Style future fixtures slightly differently
