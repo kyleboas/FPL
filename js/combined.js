@@ -43,7 +43,7 @@ const STATE = {
         endGW: 6,
         excludedGWs: [],
         sortMode: {
-            type: 'max',
+            type: 'avg',      // now using Highest Average as default
             direction: 'desc',
             gw: null
         }
