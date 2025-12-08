@@ -426,18 +426,29 @@ function processData() {
 // ==========================================
 
 function getProbabilityColor(prob, archetype) {
-    // Looser / lower thresholds for mids
-    let start = 0.2;
-    let span  = 0.6;
+    // Define low/high thresholds per archetype (in probability terms)
+    let low, high;
 
-    if (archetype === 'MID') {
-        start = 0.10;   // start "heating up" earlier
-        span  = 0.40;   // saturate by ~50%
+    if (['CB', 'LB', 'RB'].includes(archetype)) {
+        // Defenders: 16% → 50%
+        low = 0.16;
+        high = 0.50;
+    } else if (archetype === 'MID') {
+        // Midfielders: 9% → 20%
+        low = 0.09;
+        high = 0.20;
+    } else {
+        // Fallback (e.g. FWD) – keep your old behaviour
+        low = 0.05;
+        high = 0.10; // start 20%, saturate by 80%
     }
 
-    const intensity = Math.min(1, Math.max(0, (prob - start) / span));
+    const span = high - low;
+    const intensity = Math.min(1, Math.max(0, (prob - low) / span));
+
     const g = Math.floor(255 * (1 - intensity));
     const b = Math.floor(255 * (1 - intensity));
+
     return `rgb(255, ${g}, ${b})`;
 }
 
