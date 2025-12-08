@@ -653,13 +653,16 @@ function renderTable() {
                 td.style.backgroundColor = getGoalsColor(cell.value, statType, globalMaxValue);
 
                 // Adjust text color for readability
-                if (cell.value <= 1) {
-                    // Always black when value is 1 or less
-                    td.style.color = 'black';
+                if (cell.value < 0.8) {
+                    // Black for values below 0.8
+                    divOpp.style.color = '#000';
+                    divValue.style.color = '#000';
                 } else {
                     const textThreshold = globalMaxValue * 0.75;
                     const needsWhiteText = cell.value >= textThreshold;
-                    td.style.color = needsWhiteText ? 'white' : 'black';
+                    const textColor = needsWhiteText ? 'white' : 'black';
+                    divOpp.style.color = textColor;
+                    divValue.style.color = textColor;
                 } 
 
                 // Style future fixtures slightly differently
