@@ -731,9 +731,17 @@ function setupEventListeners() {
     const endInput = document.getElementById('gw-end');
     const excludeInput = document.getElementById('gw-exclude');
 
-    STATE.ui.startGW = parseInt(startInput.value, 10) || 1;
-    STATE.ui.endGW = parseInt(endInput.value, 10) || Math.min(STATE.ui.startGW + 5, CONFIG.UI.MAX_GW);
+    // Default window: first unplayed GW (latest completed + 1) to 5 GWs after
+    const nextUnplayedGW = Math.min((STATE.latestGW || 0) + 1, CONFIG.UI.MAX_GW);
+    const defaultEndGW   = Math.min(nextUnplayedGW + 5, CONFIG.UI.MAX_GW);
+
+    STATE.ui.startGW = nextUnplayedGW;
+    STATE.ui.endGW   = defaultEndGW;
     STATE.ui.excludedGWs = parseExcludedGWs(excludeInput.value);
+
+    // Reflect defaults in the inputs
+    startInput.value = String(nextUnplayedGW);
+    endInput.value   = String(defaultEndGW);
 
     startInput.addEventListener('input', (e) => {
         let val = parseInt(e.target.value, 10);
