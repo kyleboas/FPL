@@ -262,7 +262,7 @@ function renderTable() {
 
         const tdName = document.createElement('td');
         tdName.textContent = row.teamName;
-        tdName.style.fontWeight = 'bold';
+        tdName.style.fontWeight = '600';
         tr.appendChild(tdName);
 
         row.fixtures.forEach(cell => {
@@ -270,8 +270,8 @@ function renderTable() {
 
             if (cell.type === 'BLANK' || cell.type === 'FILTERED') {
                 td.textContent = '-';
-                td.style.backgroundColor = '#f4f4f4';
-                td.style.color = '#999';
+                td.style.backgroundColor = '#e2e8f0'; // soft slate gray
+                td.style.color = '#94a3b8';          // muted text
             } else if (cell.type === 'MATCH' || cell.type === 'FUTURE') {
                 const wrapper = document.createElement('div');
                 wrapper.className = 'match-cell';
@@ -290,12 +290,16 @@ function renderTable() {
 
                 td.style.backgroundColor = getGoalsColor(cell.value, statType, globalMaxValue);
 
+                // Adjust text color for readability (match new palette)
+                const baseTextColor = '#1e293b'; // same family as body text
+
                 const textThreshold = globalMaxValue * 0.75;
                 const needsWhiteText = cell.value >= textThreshold;
-                td.style.color = needsWhiteText ? 'white' : '#fff';
+                td.style.color = needsWhiteText ? '#ffffff' : baseTextColor;
 
+                // Style future fixtures slightly differently
                 if (cell.type === 'FUTURE') {
-                    td.style.opacity = '0.8';
+                    td.style.opacity = '0.9';
                     td.style.fontStyle = 'italic';
                 }
             }
@@ -312,17 +316,22 @@ function renderTable() {
 
 function setupEventListeners() {
     // Stat type toggle (Goals For / Goals Against)
-    const statTypeToggle = document.getElementById('stat-type-toggle');
-    statTypeToggle.querySelectorAll('.toggle-option').forEach(option => {
+    const statToggle = document.getElementById('stat-type-toggle');
+    statToggle.querySelectorAll('.toggle-option').forEach(option => {
         option.addEventListener('click', (e) => {
-            const value = e.target.dataset.value;
+            const value = e.currentTarget.dataset.value; // 'for' or 'against'
             STATE.ui.statType = value;
 
             // Update active state
-            statTypeToggle.querySelectorAll('.toggle-option').forEach(opt => {
+            statToggle.querySelectorAll('.toggle-option').forEach(opt => {
                 opt.classList.remove('active');
             });
-            e.target.classList.add('active');
+            e.currentTarget.classList.add('active');
+
+            // Reset sort defaults when switching stat type
+            STATE.ui.sortMode.type = 'avg';
+            STATE.ui.sortMode.gw = null;
+            STATE.ui.sortMode.direction = value === 'for' ? 'asc' : 'desc';
 
             renderTable();
         });
@@ -334,6 +343,7 @@ function setupEventListeners() {
             const value = e.target.dataset.value;
             STATE.ui.venueFilter = value;
 
+            // Update active state
             venueToggle.querySelectorAll('.toggle-option').forEach(opt => {
                 opt.classList.remove('active');
             });
