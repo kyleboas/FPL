@@ -1,120 +1,659 @@
+/* ========================================
+   FPL Statistics - Standardized Styles
+   ======================================== */
+
 :root {
-  --bg-color: #f8fafc;
-  --text-color: #334155;
-  --accent-color: #3b82f6;
-  --panel-bg: #ffffff;
+    --bg-color: #f8fafc;
+    --text-color: #334155;
+    --accent-color: #3b82f6;
+    --panel-bg: #ffffff;
 }
 
-/* Merge with any existing body styles */
 body {
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-  background-color: var(--bg-color);
-  color: var(--text-color);
-  margin: 0;
-  padding: 20px;
-  box-sizing: border-box;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background-color: var(--bg-color);
+    color: var(--text-color);
+    margin: 0;
+    padding: 20px;
 }
 
-/* Matrix preview layout */
-#defcon-matrix-preview {
-  display: flex;
-  flex-direction: column;
-  min-height: 60vh;
+.container {
+    max-width: 1200px;
+    margin: 0 auto;
 }
 
-/* If you already have a global header style, keep whichever bits you prefer */
-#defcon-matrix-preview > header {
-  margin-bottom: 20px;
+/* ========================================
+   Header & Navigation
+   ======================================== */
+
+header {
+    margin-bottom: 20px;
 }
 
-#defcon-matrix-preview h1 {
-  margin: 0 0 10px 0;
-  font-size: 1.5rem;
-  color: #1e293b;
+h1 {
+    margin: 0 0 10px 0;
+    font-size: 1.6rem;
+    color: #1e293b;
 }
 
-/* Controls bar */
+.nav-links a {
+    padding: 6px 10px;
+    border-radius: 6px;
+    background: var(--panel-bg);
+    box-shadow: 0 1px 2px rgba(0,0,0,0.08);
+    text-decoration: none;
+    color: var(--accent-color);
+    font-size: 0.85rem;
+}
+
+.nav-links a:hover {
+    background: #eef2f7;
+}
+
+/* ========================================
+   Controls Panel
+   ======================================== */
+
 .controls {
-  display: flex;
-  align-items: center;
-  gap: 20px;
-  background: var(--panel-bg);
-  padding: 15px;
-  border-radius: 8px;
-  box-shadow: 0 1px 3px rgba(0,0,0,0.1);
-  flex-wrap: wrap;
+    display: flex;
+    align-items: center;
+    gap: 20px;
+    flex-wrap: wrap;
+    background: var(--panel-bg);
+    padding: 15px;
+    border-radius: 8px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    margin-bottom: 20px;
 }
 
 .control-group {
-  display: flex;
-  align-items: center;
-  gap: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
 }
 
-.controls label {
-  font-weight: 600;
-  font-size: 0.9rem;
+label {
+    font-weight: 600;
+    font-size: 0.9rem;
+    color: #475569;
 }
 
-.controls select {
-  padding: 6px 12px;
-  border: 1px solid #cbd5e1;
-  border-radius: 4px;
-  font-size: 0.9rem;
-  background-color: #ffffff;
+select,
+input[type="number"],
+input[type="text"] {
+    padding: 7px 10px;
+    border-radius: 6px;
+    border: 1px solid #cbd5e1;
+    background: #ffffff;
+    font-size: 0.9rem;
 }
 
-.controls input[type="range"] {
-  width: 150px;
+/* Range Slider */
+input[type="range"] {
+    width: 140px;
 }
 
-#gwLabel {
-  font-family: monospace;
-  font-weight: bold;
-  color: var(--accent-color);
+/* ========================================
+   Toggle Switch
+   ======================================== */
+
+.toggle-switch {
+    display: inline-flex;
+    background: #e2e8f0;
+    border-radius: 20px;
+    padding: 3px;
 }
 
-.feedback {
-  margin-top: 5px;
-  font-size: 0.8rem;
-  color: #64748b;
+.toggle-option {
+    padding: 6px 12px;
+    border-radius: 17px;
+    cursor: pointer;
+    font-size: 0.85rem;
+    transition: 0.2s;
+    white-space: nowrap;
+    color: #475569;
 }
 
-/* Canvas container */
-.canvas-container {
-  flex-grow: 1;
-  margin-top: 20px;
-  background: var(--panel-bg);
-  border-radius: 8px;
-  box-shadow: 0 4px 6px rgba(0,0,0,0.1);
-  overflow: hidden;
-  position: relative;
-  min-height: 320px; /* mobile-safe default height */
+.toggle-option.active {
+    background: var(--accent-color);
+    color: white;
 }
 
-.canvas-container canvas {
-  display: block;
-  width: 100%;
-  height: 100%;
+/* ========================================
+   Buttons
+   ======================================== */
+
+button {
+    padding: 10px 20px;
+    background-color: var(--accent-color);
+    color: white;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    font-weight: bold;
 }
 
-/* Responsive tweaks */
+button:hover {
+    opacity: 0.9;
+}
+
+button:disabled {
+    background-color: #cbd5e1;
+    cursor: not-allowed;
+}
+
+button.secondary {
+    background-color: #64748b;
+}
+
+button.remove {
+    background-color: #dc2626;
+    padding: 5px 10px;
+    font-size: 0.8rem;
+}
+
+/* ========================================
+   Table Container & Styles
+   ======================================== */
+
+.table-container {
+    background: var(--panel-bg);
+    border-radius: 10px;
+    overflow-x: auto;
+    box-shadow: 0 3px 6px rgba(0,0,0,0.08);
+    padding: 0;
+}
+
+table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.88rem;
+}
+
+th {
+    background: #e2e8f0;
+    color: #1e293b;
+    padding: 10px;
+    font-weight: 700;
+    position: sticky;
+    top: 0;
+    z-index: 5;
+    border-bottom: 2px solid #cbd5e1;
+}
+
+td {
+    padding: 10px;
+    border-bottom: 1px solid #e2e8f0;
+    color: #334155;
+}
+
+td:first-child, th:first-child {
+    position: sticky;
+    left: 0;
+    background: var(--panel-bg);
+    z-index: 10;
+    font-weight: 600;
+    border-right: 1px solid #e2e8f0;
+}
+
+/* ========================================
+   Match Cells
+   ======================================== */
+
+.match-cell {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+}
+
+.match-opp {
+    font-size: 0.78rem;
+}
+
+.match-value {
+    font-weight: 700;
+}
+
+.match-prob {
+    font-weight: 700;
+}
+
+/* ========================================
+   Status Bar, Loading & Error
+   ======================================== */
+
+.status-bar {
+    margin-top: 15px;
+    font-size: 0.8rem;
+    background: #e2e8f0;
+    padding: 10px;
+    border-radius: 6px;
+    color: #475569;
+}
+
+#loading {
+    text-align: center;
+    padding: 40px;
+    font-size: 1.2rem;
+    color: #64748b;
+}
+
+#error {
+    display: none;
+    background: #fee2e2;
+    color: #991b1b;
+    padding: 15px;
+    border-radius: 8px;
+    margin-bottom: 20px;
+    border: 1px solid #fca5a5;
+}
+
+/* ========================================
+   Sortable Headers
+   ======================================== */
+
+.gw-header {
+    cursor: pointer;
+    user-select: none;
+}
+
+.gw-header:hover {
+    opacity: 0.8;
+}
+
+.sorted-desc::after {
+    content: ' ▼';
+}
+
+.sorted-asc::after {
+    content: ' ▲';
+}
+
+/* ========================================
+   Player DEFCON Page Specific Styles
+   ======================================== */
+
+.player-name {
+    font-weight: bold;
+    font-size: 0.95em;
+}
+
+.player-team {
+    font-size: 0.75em;
+    color: #64748b;
+    margin-top: 2px;
+}
+
+.match-result {
+    font-size: 0.75em;
+    font-weight: bold;
+    margin-top: 2px;
+}
+
+/* Position Override Controls */
+.position-select {
+    padding: 4px;
+    border-radius: 6px;
+    border: 1px solid #cbd5e1;
+    font-size: 0.85em;
+    background-color: #ffffff;
+    cursor: pointer;
+}
+
+.position-select.has-override {
+    background-color: #fef3c7;
+    border-color: #fbbf24;
+}
+
+.export-btn {
+    padding: 10px 20px;
+    background-color: var(--accent-color);
+    color: white;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    font-weight: bold;
+}
+
+.export-btn:hover {
+    opacity: 0.9;
+}
+
+.override-controls {
+    background: var(--panel-bg);
+    padding: 15px;
+    border-radius: 8px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    margin-bottom: 20px;
+    display: flex;
+    gap: 15px;
+    align-items: center;
+}
+
+.override-count {
+    font-size: 0.9em;
+    color: #64748b;
+}
+
+/* Modal for CSV output */
+.modal {
+    display: none;
+    position: fixed;
+    z-index: 1000;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0,0,0,0.5);
+}
+
+.modal-content {
+    background-color: var(--panel-bg);
+    margin: 10% auto;
+    padding: 30px;
+    border-radius: 8px;
+    width: 90%;
+    max-width: 600px;
+    box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+}
+
+.modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 20px;
+}
+
+.modal-header h2 {
+    margin: 0;
+    color: #1e293b;
+}
+
+.close-btn {
+    font-size: 28px;
+    font-weight: bold;
+    color: #94a3b8;
+    cursor: pointer;
+    background: none;
+    border: none;
+}
+
+.close-btn:hover {
+    color: #334155;
+}
+
+.csv-textarea {
+    width: 100%;
+    min-height: 300px;
+    font-family: 'Courier New', monospace;
+    font-size: 0.9em;
+    padding: 10px;
+    border: 1px solid #cbd5e1;
+    border-radius: 6px;
+    resize: vertical;
+    box-sizing: border-box;
+}
+
+.modal-actions {
+    margin-top: 20px;
+    display: flex;
+    gap: 10px;
+    justify-content: flex-end;
+}
+
+.copy-btn {
+    padding: 10px 20px;
+    background-color: #10b981;
+    color: white;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    font-weight: bold;
+}
+
+.copy-btn:hover {
+    opacity: 0.9;
+}
+
+.copy-btn.copied {
+    background-color: #059669;
+    color: white;
+}
+
+/* ========================================
+   Combined Page Specific Styles
+   ======================================== */
+
+.combined-cell {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-height: 50px;
+    gap: 2px;
+    padding: 5px;
+}
+
+.combined-opponent {
+    font-size: 0.9em;
+    font-weight: 700;
+    margin-bottom: 3px;
+}
+
+.combined-stats {
+    font-size: 0.9em;
+    display: flex;
+    gap: 6px;
+    align-items: center;
+}
+
+.stat-defcon {
+    font-weight: 700;
+    color: var(--accent-color);
+}
+
+.stat-goals {
+    font-weight: 700;
+    color: #dc2626;
+}
+
+.stat-separator {
+    color: #94a3b8;
+}
+
+/* ========================================
+   Tracker Page Specific Styles
+   ======================================== */
+
+/* Watchlist Controls */
+.watchlist-controls {
+    background: var(--panel-bg);
+    padding: 15px;
+    border-radius: 8px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    margin-bottom: 20px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 15px;
+    align-items: flex-end;
+}
+
+.player-search-container {
+    position: relative;
+    flex: 1;
+    min-width: 250px;
+    max-width: 400px;
+}
+
+#player-search-results {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    background: white;
+    border: 1px solid #cbd5e1;
+    border-top: none;
+    max-height: 300px;
+    overflow-y: auto;
+    z-index: 1000;
+    display: none;
+    box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+}
+
+.search-result-item {
+    padding: 10px;
+    cursor: pointer;
+    border-bottom: 1px solid #e2e8f0;
+}
+
+.search-result-item:hover {
+    background-color: #f1f5f9;
+}
+
+.search-result-name {
+    font-weight: bold;
+}
+
+.search-result-meta {
+    font-size: 0.85em;
+    color: #64748b;
+}
+
+.view-toggle {
+    display: flex;
+    gap: 5px;
+}
+
+.view-toggle button {
+    padding: 8px 15px;
+}
+
+.view-toggle button.active {
+    background-color: #10b981;
+    color: white;
+}
+
+.player-type-badge {
+    display: inline-block;
+    padding: 2px 6px;
+    border-radius: 3px;
+    font-size: 0.7em;
+    font-weight: bold;
+    margin-left: 5px;
+}
+
+.badge-team {
+    background-color: #10b981;
+    color: white;
+}
+
+.badge-watchlist {
+    background-color: #f59e0b;
+    color: white;
+}
+
+/* Player info cell */
+.player-info {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    min-width: 200px;
+}
+
+.player-meta {
+    font-size: 0.75em;
+    color: #64748b;
+}
+
+.player-stats {
+    font-size: 0.8em;
+    color: #334155;
+    margin-top: 2px;
+}
+
+/* Tracker match cells with enhanced readability */
+.tracker-match-cell {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-height: 60px;
+    gap: 2px;
+    font-size: 0.95em;
+    line-height: 1.25;
+    padding: 6px 4px;
+    backdrop-filter: brightness(1.1);
+}
+
+.tracker-match-cell .match-opp {
+    font-size: 1em;
+    font-weight: 700;
+}
+
+.match-defcon {
+    font-size: 0.9em;
+    font-weight: 600;
+}
+
+.match-goals {
+    font-size: 0.85em;
+    font-weight: 500;
+    color: #fff;
+}
+
+/* Make text stay readable even on dark heatmap colors */
+.tracker-match-cell * {
+    text-shadow: 0 0 2px rgba(255,255,255,0.35);
+}
+
+/* ========================================
+   Responsive Design - Mobile
+   ======================================== */
+
 @media (max-width: 600px) {
-  #defcon-matrix-preview h1 {
-    font-size: 1.25rem;
-  }
+    body {
+        padding: 8px;
+    }
 
-  .controls {
-    align-items: flex-start;
-  }
+    .container {
+        max-width: 100%;
+        margin: 0;
+    }
 
-  .control-group {
-    width: 100%;
-    justify-content: flex-start;
-  }
+    /* Make the table go edge-to-edge and reduce the need to zoom */
+    .table-container {
+        width: calc(100vw - 16px);
+        margin: 0 -8px;
+    }
 
-  .controls input[type="range"] {
-    width: 100%;
-    max-width: 240px;
-  }
+    /* Bigger text but tighter padding so it still fits */
+    table {
+        font-size: 1rem;
+    }
+
+    th, td {
+        padding: 6px 4px;
+    }
+
+    .combined-cell {
+        padding: 4px 2px;
+        min-height: 44px; /* good tap target on mobile */
+    }
+
+    /* Keep the team column narrow but readable */
+    th:first-child,
+    td:first-child {
+        min-width: 3.5rem;
+        padding-left: 6px;
+    }
+
+    /* Controls: stack more compactly */
+    .controls {
+        padding: 10px;
+        gap: 12px;
+    }
+
+    .control-group label {
+        font-size: 0.8rem;
+    }
 }
