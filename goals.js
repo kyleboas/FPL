@@ -567,7 +567,7 @@ function renderTable() {
         const totalVal = roundToTwo(validMetrics.reduce((a,b)=>a+b,0));
 
         return {
-            teamName: team.name,
+            teamName: team.short_name || team.name,
             fixtures,
             gwValueMap,
             maxVal,
