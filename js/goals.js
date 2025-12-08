@@ -33,8 +33,8 @@ const STATE = {
     },
     ui: {
         statType: 'for',
-        venueFilter: 'combined',
-        formFilter: 0,
+        venueFilter: 'homeaway',
+        formFilter: 8,
         startGW: 1,
         endGW: 6,
         excludedGWs: [],
@@ -356,6 +356,11 @@ function setupEventListeners() {
     });
 
     const formFilterSlider = document.getElementById('form-filter');
+
+    // Ensure slider + label match default state (8)
+    formFilterSlider.value = STATE.ui.formFilter; // STATE.ui.formFilter is 8 from the STATE object
+    updateFormFilterDisplay(STATE.ui.formFilter);
+
     formFilterSlider.addEventListener('input', (e) => {
         const value = parseInt(e.target.value, 10);
         STATE.ui.formFilter = value;
