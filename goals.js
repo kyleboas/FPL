@@ -653,7 +653,7 @@ function renderTable() {
                 td.style.backgroundColor = getGoalsColor(cell.value, statType, globalMaxValue);
 
                 // Adjust text color for readability
-                if (cell.value <= 0.8) {
+                if (cell.value <= 1.45) {
                     divOpp.style.color = '#000';
                     divValue.style.color = '#000';
                 } else {
