@@ -660,7 +660,7 @@ function renderTable() {
                     const textThreshold = globalMaxValue * 0.75;
                     const needsWhiteText = cell.value >= textThreshold;
                     td.style.color = needsWhiteText ? 'white' : 'black';
-                }
+                } 
 
                 // Style future fixtures slightly differently
                 if (cell.type === 'FUTURE') {
