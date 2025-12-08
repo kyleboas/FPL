@@ -311,9 +311,21 @@ function renderTable() {
 // ==========================================
 
 function setupEventListeners() {
-    document.getElementById('stat-type').addEventListener('change', (e) => {
-        STATE.ui.statType = e.target.value;
-        renderTable();
+    // Stat type toggle (Goals For / Goals Against)
+    const statTypeToggle = document.getElementById('stat-type-toggle');
+    statTypeToggle.querySelectorAll('.toggle-option').forEach(option => {
+        option.addEventListener('click', (e) => {
+            const value = e.target.dataset.value;
+            STATE.ui.statType = value;
+
+            // Update active state
+            statTypeToggle.querySelectorAll('.toggle-option').forEach(opt => {
+                opt.classList.remove('active');
+            });
+            e.target.classList.add('active');
+
+            renderTable();
+        });
     });
 
     const venueToggle = document.getElementById('venue-toggle');

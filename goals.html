@@ -246,11 +246,11 @@
     <div id="main-content" style="display: none;">
         <div class="controls">
             <div class="control-group">
-                <label for="stat-type">Statistic</label>
-                <select id="stat-type">
-                    <option value="for" selected>Goals For</option>
-                    <option value="against">Goals Against</option>
-                </select>
+                <label>Statistic</label>
+                <div class="toggle-switch" id="stat-type-toggle">
+                    <div class="toggle-option active" data-value="for">Goals For</div>
+                    <div class="toggle-option" data-value="against">Goals Against</div>
+                </div>
             </div>
 
             <div class="control-group">
