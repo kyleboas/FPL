@@ -5,335 +5,342 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Player DEFCON Stats | FPL</title>
     <style>
-        :root {
-            --primary: #37003c;
-            --secondary: #00ff85;
-            --bg: #f4f4f4;
-            --text: #333;
-            --card-bg: #fff;
-        }
+       :root {
+    --bg-color: #f8fafc;
+    --text-color: #334155;
+    --accent-color: #3b82f6;
+    --panel-bg: #ffffff;
+}
 
-        body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background-color: var(--bg);
-            color: var(--text);
-            margin: 0;
-            padding: 20px;
-        }
+body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background-color: var(--bg-color);
+    color: var(--text-color);
+    margin: 0;
+    padding: 20px;
+}
 
-        .container {
-            max-width: 1200px;
-            margin: 0 auto;
-        }
+.container {
+    max-width: 1200px;
+    margin: 0 auto;
+}
 
-        header {
-            margin-bottom: 20px;
-            border-bottom: 2px solid var(--primary);
-            padding-bottom: 10px;
-        }
+header {
+    margin-bottom: 20px;
+}
 
-        h1 {
-            color: var(--primary);
-            margin: 0;
-        }
+h1 {
+    margin: 0 0 10px 0;
+    font-size: 1.6rem;
+    color: #1e293b;
+}
 
-        .nav-links {
-            margin-top: 10px;
-        }
+.nav-links a {
+    padding: 6px 10px;
+    border-radius: 6px;
+    background: var(--panel-bg);
+    box-shadow: 0 1px 2px rgba(0,0,0,0.08);
+    text-decoration: none;
+    color: var(--accent-color);
+    font-size: 0.85rem;
+}
 
-        .nav-links a {
-            color: var(--primary);
-            text-decoration: none;
-            margin-right: 15px;
-        }
+.nav-links a:hover {
+    background: #eef2f7;
+}
 
-        .nav-links a:hover {
-            text-decoration: underline;
-        }
+/* --- Controls Panel --- */
+.controls {
+    display: flex;
+    align-items: center;
+    gap: 20px;
+    flex-wrap: wrap;
+    background: var(--panel-bg);
+    padding: 15px;
+    border-radius: 8px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    margin-bottom: 20px;
+}
 
-        /* Controls */
-        .controls {
-            background: var(--card-bg);
-            padding: 15px;
-            border-radius: 8px;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-            display: flex;
-            flex-wrap: wrap;
-            gap: 20px;
-            align-items: center;
-            margin-bottom: 20px;
-        }
+.control-group {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
 
-        .control-group {
-            display: flex;
-            flex-direction: column;
-            gap: 5px;
-        }
+label {
+    font-weight: 600;
+    font-size: 0.9rem;
+    color: #475569;
+}
 
-        label {
-            font-size: 0.85rem;
-            font-weight: bold;
-            color: #666;
-        }
+select,
+input[type="number"],
+input[type="text"] {
+    padding: 7px 10px;
+    border-radius: 6px;
+    border: 1px solid #cbd5e1;
+    background: #ffffff;
+    font-size: 0.9rem;
+}
 
-        select, input[type="number"], input[type="text"] {
-            padding: 8px;
-            border-radius: 4px;
-            border: 1px solid #ccc;
-        }
+/* --- Table Container --- */
+.table-container {
+    background: var(--panel-bg);
+    border-radius: 10px;
+    overflow-x: auto;
+    box-shadow: 0 3px 6px rgba(0,0,0,0.08);
+    padding: 0;
+}
 
-        input[type="number"] {
-            width: 80px;
-        }
+/* Table Style */
+table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.88rem;
+}
 
-        /* Table */
-        .table-container {
-            overflow-x: auto;
-            background: var(--card-bg);
-            border-radius: 8px;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-        }
+th {
+    background: #e2e8f0;
+    color: #1e293b;
+    padding: 10px;
+    font-weight: 700;
+    position: sticky;
+    top: 0;
+    z-index: 5;
+    border-bottom: 2px solid #cbd5e1;
+}
 
-        table {
-            width: 100%;
-            border-collapse: collapse;
-            font-size: 0.9rem;
-        }
+td {
+    padding: 10px;
+    border-bottom: 1px solid #e2e8f0;
+    color: #334155;
+}
 
-        th, td {
-            padding: 10px;
-            text-align: center;
-            border-bottom: 1px solid #eee;
-        }
+td:first-child, th:first-child {
+    position: sticky;
+    left: 0;
+    background: var(--panel-bg);
+    z-index: 10;
+    font-weight: 600;
+    border-right: 1px solid #e2e8f0;
+}
 
-        th {
-            background-color: var(--primary);
-            color: white;
-            position: sticky;
-            top: 0;
-        }
+/* Player name cell */
+.player-name {
+    font-weight: bold;
+    font-size: 0.95em;
+}
 
-        /* First column sticky */
-        td:first-child, th:first-child {
-            position: sticky;
-            left: 0;
-            background-color: var(--card-bg);
-            z-index: 10;
-            border-right: 2px solid #eee;
-            text-align: left;
-        }
-        th:first-child {
-            background-color: var(--primary);
-            color: white;
-            z-index: 20;
-        }
+.player-team {
+    font-size: 0.75em;
+    color: #64748b;
+    margin-top: 2px;
+}
 
-        /* Player name cell */
-        .player-name {
-            font-weight: bold;
-            font-size: 0.95em;
-        }
+/* Match Cells */
+.match-cell {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-height: 50px;
+    gap: 3px;
+}
 
-        .player-team {
-            font-size: 0.75em;
-            color: #666;
-            margin-top: 2px;
-        }
+.match-opp {
+    font-size: 0.78rem;
+}
 
-        /* Match Cell Styles */
-        .match-cell {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            min-height: 50px;
-            gap: 3px;
-        }
-        .match-opp {
-            font-size: 0.8em;
-        }
-        .match-prob {
-            font-weight: bold;
-        }
-        .match-result {
-            font-size: 0.75em;
-            font-weight: bold;
-            margin-top: 2px;
-        }
+.match-value {
+    font-weight: 700;
+}
 
-        /* Status & Error */
-        #loading {
-            text-align: center;
-            padding: 40px;
-            font-size: 1.2rem;
-            color: #666;
-        }
+.match-prob {
+    font-weight: 700;
+}
 
-        #error {
-            display: none;
-            background: #ffebee;
-            color: #c62828;
-            padding: 15px;
-            border-radius: 8px;
-            margin-bottom: 20px;
-            border: 1px solid #ef9a9a;
-        }
+.match-result {
+    font-size: 0.75em;
+    font-weight: bold;
+    margin-top: 2px;
+}
 
-        .status-bar {
-            font-size: 0.75rem;
-            color: #666;
-            margin-top: 10px;
-            padding: 10px;
-            background: #e0e0e0;
-            border-radius: 4px;
-        }
+/* Status Bar */
+.status-bar {
+    margin-top: 15px;
+    font-size: 0.8rem;
+    background: #e2e8f0;
+    padding: 10px;
+    border-radius: 6px;
+    color: #475569;
+}
 
-        .gw-header {
-            cursor: pointer;
-            user-select: none;
-        }
+/* Loading & Error */
+#loading {
+    text-align: center;
+    padding: 40px;
+    font-size: 1.2rem;
+    color: #64748b;
+}
 
-        .gw-header:hover {
-            opacity: 0.8;
-        }
+#error {
+    display: none;
+    background: #fee2e2;
+    color: #991b1b;
+    padding: 15px;
+    border-radius: 8px;
+    margin-bottom: 20px;
+    border: 1px solid #fca5a5;
+}
 
-        .sorted-desc::after {
-            content: ' ▼';
-        }
+/* Sortable headers */
+.gw-header {
+    cursor: pointer;
+    user-select: none;
+}
 
-        .sorted-asc::after {
-            content: ' ▲';
-        }
+.gw-header:hover {
+    opacity: 0.8;
+}
 
-        /* Position Override Controls */
-        .position-select {
-            padding: 4px;
-            border-radius: 4px;
-            border: 1px solid #ccc;
-            font-size: 0.85em;
-            background-color: #fff;
-            cursor: pointer;
-        }
+.sorted-desc::after {
+    content: ' ▼';
+}
 
-        .position-select.has-override {
-            background-color: #fff3cd;
-            border-color: #ffc107;
-        }
+.sorted-asc::after {
+    content: ' ▲';
+}
 
-        .export-btn {
-            padding: 10px 20px;
-            background-color: var(--primary);
-            color: white;
-            border: none;
-            border-radius: 4px;
-            cursor: pointer;
-            font-weight: bold;
-        }
+/* Position Override Controls */
+.position-select {
+    padding: 4px;
+    border-radius: 6px;
+    border: 1px solid #cbd5e1;
+    font-size: 0.85em;
+    background-color: #ffffff;
+    cursor: pointer;
+}
 
-        .export-btn:hover {
-            opacity: 0.9;
-        }
+.position-select.has-override {
+    background-color: #fef3c7;
+    border-color: #fbbf24;
+}
 
-        .override-controls {
-            background: var(--card-bg);
-            padding: 15px;
-            border-radius: 8px;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-            margin-bottom: 20px;
-            display: flex;
-            gap: 15px;
-            align-items: center;
-        }
+.export-btn {
+    padding: 10px 20px;
+    background-color: var(--accent-color);
+    color: white;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    font-weight: bold;
+}
 
-        .override-count {
-            font-size: 0.9em;
-            color: #666;
-        }
+.export-btn:hover {
+    opacity: 0.9;
+}
 
-        /* Modal for CSV output */
-        .modal {
-            display: none;
-            position: fixed;
-            z-index: 1000;
-            left: 0;
-            top: 0;
-            width: 100%;
-            height: 100%;
-            background-color: rgba(0,0,0,0.5);
-        }
+.override-controls {
+    background: var(--panel-bg);
+    padding: 15px;
+    border-radius: 8px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    margin-bottom: 20px;
+    display: flex;
+    gap: 15px;
+    align-items: center;
+}
 
-        .modal-content {
-            background-color: var(--card-bg);
-            margin: 10% auto;
-            padding: 30px;
-            border-radius: 8px;
-            width: 90%;
-            max-width: 600px;
-            box-shadow: 0 4px 6px rgba(0,0,0,0.3);
-        }
+.override-count {
+    font-size: 0.9em;
+    color: #64748b;
+}
 
-        .modal-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 20px;
-        }
+/* Modal for CSV output */
+.modal {
+    display: none;
+    position: fixed;
+    z-index: 1000;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0,0,0,0.5);
+}
 
-        .modal-header h2 {
-            margin: 0;
-            color: var(--primary);
-        }
+.modal-content {
+    background-color: var(--panel-bg);
+    margin: 10% auto;
+    padding: 30px;
+    border-radius: 8px;
+    width: 90%;
+    max-width: 600px;
+    box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+}
 
-        .close-btn {
-            font-size: 28px;
-            font-weight: bold;
-            color: #aaa;
-            cursor: pointer;
-            background: none;
-            border: none;
-        }
+.modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 20px;
+}
 
-        .close-btn:hover {
-            color: #000;
-        }
+.modal-header h2 {
+    margin: 0;
+    color: #1e293b;
+}
 
-        .csv-textarea {
-            width: 100%;
-            min-height: 300px;
-            font-family: 'Courier New', monospace;
-            font-size: 0.9em;
-            padding: 10px;
-            border: 1px solid #ccc;
-            border-radius: 4px;
-            resize: vertical;
-            box-sizing: border-box;
-        }
+.close-btn {
+    font-size: 28px;
+    font-weight: bold;
+    color: #94a3b8;
+    cursor: pointer;
+    background: none;
+    border: none;
+}
 
-        .modal-actions {
-            margin-top: 20px;
-            display: flex;
-            gap: 10px;
-            justify-content: flex-end;
-        }
+.close-btn:hover {
+    color: #334155;
+}
 
-        .copy-btn {
-            padding: 10px 20px;
-            background-color: var(--secondary);
-            color: var(--primary);
-            border: none;
-            border-radius: 4px;
-            cursor: pointer;
-            font-weight: bold;
-        }
+.csv-textarea {
+    width: 100%;
+    min-height: 300px;
+    font-family: 'Courier New', monospace;
+    font-size: 0.9em;
+    padding: 10px;
+    border: 1px solid #cbd5e1;
+    border-radius: 6px;
+    resize: vertical;
+    box-sizing: border-box;
+}
 
-        .copy-btn:hover {
-            opacity: 0.9;
-        }
+.modal-actions {
+    margin-top: 20px;
+    display: flex;
+    gap: 10px;
+    justify-content: flex-end;
+}
 
-        .copy-btn.copied {
-            background-color: #28a745;
-            color: white;
-        }
+.copy-btn {
+    padding: 10px 20px;
+    background-color: #10b981;
+    color: white;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    font-weight: bold;
+}
+
+.copy-btn:hover {
+    opacity: 0.9;
+}
+
+.copy-btn.copied {
+    background-color: #059669;
+    color: white;
+}
     </style>
 </head>
 <body>

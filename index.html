@@ -5,166 +5,178 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>FPL DEFCON Predictor</title>
     <style>
-        :root {
-            --primary: #37003c;
-            --secondary: #00ff85;
-            --bg: #f4f4f4;
-            --text: #333;
-            --card-bg: #fff;
-        }
+       :root {
+    --bg-color: #f8fafc;
+    --text-color: #334155;
+    --accent-color: #3b82f6;
+    --panel-bg: #ffffff;
+}
 
-        body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background-color: var(--bg);
-            color: var(--text);
-            margin: 0;
-            padding: 20px;
-        }
+body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background-color: var(--bg-color);
+    color: var(--text-color);
+    margin: 0;
+    padding: 20px;
+}
 
-        .container {
-            max-width: 1200px;
-            margin: 0 auto;
-        }
+.container {
+    max-width: 1200px;
+    margin: 0 auto;
+}
 
-        header {
-            margin-bottom: 20px;
-            border-bottom: 2px solid var(--primary);
-            padding-bottom: 10px;
-        }
+header {
+    margin-bottom: 20px;
+}
 
-        h1 {
-            color: var(--primary);
-            margin: 0;
-        }
+h1 {
+    margin: 0 0 10px 0;
+    font-size: 1.6rem;
+    color: #1e293b;
+}
 
-        .nav-links {
-            margin-top: 10px;
-        }
+.nav-links a {
+    padding: 6px 10px;
+    border-radius: 6px;
+    background: var(--panel-bg);
+    box-shadow: 0 1px 2px rgba(0,0,0,0.08);
+    text-decoration: none;
+    color: var(--accent-color);
+    font-size: 0.85rem;
+}
 
-        .nav-links a {
-            color: var(--primary);
-            text-decoration: none;
-            margin-right: 15px;
-        }
+.nav-links a:hover {
+    background: #eef2f7;
+}
 
-        .nav-links a:hover {
-            text-decoration: underline;
-        }
+/* --- Controls Panel --- */
+.controls {
+    display: flex;
+    align-items: center;
+    gap: 20px;
+    flex-wrap: wrap;
+    background: var(--panel-bg);
+    padding: 15px;
+    border-radius: 8px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    margin-bottom: 20px;
+}
 
-        /* Controls */
-        .controls {
-            background: var(--card-bg);
-            padding: 15px;
-            border-radius: 8px;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-            display: flex;
-            flex-wrap: wrap;
-            gap: 20px;
-            align-items: center;
-            margin-bottom: 20px;
-        }
+.control-group {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
 
-        .control-group {
-            display: flex;
-            flex-direction: column;
-            gap: 5px;
-        }
+label {
+    font-weight: 600;
+    font-size: 0.9rem;
+    color: #475569;
+}
 
-        label {
-            font-size: 0.85rem;
-            font-weight: bold;
-            color: #666;
-        }
+select,
+input[type="number"],
+input[type="text"] {
+    padding: 7px 10px;
+    border-radius: 6px;
+    border: 1px solid #cbd5e1;
+    background: #ffffff;
+    font-size: 0.9rem;
+}
 
-        select, input[type="range"], input[type="number"], input[type="text"] {
-            padding: 8px;
-            border-radius: 4px;
-            border: 1px solid #ccc;
-        }
+/* Range Slider */
+input[type="range"] {
+    width: 140px;
+}
 
-        input[type="number"] {
-            width: 80px;
-        }
+/* --- Table Container --- */
+.table-container {
+    background: var(--panel-bg);
+    border-radius: 10px;
+    overflow-x: auto;
+    box-shadow: 0 3px 6px rgba(0,0,0,0.08);
+    padding: 0;
+}
 
-        /* Table */
-        .table-container {
-            overflow-x: auto;
-            background: var(--card-bg);
-            border-radius: 8px;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-        }
+/* Table Style */
+table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.88rem;
+}
 
-        table {
-            width: 100%;
-            border-collapse: collapse;
-            font-size: 0.9rem;
-        }
+th {
+    background: #e2e8f0;
+    color: #1e293b;
+    padding: 10px;
+    font-weight: 700;
+    position: sticky;
+    top: 0;
+    z-index: 5;
+    border-bottom: 2px solid #cbd5e1;
+}
 
-        th, td {
-            padding: 10px;
-            text-align: center;
-            border-bottom: 1px solid #eee;
-        }
+td {
+    padding: 10px;
+    border-bottom: 1px solid #e2e8f0;
+    color: #334155;
+}
 
-        th {
-            background-color: var(--primary);
-            color: white;
-            position: sticky;
-            top: 0;
-        }
-        
-        /* First column sticky */
-        td:first-child, th:first-child {
-            position: sticky;
-            left: 0;
-            background-color: var(--card-bg);
-            z-index: 10;
-            border-right: 2px solid #eee;
-            text-align: left;
-        }
-        th:first-child {
-            background-color: var(--primary);
-            color: white;
-            z-index: 20;
-        }
+td:first-child, th:first-child {
+    position: sticky;
+    left: 0;
+    background: var(--panel-bg);
+    z-index: 10;
+    font-weight: 600;
+    border-right: 1px solid #e2e8f0;
+}
 
-        /* Match Cell Styles */
-        .match-cell {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            min-height: 40px;
-        }
-        .match-opp { font-size: 0.8em; margin-bottom: 2px; }
-        .match-prob { font-weight: bold; }
+/* Match Cells */
+.match-cell {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+}
 
-        /* Status & Error */
-        #loading {
-            text-align: center;
-            padding: 40px;
-            font-size: 1.2rem;
-            color: #666;
-        }
+.match-opp {
+    font-size: 0.78rem;
+}
 
-        #error {
-            display: none;
-            background: #ffebee;
-            color: #c62828;
-            padding: 15px;
-            border-radius: 8px;
-            margin-bottom: 20px;
-            border: 1px solid #ef9a9a;
-        }
+.match-value {
+    font-weight: 700;
+}
 
-        .status-bar {
-            font-size: 0.75rem;
-            color: #666;
-            margin-top: 10px;
-            padding: 10px;
-            background: #e0e0e0;
-            border-radius: 4px;
-        }
+.match-prob {
+    font-weight: 700;
+}
+
+/* Status Bar */
+.status-bar {
+    margin-top: 15px;
+    font-size: 0.8rem;
+    background: #e2e8f0;
+    padding: 10px;
+    border-radius: 6px;
+    color: #475569;
+}
+
+/* Loading & Error */
+#loading {
+    text-align: center;
+    padding: 40px;
+    font-size: 1.2rem;
+    color: #64748b;
+}
+
+#error {
+    display: none;
+    background: #fee2e2;
+    color: #991b1b;
+    padding: 15px;
+    border-radius: 8px;
+    margin-bottom: 20px;
+    border: 1px solid #fca5a5;
+}
     </style>
 </head>
 <body>

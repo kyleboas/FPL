@@ -5,357 +5,352 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>My FPL Team Tracker | FPL</title>
     <style>
-        :root {
-            --primary: #37003c;
-            --secondary: #00ff85;
-            --bg: #f4f4f4;
-            --text: #333;
-            --card-bg: #fff;
-        }
+       :root {
+    --bg-color: #f8fafc;
+    --text-color: #334155;
+    --accent-color: #3b82f6;
+    --panel-bg: #ffffff;
+}
 
-        body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background-color: var(--bg);
-            color: var(--text);
-            margin: 0;
-            padding: 20px;
-        }
+body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background-color: var(--bg-color);
+    color: var(--text-color);
+    margin: 0;
+    padding: 20px;
+}
 
-        .container {
-            max-width: 1400px;
-            margin: 0 auto;
-        }
+.container {
+    max-width: 1400px;
+    margin: 0 auto;
+}
 
-        header {
-            margin-bottom: 20px;
-            border-bottom: 2px solid var(--primary);
-            padding-bottom: 10px;
-        }
+header {
+    margin-bottom: 20px;
+}
 
-        h1 {
-            color: var(--primary);
-            margin: 0;
-        }
+h1 {
+    margin: 0 0 10px 0;
+    font-size: 1.6rem;
+    color: #1e293b;
+}
 
-        .nav-links {
-            margin-top: 10px;
-        }
+.nav-links a {
+    padding: 6px 10px;
+    border-radius: 6px;
+    background: var(--panel-bg);
+    box-shadow: 0 1px 2px rgba(0,0,0,0.08);
+    text-decoration: none;
+    color: var(--accent-color);
+    font-size: 0.85rem;
+}
 
-        .nav-links a {
-            color: var(--primary);
-            text-decoration: none;
-            margin-right: 15px;
-        }
+.nav-links a:hover {
+    background: #eef2f7;
+}
 
-        .nav-links a:hover {
-            text-decoration: underline;
-        }
+/* --- Controls Panel --- */
+.controls {
+    display: flex;
+    align-items: center;
+    gap: 20px;
+    flex-wrap: wrap;
+    background: var(--panel-bg);
+    padding: 15px;
+    border-radius: 8px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    margin-bottom: 20px;
+}
 
-        /* Controls */
-        .controls {
-            background: var(--card-bg);
-            padding: 15px;
-            border-radius: 8px;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-            display: flex;
-            flex-wrap: wrap;
-            gap: 20px;
-            align-items: center;
-            margin-bottom: 20px;
-        }
+.control-group {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
 
-        .control-group {
-            display: flex;
-            flex-direction: column;
-            gap: 5px;
-        }
+label {
+    font-weight: 600;
+    font-size: 0.9rem;
+    color: #475569;
+}
 
-        label {
-            font-size: 0.85rem;
-            font-weight: bold;
-            color: #666;
-        }
+select,
+input[type="number"],
+input[type="text"] {
+    padding: 7px 10px;
+    border-radius: 6px;
+    border: 1px solid #cbd5e1;
+    background: #ffffff;
+    font-size: 0.9rem;
+}
 
-        select, input[type="number"], input[type="text"] {
-            padding: 8px;
-            border-radius: 4px;
-            border: 1px solid #ccc;
-        }
+/* Buttons */
+button {
+    padding: 10px 20px;
+    background-color: var(--accent-color);
+    color: white;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    font-weight: bold;
+}
 
-        input[type="number"] {
-            width: 80px;
-        }
+button:hover {
+    opacity: 0.9;
+}
 
-        button {
-            padding: 10px 20px;
-            background-color: var(--primary);
-            color: white;
-            border: none;
-            border-radius: 4px;
-            cursor: pointer;
-            font-weight: bold;
-        }
+button:disabled {
+    background-color: #cbd5e1;
+    cursor: not-allowed;
+}
 
-        button:hover {
-            opacity: 0.9;
-        }
+button.secondary {
+    background-color: #64748b;
+}
 
-        button:disabled {
-            background-color: #ccc;
-            cursor: not-allowed;
-        }
+button.remove {
+    background-color: #dc2626;
+    padding: 5px 10px;
+    font-size: 0.8rem;
+}
 
-        button.secondary {
-            background-color: #666;
-        }
+/* Watchlist Controls */
+.watchlist-controls {
+    background: var(--panel-bg);
+    padding: 15px;
+    border-radius: 8px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    margin-bottom: 20px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 15px;
+    align-items: flex-end;
+}
 
-        button.remove {
-            background-color: #c62828;
-            padding: 5px 10px;
-            font-size: 0.8rem;
-        }
+.player-search-container {
+    position: relative;
+    flex: 1;
+    min-width: 250px;
+    max-width: 400px;
+}
 
-        /* Watchlist Controls */
-        .watchlist-controls {
-            background: var(--card-bg);
-            padding: 15px;
-            border-radius: 8px;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-            margin-bottom: 20px;
-            display: flex;
-            flex-wrap: wrap;
-            gap: 15px;
-            align-items: flex-end;
-        }
+#player-search-results {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    background: white;
+    border: 1px solid #cbd5e1;
+    border-top: none;
+    max-height: 300px;
+    overflow-y: auto;
+    z-index: 1000;
+    display: none;
+    box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+}
 
-        .player-search-container {
-            position: relative;
-            flex: 1;
-            min-width: 250px;
-            max-width: 400px;
-        }
+.search-result-item {
+    padding: 10px;
+    cursor: pointer;
+    border-bottom: 1px solid #e2e8f0;
+}
 
-        #player-search-results {
-            position: absolute;
-            top: 100%;
-            left: 0;
-            right: 0;
-            background: white;
-            border: 1px solid #ccc;
-            border-top: none;
-            max-height: 300px;
-            overflow-y: auto;
-            z-index: 1000;
-            display: none;
-            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
-        }
+.search-result-item:hover {
+    background-color: #f1f5f9;
+}
 
-        .search-result-item {
-            padding: 10px;
-            cursor: pointer;
-            border-bottom: 1px solid #eee;
-        }
+.search-result-name {
+    font-weight: bold;
+}
 
-        .search-result-item:hover {
-            background-color: #f0f0f0;
-        }
+.search-result-meta {
+    font-size: 0.85em;
+    color: #64748b;
+}
 
-        .search-result-name {
-            font-weight: bold;
-        }
+.view-toggle {
+    display: flex;
+    gap: 5px;
+}
 
-        .search-result-meta {
-            font-size: 0.85em;
-            color: #666;
-        }
+.view-toggle button {
+    padding: 8px 15px;
+}
 
-        .view-toggle {
-            display: flex;
-            gap: 5px;
-        }
+.view-toggle button.active {
+    background-color: #10b981;
+    color: white;
+}
 
-        .view-toggle button {
-            padding: 8px 15px;
-        }
+.player-type-badge {
+    display: inline-block;
+    padding: 2px 6px;
+    border-radius: 3px;
+    font-size: 0.7em;
+    font-weight: bold;
+    margin-left: 5px;
+}
 
-        .view-toggle button.active {
-            background-color: var(--secondary);
-            color: #000;
-        }
+.badge-team {
+    background-color: #10b981;
+    color: white;
+}
 
-        .player-type-badge {
-            display: inline-block;
-            padding: 2px 6px;
-            border-radius: 3px;
-            font-size: 0.7em;
-            font-weight: bold;
-            margin-left: 5px;
-        }
+.badge-watchlist {
+    background-color: #f59e0b;
+    color: white;
+}
 
-        .badge-team {
-            background-color: #4CAF50;
-            color: white;
-        }
+/* --- Table Container --- */
+.table-container {
+    background: var(--panel-bg);
+    border-radius: 10px;
+    overflow-x: auto;
+    box-shadow: 0 3px 6px rgba(0,0,0,0.08);
+    padding: 0;
+}
 
-        .badge-watchlist {
-            background-color: #FF9800;
-            color: white;
-        }
+/* Table Style */
+table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.88rem;
+}
 
-        /* Table */
-        .table-container {
-            overflow-x: auto;
-            background: var(--card-bg);
-            border-radius: 8px;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-        }
+th {
+    background: #e2e8f0;
+    color: #1e293b;
+    padding: 10px;
+    font-weight: 700;
+    position: sticky;
+    top: 0;
+    z-index: 15;
+    border-bottom: 2px solid #cbd5e1;
+}
 
-        table {
-            width: 100%;
-            border-collapse: collapse;
-            font-size: 0.9rem;
-        }
+td {
+    padding: 10px;
+    border-bottom: 1px solid #e2e8f0;
+    color: #334155;
+}
 
-        th, td {
-            padding: 10px;
-            text-align: center;
-            border-bottom: 1px solid #eee;
-        }
+td:first-child, th:first-child {
+    position: sticky;
+    left: 0;
+    background: var(--panel-bg);
+    z-index: 10;
+    font-weight: 600;
+    border-right: 1px solid #e2e8f0;
+    text-align: left;
+}
 
-        th {
-            background-color: var(--primary);
-            color: white;
-            position: sticky;
-            top: 0;
-            z-index: 15;
-        }
+/* Player info cell */
+.player-info {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    min-width: 200px;
+}
 
-        /* First column sticky */
-        td:first-child, th:first-child {
-            position: sticky;
-            left: 0;
-            background-color: var(--card-bg);
-            z-index: 10;
-            border-right: 2px solid #eee;
-            text-align: left;
-        }
-        th:first-child {
-            background-color: var(--primary);
-            color: white;
-            z-index: 20;
-        }
+.player-name {
+    font-weight: bold;
+    font-size: 0.95em;
+}
 
-        /* Player info cell */
-        .player-info {
-            display: flex;
-            flex-direction: column;
-            gap: 3px;
-            min-width: 200px;
-        }
+.player-meta {
+    font-size: 0.75em;
+    color: #64748b;
+}
 
-        .player-name {
-            font-weight: bold;
-            font-size: 0.95em;
-        }
+.player-stats {
+    font-size: 0.8em;
+    color: #334155;
+    margin-top: 2px;
+}
 
-        .player-meta {
-            font-size: 0.75em;
-            color: #666;
-        }
+/* Match Cells */
+.match-cell {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-height: 60px;
+    gap: 2px;
+    font-size: 0.95em;
+    line-height: 1.25;
+    padding: 6px 4px;
+    backdrop-filter: brightness(1.1);
+}
 
-        .player-stats {
-            font-size: 0.8em;
-            color: #333;
-            margin-top: 2px;
-        }
+/* Opponent label */
+.match-opp {
+    font-size: 1em;
+    font-weight: 700;
+}
 
-        /* ================================
-           IMPROVED READABILITY FOR TABLE
-           ================================ */
+/* DEFCON line */
+.match-defcon {
+    font-size: 0.9em;
+    font-weight: 600;
+}
 
-        /* Bigger font overall inside the grid */
-        .match-cell {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            min-height: 60px;
-            gap: 2px;
-            font-size: 0.95em;          /* was 0.85 */
-            line-height: 1.25;
-            padding: 6px 4px;
-            backdrop-filter: brightness(1.1);  /* slightly reduce opacity of dark cells */
-        }
+/* GF | GA line */
+.match-goals {
+    font-size: 0.85em;
+    font-weight: 500;
+    color: #fff;
+}
 
-        /* Opponent label */
-        .match-opp {
-            font-size: 1em;             /* was smaller */
-            font-weight: 700;           /* increased weight */
-            /* color inherited from parent for readability on dark backgrounds */
-        }
+/* Make text stay readable even on dark heatmap colors */
+.match-cell * {
+    text-shadow: 0 0 2px rgba(255,255,255,0.35);
+}
 
-        /* DEFCON line */
-        .match-defcon {
-            font-size: 0.9em;
-            font-weight: 600;
-            /* color inherited from parent for readability on dark backgrounds */
-        }
+/* Status Bar */
+.status-bar {
+    margin-top: 15px;
+    font-size: 0.8rem;
+    background: #e2e8f0;
+    padding: 10px;
+    border-radius: 6px;
+    color: #475569;
+}
 
-        /* GF | GA line */
-        .match-goals {
-            font-size: 0.85em;
-            font-weight: 500;
-            color: #fff;                /* was too light before */
-        }
+/* Loading & Error */
+#loading {
+    text-align: center;
+    padding: 40px;
+    font-size: 1.2rem;
+    color: #64748b;
+}
 
-        /* Make text stay readable even on dark heatmap colors */
-        .match-cell * {
-            text-shadow: 0 0 2px rgba(255,255,255,0.35); /* subtle contrast boost */
-        }
+#error {
+    display: none;
+    background: #fee2e2;
+    color: #991b1b;
+    padding: 15px;
+    border-radius: 8px;
+    margin-bottom: 20px;
+    border: 1px solid #fca5a5;
+}
 
-        /* Status & Error */
-        #loading {
-            text-align: center;
-            padding: 40px;
-            font-size: 1.2rem;
-            color: #666;
-        }
+/* Sortable headers */
+.gw-header {
+    cursor: pointer;
+    user-select: none;
+}
 
-        #error {
-            display: none;
-            background: #ffebee;
-            color: #c62828;
-            padding: 15px;
-            border-radius: 8px;
-            margin-bottom: 20px;
-            border: 1px solid #ef9a9a;
-        }
+.gw-header:hover {
+    opacity: 0.8;
+}
 
-        .status-bar {
-            font-size: 0.75rem;
-            color: #666;
-            margin-top: 10px;
-            padding: 10px;
-            background: #e0e0e0;
-            border-radius: 4px;
-        }
+.sorted-desc::after {
+    content: ' ▼';
+}
 
-        .gw-header {
-            cursor: pointer;
-            user-select: none;
-        }
-
-        .gw-header:hover {
-            opacity: 0.8;
-        }
-
-        .sorted-desc::after {
-            content: ' ▼';
-        }
-
-        .sorted-asc::after {
-            content: ' ▲';
-        }
+.sorted-asc::after {
+    content: ' ▲';
+}
     </style>
 </head>
 <body>
