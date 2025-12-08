@@ -652,10 +652,15 @@ function renderTable() {
 
                 td.style.backgroundColor = getGoalsColor(cell.value, statType, globalMaxValue);
 
-                // Adjust text color for readability - use 75% of max value as threshold
-                const textThreshold = globalMaxValue * 0.75;
-                const needsWhiteText = cell.value >= textThreshold;
-                td.style.color = needsWhiteText ? 'white' : '#fff';
+                // Adjust text color for readability
+                if (cell.value < 1) {
+                    // Always black when value is below 1
+                    td.style.color = 'black';
+                } else {
+                    const textThreshold = globalMaxValue * 0.75;
+                    const needsWhiteText = cell.value >= textThreshold;
+                    td.style.color = needsWhiteText ? 'white' : 'black';
+                }
 
                 // Style future fixtures slightly differently
                 if (cell.type === 'FUTURE') {
