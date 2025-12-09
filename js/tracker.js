@@ -49,7 +49,8 @@ const STATE = {
         },
         viewMode: 'team'
     },
-    fplTeamId: null
+    fplTeamId: null,
+    latestGW: 0
 };
 
 // ==========================================
@@ -173,6 +174,7 @@ function processData() {
         fixturesByTeam: STATE.lookups.fixturesByTeam
     });
     STATE.lookups.teamGoals = goalsResult.teamGoals;
+    STATE.latestGW = goalsResult.latestGW;
 
     console.log('=== Data Processing Complete ===');
 }
@@ -606,6 +608,32 @@ function showError(message, details) {
     }, 5000);
 }
 
+// ==========================================
+// DEFAULT GW WINDOW
+// ==========================================
+
+function applyDefaultGWWindow() {
+    const startInput = document.getElementById('gw-start');
+    const endInput = document.getElementById('gw-end');
+    const excludeInput = document.getElementById('gw-exclude');
+
+    // Default window: first unplayed GW (latest completed + 1) to 5 GWs after
+    const nextUnplayedGW = Math.min((STATE.latestGW || 0) + 1, CONFIG.UI.MAX_GW);
+    const defaultEndGW   = Math.min(nextUnplayedGW + 5, CONFIG.UI.MAX_GW);
+
+    STATE.ui.startGW = nextUnplayedGW;
+    STATE.ui.endGW   = defaultEndGW;
+    STATE.ui.excludedGWs = parseExcludedGWs(excludeInput.value, CONFIG.UI.MAX_GW);
+
+    // Reflect defaults in the inputs
+    startInput.value = String(nextUnplayedGW);
+    endInput.value   = String(defaultEndGW);
+}
+
+// ==========================================
+// EVENT HANDLERS
+// ==========================================
+
 function setupEventListeners() {
     document.getElementById('load-team').addEventListener('click', handleLoadTeam);
 
@@ -663,6 +691,7 @@ async function init() {
         document.getElementById('loading').style.display = 'none';
         document.getElementById('main-content').style.display = 'block';
 
+        applyDefaultGWWindow();
         setupEventListeners();
 
         if (STATE.data.watchlist.length > 0) {
