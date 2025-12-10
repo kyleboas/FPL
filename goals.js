@@ -30,6 +30,7 @@ const STATE = {
     },
     lookups: {
         playersById: {},
+        playersByWebName: {}, // NEW: fallback lookup for when ID join fails
         teamsById: {},
         teamsByCode: {},
         fixturesByTeam: {}, // teamCode -> { gw -> { opponentCode, wasHome, finished, goalsFor, goalsAgainst } }
@@ -319,18 +320,54 @@ function processGoalsData() {
 function processPositionGoals() {
     const { stats, teams } = STATE.data;
     const playersById = STATE.lookups.playersById;
+    const playersByWebName = STATE.lookups.playersByWebName;
     const teamsById   = STATE.lookups.teamsById;
 
     // teamCode -> gw -> posKey -> goals scored
     const statsGoalsIndex = {};
 
+    // Track join statistics for diagnostics
+    let totalRows = 0;
+    let successfulJoins = 0;
+    let idJoins = 0;
+    let fallbackJoins = 0;
+    let failedJoins = 0;
+
+    // Log sample stats row to understand available fields
+    if (stats.length > 0) {
+        console.log('=== Stats Row Diagnostics ===');
+        console.log('Sample stats row fields:', Object.keys(stats[0]));
+        console.log('Sample player ID field:', getVal(stats[0], 'player_id', 'element', 'id'));
+        console.log('Sample web_name field:', getVal(stats[0], 'web_name', 'name', 'player_name'));
+    }
+
     stats.forEach(row => {
+        totalRows++;
         const pid = getVal(row, 'player_id', 'element', 'id');
         const gw  = getVal(row, 'gw', 'event', 'gameweek');
         if (!pid || !gw) return;
 
-        const player = playersById[pid];
-        if (!player) return;
+        // Try primary join by ID
+        let player = playersById[pid];
+        if (player) {
+            idJoins++;
+        } else {
+            // Fallback: try joining by web_name
+            const webName = getVal(row, 'web_name', 'name', 'player_name');
+            if (webName) {
+                player = playersByWebName[webName];
+                if (player) {
+                    fallbackJoins++;
+                }
+            }
+        }
+
+        if (!player) {
+            failedJoins++;
+            return;
+        }
+
+        successfulJoins++;
 
         const posKey = getPositionKey(player);
         // Ignore goalkeepers for attacking position views
@@ -407,16 +444,51 @@ function processPositionGoals() {
     });
 
     console.log('=== Position Goals Processed ===');
+    console.log('Join Statistics:');
+    console.log('  Total stats rows processed:', totalRows);
+    console.log('  Successful joins:', successfulJoins, `(${Math.round(successfulJoins/totalRows*100)}%)`);
+    console.log('    - Via player_id:', idJoins);
+    console.log('    - Via web_name fallback:', fallbackJoins);
+    console.log('  Failed joins:', failedJoins, `(${Math.round(failedJoins/totalRows*100)}%)`);
+    console.log('Position goals index size:', Object.keys(statsGoalsIndex).length, 'teams with data');
+
+    // Show sample of populated data
+    const sampleTeamCode = Object.keys(statsGoalsIndex)[0];
+    if (sampleTeamCode) {
+        const sampleGW = Object.keys(statsGoalsIndex[sampleTeamCode])[0];
+        if (sampleGW) {
+            console.log('Sample data - Team', sampleTeamCode, 'GW', sampleGW, ':', statsGoalsIndex[sampleTeamCode][sampleGW]);
+        }
+    }
 }
 
 function processData() {
     STATE.lookups.playersById = {};
+    STATE.lookups.playersByWebName = {}; // NEW: fallback lookup by web_name
+
     STATE.data.players.forEach(p => {
         const pid = getVal(p, 'player_id', 'id');
         if (pid != null) {
             STATE.lookups.playersById[pid] = p;
         }
+
+        // Build web_name lookup as fallback
+        const webName = getVal(p, 'web_name', 'name', 'player_name');
+        if (webName) {
+            STATE.lookups.playersByWebName[webName] = p;
+        }
     });
+
+    // Diagnostic logging: show sample of available IDs
+    console.log('=== Player ID Diagnostics ===');
+    console.log('Total players loaded:', STATE.data.players.length);
+    console.log('Players with valid IDs:', Object.keys(STATE.lookups.playersById).length);
+    if (STATE.data.players.length > 0) {
+        const samplePlayer = STATE.data.players[0];
+        console.log('Sample player fields:', Object.keys(samplePlayer));
+        console.log('Sample player_id:', getVal(samplePlayer, 'player_id', 'id'));
+        console.log('Sample web_name:', getVal(samplePlayer, 'web_name', 'name', 'player_name'));
+    }
 
     STATE.lookups.teamsById = {};
     STATE.data.teams.forEach(t => STATE.lookups.teamsById[t.id] = t);
