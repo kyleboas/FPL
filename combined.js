@@ -285,16 +285,31 @@ function processDefconData() {
         });
     });
 
+    let processedCount = 0;
+    let skippedNoPlayer = 0;
+    let skippedArchetype = 0;
+    let skippedMinutes = 0;
+    let skippedNoFixture = 0;
+
     stats.forEach(stat => {
         const playerId = getVal(stat, 'player_id', 'element', 'id');
         const player = playersById[playerId];
-        if (!player) return;
+        if (!player) {
+            skippedNoPlayer++;
+            return;
+        }
 
         const archetype = deriveArchetype(player);
-        if (!archetype || archetype === 'GKP') return;
+        if (!archetype || archetype === 'GKP') {
+            skippedArchetype++;
+            return;
+        }
 
         const minutes = getVal(stat, 'minutes', 'minutes_played', 'minutes_x') || 0;
-        if (minutes <= 0) return;
+        if (minutes <= 0) {
+            skippedMinutes++;
+            return;
+        }
 
         const gw = getVal(stat, 'gw', 'gameweek', 'event', 'round');
         if (!gw) return;
@@ -312,7 +327,10 @@ function processDefconData() {
         if (teamCode == null || !fixturesByTeam[teamCode]) return;
 
         const fixture = fixturesByTeam[teamCode][gw];
-        if (!fixture) return;
+        if (!fixture) {
+            skippedNoFixture++;
+            return;
+        }
 
         const opponentCode = fixture.opponentCode;
         const wasHome = !!fixture.wasHome;
@@ -325,7 +343,15 @@ function processDefconData() {
         const bucket = opponentAgg[opponentCode][venueKey][archetype];
         bucket.trials++;
         if (isHit) bucket.hits++;
+        processedCount++;
     });
+
+    console.log('=== DEFCON Processing Stats ===');
+    console.log('Stats processed successfully:', processedCount);
+    console.log('Skipped - no player found:', skippedNoPlayer);
+    console.log('Skipped - archetype issues:', skippedArchetype);
+    console.log('Skipped - no minutes:', skippedMinutes);
+    console.log('Skipped - no fixture:', skippedNoFixture);
 
     STATE.lookups.probabilities = {};
 
@@ -350,12 +376,20 @@ function processDefconData() {
         });
     });
 
-    console.log('=== DEFCON Opponent Aggregates ===');
+    console.log('=== DEFCON Data Processing Summary ===');
+    console.log('Total stats processed:', stats.length);
+    console.log('Total players in lookup:', Object.keys(playersById).length);
+    console.log('Sample probabilities:');
+    let sampleCount = 0;
     Object.entries(STATE.lookups.probabilities).forEach(([oppCode, byVenue]) => {
         const team = teamsByCode[oppCode];
         const name = team ? team.short_name : oppCode;
-        console.log(`Opponent ${name} (${oppCode})`, byVenue);
+        if (sampleCount < 3) {
+            console.log(`  ${name} (${oppCode}):`, byVenue);
+            sampleCount++;
+        }
     });
+    console.log('Total teams with probability data:', Object.keys(STATE.lookups.probabilities).length);
 }
 
 // ==========================================
