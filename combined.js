@@ -906,6 +906,20 @@ function setupControls() {
     // GW range
     const gwStart = document.getElementById('gw-start');
     const gwEnd = document.getElementById('gw-end');
+    const gwExclude = document.getElementById('gw-exclude');
+
+    // Default window: first unplayed GW (latest completed + 1) to 5 GWs after
+    const nextUnplayedGW = Math.min((STATE.latestGW || 0) + 1, CONFIG.UI.MAX_GW);
+    const defaultEndGW   = Math.min(nextUnplayedGW + 5, CONFIG.UI.MAX_GW);
+
+    STATE.ui.startGW = nextUnplayedGW;
+    STATE.ui.endGW   = defaultEndGW;
+    STATE.ui.excludedGWs = parseExcludedGWs(gwExclude.value);
+
+    // Reflect defaults in the inputs
+    gwStart.value = String(nextUnplayedGW);
+    gwEnd.value   = String(defaultEndGW);
+
     gwStart.addEventListener('change', (e) => {
         STATE.ui.startGW = parseInt(e.target.value, 10);
         renderTable();
@@ -916,7 +930,6 @@ function setupControls() {
     });
 
     // Excluded GWs
-    const gwExclude = document.getElementById('gw-exclude');
     gwExclude.addEventListener('input', (e) => {
         STATE.ui.excludedGWs = parseExcludedGWs(e.target.value);
         renderTable();
