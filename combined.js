@@ -285,16 +285,31 @@ function processDefconData() {
         });
     });
 
+    let processedCount = 0;
+    let skippedNoPlayer = 0;
+    let skippedArchetype = 0;
+    let skippedMinutes = 0;
+    let skippedNoFixture = 0;
+
     stats.forEach(stat => {
         const playerId = getVal(stat, 'player_id', 'element', 'id');
         const player = playersById[playerId];
-        if (!player) return;
+        if (!player) {
+            skippedNoPlayer++;
+            return;
+        }
 
         const archetype = deriveArchetype(player);
-        if (!archetype || archetype === 'GKP') return;
+        if (!archetype || archetype === 'GKP') {
+            skippedArchetype++;
+            return;
+        }
 
         const minutes = getVal(stat, 'minutes', 'minutes_played', 'minutes_x') || 0;
-        if (minutes <= 0) return;
+        if (minutes <= 0) {
+            skippedMinutes++;
+            return;
+        }
 
         const gw = getVal(stat, 'gw', 'gameweek', 'event', 'round');
         if (!gw) return;
@@ -312,7 +327,10 @@ function processDefconData() {
         if (teamCode == null || !fixturesByTeam[teamCode]) return;
 
         const fixture = fixturesByTeam[teamCode][gw];
-        if (!fixture) return;
+        if (!fixture) {
+            skippedNoFixture++;
+            return;
+        }
 
         const opponentCode = fixture.opponentCode;
         const wasHome = !!fixture.wasHome;
@@ -325,7 +343,15 @@ function processDefconData() {
         const bucket = opponentAgg[opponentCode][venueKey][archetype];
         bucket.trials++;
         if (isHit) bucket.hits++;
+        processedCount++;
     });
+
+    console.log('=== DEFCON Processing Stats ===');
+    console.log('Stats processed successfully:', processedCount);
+    console.log('Skipped - no player found:', skippedNoPlayer);
+    console.log('Skipped - archetype issues:', skippedArchetype);
+    console.log('Skipped - no minutes:', skippedMinutes);
+    console.log('Skipped - no fixture:', skippedNoFixture);
 
     STATE.lookups.probabilities = {};
 
@@ -350,12 +376,20 @@ function processDefconData() {
         });
     });
 
-    console.log('=== DEFCON Opponent Aggregates ===');
+    console.log('=== DEFCON Data Processing Summary ===');
+    console.log('Total stats processed:', stats.length);
+    console.log('Total players in lookup:', Object.keys(playersById).length);
+    console.log('Sample probabilities:');
+    let sampleCount = 0;
     Object.entries(STATE.lookups.probabilities).forEach(([oppCode, byVenue]) => {
         const team = teamsByCode[oppCode];
         const name = team ? team.short_name : oppCode;
-        console.log(`Opponent ${name} (${oppCode})`, byVenue);
+        if (sampleCount < 3) {
+            console.log(`  ${name} (${oppCode}):`, byVenue);
+            sampleCount++;
+        }
     });
+    console.log('Total teams with probability data:', Object.keys(STATE.lookups.probabilities).length);
 }
 
 // ==========================================
@@ -850,6 +884,19 @@ function renderTable() {
                 td.appendChild(cellDiv);
 
                 td.style.backgroundColor = getCombinedColor(fix.defconProb, fix.goalsValue, maxGoals);
+
+                // Set text color for readability based on combined intensity
+                const defconNorm = Math.min(1, Math.max(0, fix.defconProb));
+                const goalsNorm = Math.min(1, Math.max(0, fix.goalsValue / Math.max(1, maxGoals)));
+                const intensity = (defconNorm + goalsNorm) / 2;
+
+                // Use white text for darker backgrounds (higher intensity)
+                if (intensity > 0.4) {
+                    oppDiv.style.color = '#fff';
+                    defconSpan.style.color = '#fff';
+                    sepSpan.style.color = '#fff';
+                    goalsSpan.style.color = '#fff';
+                }
             }
 
             tr.appendChild(td);
@@ -906,6 +953,20 @@ function setupControls() {
     // GW range
     const gwStart = document.getElementById('gw-start');
     const gwEnd = document.getElementById('gw-end');
+    const gwExclude = document.getElementById('gw-exclude');
+
+    // Default window: first unplayed GW (latest completed + 1) to 5 GWs after
+    const nextUnplayedGW = Math.min((STATE.latestGW || 0) + 1, CONFIG.UI.MAX_GW);
+    const defaultEndGW   = Math.min(nextUnplayedGW + 5, CONFIG.UI.MAX_GW);
+
+    STATE.ui.startGW = nextUnplayedGW;
+    STATE.ui.endGW   = defaultEndGW;
+    STATE.ui.excludedGWs = parseExcludedGWs(gwExclude.value);
+
+    // Reflect defaults in the inputs
+    gwStart.value = String(nextUnplayedGW);
+    gwEnd.value   = String(defaultEndGW);
+
     gwStart.addEventListener('change', (e) => {
         STATE.ui.startGW = parseInt(e.target.value, 10);
         renderTable();
@@ -916,7 +977,6 @@ function setupControls() {
     });
 
     // Excluded GWs
-    const gwExclude = document.getElementById('gw-exclude');
     gwExclude.addEventListener('input', (e) => {
         STATE.ui.excludedGWs = parseExcludedGWs(e.target.value);
         renderTable();
