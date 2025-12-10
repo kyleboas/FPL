@@ -22,13 +22,15 @@ const STATE = {
         players: [],
         teams: [],
         stats: [],
-        fixtures: []
+        fixtures: [],
+        positionOverrides: []
     },
     lookups: {
         playersById: {},
         teamsById: {},
         teamsByCode: {},
         fixturesByTeam: {},
+        positionOverrides: {},
         teamGoals: {},
         positionGoalsRaw: {}  // teamCode -> gw -> { ALL:{for,against}, DEF:{...}, MID:{...}, FWD:{...} }
     },
@@ -88,6 +90,18 @@ function processData() {
             STATE.lookups.playersById[pid] = p;
         }
     });
+
+    // Build position overrides lookup (for consistency with app.js)
+    STATE.lookups.positionOverrides = {};
+    if (STATE.data.positionOverrides && STATE.data.positionOverrides.length > 0) {
+        STATE.data.positionOverrides.forEach(override => {
+            const pid = getVal(override, 'player_id', 'id');
+            const position = override.actual_position;
+            if (pid != null && position) {
+                STATE.lookups.positionOverrides[pid] = position;
+            }
+        });
+    }
 
     STATE.lookups.teamsById = {};
     STATE.data.teams.forEach(t => STATE.lookups.teamsById[t.id] = t);
@@ -509,7 +523,7 @@ async function init() {
     const errorEl = document.getElementById('error');
 
     try {
-        const rawData = await loadAllData(false);
+        const rawData = await loadAllData(true);
         STATE.data = rawData;
         processData();
 
