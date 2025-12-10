@@ -30,12 +30,12 @@ const STATE = {
     },
     lookups: {
         playersById: {},
-        playersByWebName: {}, // NEW: fallback lookup for when ID join fails
+        playersByWebName: {},
         teamsById: {},
         teamsByCode: {},
-        fixturesByTeam: {}, // teamCode -> { gw -> { opponentCode, wasHome, finished, goalsFor, goalsAgainst } }
-        teamGoals: {}, // teamCode -> { venueKey -> { gw -> { for, against } } }
-        positionFixtureGoals: {} // NEW: teamCode -> gw -> posKey -> { for, against, wasHome, finished }
+        fixturesByTeam: {}, // teamId -> { gw -> { opponentId, wasHome, finished, goalsFor, goalsAgainst } }
+        teamGoals: {}, // teamId -> { venueKey -> { gw -> { for, against } } }
+        positionFixtureGoals: {} // teamId -> gw -> posKey -> { for, against, wasHome, finished }
     },
     ui: {
         statType: 'for', // 'for' or 'against'
@@ -241,18 +241,17 @@ async function loadData() {
 
 function processGoalsData() {
     const { fixtures, teams } = STATE.data;
-    const { teamsById, teamsByCode } = STATE.lookups;
 
-    // Initialize fixture lookup and goals tracking
+    // Initialize fixture lookup and goals tracking using team IDs
     STATE.lookups.fixturesByTeam = {};
     STATE.lookups.teamGoals = {};
 
     teams.forEach(t => {
-        STATE.lookups.fixturesByTeam[t.code] = {};
-        STATE.lookups.teamGoals[t.code] = {
-            'combined': {},
-            'home': {},
-            'away': {}
+        STATE.lookups.fixturesByTeam[t.id] = {};
+        STATE.lookups.teamGoals[t.id] = {
+            combined: {},
+            home: {},
+            away: {}
         };
     });
 
@@ -261,8 +260,8 @@ function processGoalsData() {
 
     // Process fixtures to extract goals data
     fixtures.forEach(fix => {
-        const hCode = getVal(fix, 'home_team', 'team_h', 'home_team_id');
-        const aCode = getVal(fix, 'away_team', 'team_a', 'away_team_id');
+        const hId = getVal(fix, 'home_team', 'team_h', 'home_team_id');
+        const aId = getVal(fix, 'away_team', 'team_a', 'away_team_id');
         const hGoals = getVal(fix, 'team_h_score', 'home_score', 'home_goals') || 0;
         const aGoals = getVal(fix, 'team_a_score', 'away_score', 'away_goals') || 0;
         const isFin = String(getVal(fix, 'finished')).toLowerCase() === 'true';
@@ -274,9 +273,9 @@ function processGoalsData() {
         }
 
         // Home team - always add fixture to lookup
-        if (hCode != null && STATE.lookups.fixturesByTeam[hCode]) {
-            STATE.lookups.fixturesByTeam[hCode][gw] = {
-                opponentCode: aCode,
+        if (hId != null && STATE.lookups.fixturesByTeam[hId]) {
+            STATE.lookups.fixturesByTeam[hId][gw] = {
+                opponentId: aId,
                 wasHome: true,
                 finished: isFin,
                 goalsFor: hGoals,
@@ -285,15 +284,15 @@ function processGoalsData() {
 
             // Only track goals for finished fixtures
             if (isFin) {
-                STATE.lookups.teamGoals[hCode]['combined'][gw] = { for: hGoals, against: aGoals };
-                STATE.lookups.teamGoals[hCode]['home'][gw] = { for: hGoals, against: aGoals };
+                STATE.lookups.teamGoals[hId].combined[gw] = { for: hGoals, against: aGoals };
+                STATE.lookups.teamGoals[hId].home[gw] = { for: hGoals, against: aGoals };
             }
         }
 
         // Away team - always add fixture to lookup
-        if (aCode != null && STATE.lookups.fixturesByTeam[aCode]) {
-            STATE.lookups.fixturesByTeam[aCode][gw] = {
-                opponentCode: hCode,
+        if (aId != null && STATE.lookups.fixturesByTeam[aId]) {
+            STATE.lookups.fixturesByTeam[aId][gw] = {
+                opponentId: hId,
                 wasHome: false,
                 finished: isFin,
                 goalsFor: aGoals,
@@ -302,8 +301,8 @@ function processGoalsData() {
 
             // Only track goals for finished fixtures
             if (isFin) {
-                STATE.lookups.teamGoals[aCode]['combined'][gw] = { for: aGoals, against: hGoals };
-                STATE.lookups.teamGoals[aCode]['away'][gw] = { for: aGoals, against: hGoals };
+                STATE.lookups.teamGoals[aId].combined[gw] = { for: aGoals, against: hGoals };
+                STATE.lookups.teamGoals[aId].away[gw] = { for: aGoals, against: hGoals };
             }
         }
     });
@@ -320,9 +319,8 @@ function processGoalsData() {
 function processPositionGoals() {
     const { stats, teams } = STATE.data;
     const playersByWebName = STATE.lookups.playersByWebName;
-    const teamsById   = STATE.lookups.teamsById;
 
-    // teamCode -> gw -> posKey -> goals scored
+    // teamId -> gw -> posKey -> goals scored
     const statsGoalsIndex = {};
 
     stats.forEach(row => {
@@ -343,41 +341,35 @@ function processPositionGoals() {
         const goals = getVal(row, 'goals_scored', 'goals', 'Gls', 'Goals') || 0;
         if (!goals) return;
 
-        // Map to teamCode using players.csv
-        let teamCode = getVal(player, 'team_code');
-        if (teamCode == null) {
-            const teamId = getVal(player, 'team', 'team_id');
-            if (teamId != null && teamsById[teamId]) {
-                teamCode = teamsById[teamId].code;
-            }
-        }
-        if (teamCode == null) return;
+        // Use team ID consistently
+        const teamId = getVal(player, 'team', 'team_id');
+        if (teamId == null) return;
 
-        if (!statsGoalsIndex[teamCode]) statsGoalsIndex[teamCode] = {};
-        if (!statsGoalsIndex[teamCode][gw]) statsGoalsIndex[teamCode][gw] = {};
-        if (!statsGoalsIndex[teamCode][gw][posKey]) statsGoalsIndex[teamCode][gw][posKey] = 0;
+        if (!statsGoalsIndex[teamId]) statsGoalsIndex[teamId] = {};
+        if (!statsGoalsIndex[teamId][gw]) statsGoalsIndex[teamId][gw] = {};
+        if (!statsGoalsIndex[teamId][gw][posKey]) statsGoalsIndex[teamId][gw][posKey] = 0;
 
-        statsGoalsIndex[teamCode][gw][posKey] += goals;
+        statsGoalsIndex[teamId][gw][posKey] += goals;
     });
 
     // Map per-GW tallies onto fixtures so we know for/against + venue
     STATE.lookups.positionFixtureGoals = {};
     teams.forEach(t => {
-        STATE.lookups.positionFixtureGoals[t.code] = {};
+        STATE.lookups.positionFixtureGoals[t.id] = {};
     });
 
     const { fixtures } = STATE.data;
 
     fixtures.forEach(fix => {
-        const hCode = getVal(fix, 'home_team', 'team_h', 'home_team_id');
-        const aCode = getVal(fix, 'away_team', 'team_a', 'away_team_id');
-        const gw    = getVal(fix, 'gw', 'event', 'gameweek');
+        const hId = getVal(fix, 'home_team', 'team_h', 'home_team_id');
+        const aId = getVal(fix, 'away_team', 'team_a', 'away_team_id');
+        const gw  = getVal(fix, 'gw', 'event', 'gameweek');
         const isFin = String(getVal(fix, 'finished')).toLowerCase() === 'true';
 
-        if (hCode == null || aCode == null || !gw) return;
+        if (hId == null || aId == null || !gw) return;
 
-        const homeStats = (statsGoalsIndex[hCode] && statsGoalsIndex[hCode][gw]) || {};
-        const awayStats = (statsGoalsIndex[aCode] && statsGoalsIndex[aCode][gw]) || {};
+        const homeStats = (statsGoalsIndex[hId] && statsGoalsIndex[hId][gw]) || {};
+        const awayStats = (statsGoalsIndex[aId] && statsGoalsIndex[aId][gw]) || {};
 
         const positions = ['DEF', 'MID', 'FWD'];
 
@@ -386,10 +378,10 @@ function processPositionGoals() {
             const awayG = awayStats[posKey] || 0;
 
             // Home view
-            if (!STATE.lookups.positionFixtureGoals[hCode][gw]) {
-                STATE.lookups.positionFixtureGoals[hCode][gw] = {};
+            if (!STATE.lookups.positionFixtureGoals[hId][gw]) {
+                STATE.lookups.positionFixtureGoals[hId][gw] = {};
             }
-            STATE.lookups.positionFixtureGoals[hCode][gw][posKey] = {
+            STATE.lookups.positionFixtureGoals[hId][gw][posKey] = {
                 for: homeG,
                 against: awayG,
                 wasHome: true,
@@ -397,10 +389,10 @@ function processPositionGoals() {
             };
 
             // Away view
-            if (!STATE.lookups.positionFixtureGoals[aCode][gw]) {
-                STATE.lookups.positionFixtureGoals[aCode][gw] = {};
+            if (!STATE.lookups.positionFixtureGoals[aId][gw]) {
+                STATE.lookups.positionFixtureGoals[aId][gw] = {};
             }
-            STATE.lookups.positionFixtureGoals[aCode][gw][posKey] = {
+            STATE.lookups.positionFixtureGoals[aId][gw][posKey] = {
                 for: awayG,
                 against: homeG,
                 wasHome: false,
@@ -504,7 +496,7 @@ function renderTable() {
     }
 
     const { teams } = STATE.data;
-    const { fixturesByTeam, teamGoals, teamsByCode, positionFixtureGoals } = STATE.lookups;
+    const { fixturesByTeam, teamGoals, teamsById, positionFixtureGoals } = STATE.lookups;
     const positionFilter = STATE.ui.positionFilter || 'ALL';
 
     // Pre-calculate opponent goals metric over the active form window.
@@ -516,8 +508,8 @@ function renderTable() {
     const latestCompletedGW = STATE.latestGW || 0;
 
     teams.forEach(team => {
-        const teamCode = team.code;
-        cumulativeGoalsByTeam[teamCode] = {
+        const teamId = team.id;
+        cumulativeGoalsByTeam[teamId] = {
             combined: {},
             home: {},
             away: {}
@@ -530,9 +522,9 @@ function renderTable() {
         // If no completed fixtures yet, everything is 0 for all GWs
         if (windowEnd < 1) {
             for (let gw = 1; gw <= CONFIG.UI.MAX_GW; gw++) {
-                cumulativeGoalsByTeam[teamCode].combined[gw] = { for: 0, against: 0 };
-                cumulativeGoalsByTeam[teamCode].home[gw]     = { for: 0, against: 0 };
-                cumulativeGoalsByTeam[teamCode].away[gw]     = { for: 0, against: 0 };
+                cumulativeGoalsByTeam[teamId].combined[gw] = { for: 0, against: 0 };
+                cumulativeGoalsByTeam[teamId].home[gw]     = { for: 0, against: 0 };
+                cumulativeGoalsByTeam[teamId].away[gw]     = { for: 0, against: 0 };
             }
             return;
         }
@@ -552,17 +544,17 @@ function renderTable() {
         let awayFor = 0, awayAgainst = 0, awayMatches = 0;
 
         for (let w = windowStart; w <= windowEnd; w++) {
-            const fix = fixturesByTeam[teamCode] ? fixturesByTeam[teamCode][w] : null;
+            const fix = fixturesByTeam[teamId] ? fixturesByTeam[teamId][w] : null;
             if (fix && fix.finished) {
                 let goalsFor, goalsAgainst;
 
                 if (positionFilter !== 'ALL' &&
                     positionFixtureGoals &&
-                    positionFixtureGoals[teamCode] &&
-                    positionFixtureGoals[teamCode][w] &&
-                    positionFixtureGoals[teamCode][w][positionFilter]) {
+                    positionFixtureGoals[teamId] &&
+                    positionFixtureGoals[teamId][w] &&
+                    positionFixtureGoals[teamId][w][positionFilter]) {
 
-                    const posObj = positionFixtureGoals[teamCode][w][positionFilter];
+                    const posObj = positionFixtureGoals[teamId][w][positionFilter];
                     goalsFor = posObj.for || 0;
                     goalsAgainst = posObj.against || 0;
                 } else {
@@ -601,15 +593,15 @@ function renderTable() {
 
         // Write the SAME per-match averages into every GW column for this team
         for (let gw = 1; gw <= CONFIG.UI.MAX_GW; gw++) {
-            cumulativeGoalsByTeam[teamCode].combined[gw] = {
+            cumulativeGoalsByTeam[teamId].combined[gw] = {
                 for: combinedForPer,
                 against: combinedAgainstPer
             };
-            cumulativeGoalsByTeam[teamCode].home[gw] = {
+            cumulativeGoalsByTeam[teamId].home[gw] = {
                 for: homeForPer,
                 against: homeAgainstPer
             };
-            cumulativeGoalsByTeam[teamCode].away[gw] = {
+            cumulativeGoalsByTeam[teamId].away[gw] = {
                 for: awayForPer,
                 against: awayAgainstPer
             };
@@ -644,13 +636,13 @@ function renderTable() {
     thead.appendChild(headerRow);
 
     let rowData = teams.map(team => {
-        const teamCode = team.code;
+        const teamId = team.id;
         const fixtures = [];
         const gwValueMap = {};
         let metrics = [];
 
         gwList.forEach(gw => {
-            const fix = fixturesByTeam[teamCode] ? fixturesByTeam[teamCode][gw] : null;
+            const fix = fixturesByTeam[teamId] ? fixturesByTeam[teamId][gw] : null;
 
             if (!fix) {
                 // No fixture scheduled
@@ -659,9 +651,9 @@ function renderTable() {
                 return;
             }
 
-            const opponentCode = fix.opponentCode;
+            const opponentId = fix.opponentId;
             const isHome = fix.wasHome;
-            const oppTeam = teamsByCode[opponentCode];
+            const oppTeam = teamsById[opponentId];
             const oppName = oppTeam ? oppTeam.short_name : 'UNK';
 
             // Determine which venue stats to use for the opponent
@@ -673,8 +665,8 @@ function renderTable() {
             }
 
             // Get opponent's cumulative goals up to this GW for the appropriate venue
-            const oppCumulative = cumulativeGoalsByTeam[opponentCode]
-                ? cumulativeGoalsByTeam[opponentCode][oppVenue][gw]
+            const oppCumulative = cumulativeGoalsByTeam[opponentId]
+                ? cumulativeGoalsByTeam[opponentId][oppVenue][gw]
                 : null;
 
             if (!oppCumulative) {
