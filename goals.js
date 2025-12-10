@@ -33,7 +33,8 @@ const STATE = {
         teamsById: {},
         teamsByCode: {},
         fixturesByTeam: {}, // teamCode -> { gw -> { opponentCode, wasHome, finished, goalsFor, goalsAgainst } }
-        teamGoals: {} // teamCode -> { venueKey -> { gw -> { for, against } } }
+        teamGoals: {}, // teamCode -> { venueKey -> { gw -> { for, against } } }
+        positionFixtureGoals: {} // NEW: teamCode -> gw -> posKey -> { for, against, wasHome, finished }
     },
     ui: {
         statType: 'for', // 'for' or 'against'
@@ -42,6 +43,7 @@ const STATE = {
         startGW: 1,
         endGW: 6,
         excludedGWs: [],
+        positionFilter: 'ALL', // NEW: 'ALL' | 'DEF' | 'MID' | 'FWD'
         sortMode: {
             type: 'max',      // 'max' | 'avg' | 'total' | 'column'
             direction: 'desc',
@@ -130,6 +132,29 @@ function parseExcludedGWs(inputValue) {
         .split(',')
         .map(s => parseInt(s.trim(), 10))
         .filter(n => !isNaN(n) && n >= 1 && n <= CONFIG.UI.MAX_GW);
+}
+
+// Get a clean position key from player row
+function getPositionKey(player) {
+    const raw = getVal(player, 'actual_position', 'position', 'pos', 'element_type', 'position_short');
+
+    if (typeof raw === 'number') {
+        // FPL-style numeric positions
+        if (raw === 1) return 'GK';
+        if (raw === 2) return 'DEF';
+        if (raw === 3) return 'MID';
+        if (raw === 4) return 'FWD';
+    }
+
+    if (typeof raw === 'string') {
+        const upper = raw.toUpperCase();
+        if (upper.startsWith('G')) return 'GK';
+        if (upper.startsWith('D')) return 'DEF';
+        if (upper.startsWith('M')) return 'MID';
+        if (upper.startsWith('F')) return 'FWD';
+    }
+
+    return null;
 }
 
 // ==========================================
@@ -291,6 +316,99 @@ function processGoalsData() {
     console.log('Latest completed GW:', STATE.latestGW);
 }
 
+function processPositionGoals() {
+    const { stats, teams } = STATE.data;
+    const playersById = STATE.lookups.playersById;
+    const teamsById   = STATE.lookups.teamsById;
+
+    // teamCode -> gw -> posKey -> goals scored
+    const statsGoalsIndex = {};
+
+    stats.forEach(row => {
+        const pid = getVal(row, 'player_id', 'element', 'id');
+        const gw  = getVal(row, 'gw', 'event', 'gameweek');
+        if (!pid || !gw) return;
+
+        const player = playersById[pid];
+        if (!player) return;
+
+        const posKey = getPositionKey(player);
+        // Ignore goalkeepers for attacking position views
+        if (!posKey || posKey === 'GK') return;
+
+        // Goals scored by this player in this GW
+        const goals = getVal(row, 'goals_scored', 'goals', 'Gls', 'Goals') || 0;
+        if (!goals) return;
+
+        // Get team code from player row
+        let teamCode = getVal(player, 'team_code');
+        if (teamCode == null) {
+            const teamId = getVal(player, 'team', 'team_id');
+            if (teamId != null && teamsById[teamId]) {
+                teamCode = teamsById[teamId].code;
+            }
+        }
+        if (teamCode == null) return;
+
+        if (!statsGoalsIndex[teamCode]) statsGoalsIndex[teamCode] = {};
+        if (!statsGoalsIndex[teamCode][gw]) statsGoalsIndex[teamCode][gw] = {};
+        if (!statsGoalsIndex[teamCode][gw][posKey]) statsGoalsIndex[teamCode][gw][posKey] = 0;
+
+        statsGoalsIndex[teamCode][gw][posKey] += goals;
+    });
+
+    // Now map those per-GW tallies onto fixtures so we know for/against + venue.
+    STATE.lookups.positionFixtureGoals = {};
+    teams.forEach(t => {
+        STATE.lookups.positionFixtureGoals[t.code] = {};
+    });
+
+    const { fixtures } = STATE.data;
+
+    fixtures.forEach(fix => {
+        const hCode = getVal(fix, 'home_team', 'team_h', 'home_team_id');
+        const aCode = getVal(fix, 'away_team', 'team_a', 'away_team_id');
+        const gw    = getVal(fix, 'gw', 'event', 'gameweek');
+        const isFin = String(getVal(fix, 'finished')).toLowerCase() === 'true';
+
+        if (hCode == null || aCode == null || !gw) return;
+
+        const homeStats = (statsGoalsIndex[hCode] && statsGoalsIndex[hCode][gw]) || {};
+        const awayStats = (statsGoalsIndex[aCode] && statsGoalsIndex[aCode][gw]) || {};
+
+        const positions = ['DEF', 'MID', 'FWD'];
+
+        positions.forEach(posKey => {
+            const homeG = homeStats[posKey] || 0;
+            const awayG = awayStats[posKey] || 0;
+
+            // Home team view
+            if (!STATE.lookups.positionFixtureGoals[hCode][gw]) {
+                STATE.lookups.positionFixtureGoals[hCode][gw] = {};
+            }
+            STATE.lookups.positionFixtureGoals[hCode][gw][posKey] = {
+                for: homeG,
+                against: awayG,
+                wasHome: true,
+                finished: isFin
+            };
+
+            // Away team view
+            if (!STATE.lookups.positionFixtureGoals[aCode][gw]) {
+                STATE.lookups.positionFixtureGoals[aCode][gw] = {};
+            }
+            STATE.lookups.positionFixtureGoals[aCode][gw][posKey] = {
+                for: awayG,
+                against: homeG,
+                wasHome: false,
+                finished: isFin
+            };
+        });
+    });
+
+    console.log('=== Position Goals Processed ===');
+}
+
 function processData() {
     STATE.lookups.playersById = {};
     STATE.data.players.forEach(p => {
@@ -306,7 +424,8 @@ function processData() {
     STATE.lookups.teamsByCode = {};
     STATE.data.teams.forEach(t => STATE.lookups.teamsByCode[t.code] = t);
 
-    processGoalsData();
+    processGoalsData();       // existing team-level goals from fixtures
+    processPositionGoals();   // NEW: per-position goals from stats+fixtures
 
     const debugEl = document.getElementById('status-bar');
     if (debugEl) {
@@ -373,7 +492,8 @@ function renderTable() {
     }
 
     const { teams } = STATE.data;
-    const { fixturesByTeam, teamGoals, teamsByCode } = STATE.lookups;
+    const { fixturesByTeam, teamGoals, teamsByCode, positionFixtureGoals } = STATE.lookups;
+    const positionFilter = STATE.ui.positionFilter || 'ALL';
 
     // Pre-calculate opponent goals metric over the active form window.
     // We store per-match averages (goals for/against per game) for each team,
@@ -422,8 +542,22 @@ function renderTable() {
         for (let w = windowStart; w <= windowEnd; w++) {
             const fix = fixturesByTeam[teamCode] ? fixturesByTeam[teamCode][w] : null;
             if (fix && fix.finished) {
-                const goalsFor = fix.goalsFor || 0;
-                const goalsAgainst = fix.goalsAgainst || 0;
+                let goalsFor, goalsAgainst;
+
+                if (positionFilter !== 'ALL' &&
+                    positionFixtureGoals &&
+                    positionFixtureGoals[teamCode] &&
+                    positionFixtureGoals[teamCode][w] &&
+                    positionFixtureGoals[teamCode][w][positionFilter]) {
+
+                    const posObj = positionFixtureGoals[teamCode][w][positionFilter];
+                    goalsFor = posObj.for || 0;
+                    goalsAgainst = posObj.against || 0;
+                } else {
+                    // fallback: all positions, old behaviour
+                    goalsFor = fix.goalsFor || 0;
+                    goalsAgainst = fix.goalsAgainst || 0;
+                }
 
                 combinedFor += goalsFor;
                 combinedAgainst += goalsAgainst;
@@ -732,6 +866,26 @@ function setupEventListeners() {
             renderTable();
         });
     });
+
+    // Position toggle
+    const positionToggle = document.getElementById('position-toggle');
+    if (positionToggle) {
+        STATE.ui.positionFilter = positionToggle.querySelector('.toggle-option.active')?.dataset.value || 'ALL';
+        positionToggle.querySelectorAll('.toggle-option').forEach(option => {
+            option.addEventListener('click', (e) => {
+                const value = e.target.dataset.value;
+                STATE.ui.positionFilter = value;
+
+                // Update active state
+                positionToggle.querySelectorAll('.toggle-option').forEach(opt => {
+                    opt.classList.remove('active');
+                });
+                e.target.classList.add('active');
+
+                renderTable();
+            });
+        });
+    }
 
     // Form filter slider
     const formFilterSlider = document.getElementById('form-filter');
