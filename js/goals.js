@@ -58,7 +58,7 @@ function getPlayerPositionKey(player) {
     if (!player) return 'UNK';
 
     // common FPL / custom fields
-    const rawPos = getVal(player, 'position', 'pos', 'element_type', 'primary_position');
+    const rawPos = getVal(player, 'actual_position', 'position', 'pos', 'element_type', 'position_short', 'primary_position');
     if (typeof rawPos === 'number') {
         // FPL convention: 1=GK,2=DEF,3=MID,4=FWD
         if (rawPos === 1) return 'GK';
