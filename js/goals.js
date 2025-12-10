@@ -29,7 +29,8 @@ const STATE = {
         teamsById: {},
         teamsByCode: {},
         fixturesByTeam: {},
-        teamGoals: {}
+        teamGoals: {},
+        positionGoalsRaw: {}  // teamCode -> gw -> { ALL:{for,against}, DEF:{...}, MID:{...}, FWD:{...} }
     },
     ui: {
         statType: 'for',
@@ -42,10 +43,38 @@ const STATE = {
             type: 'avg',      // now using Highest Average as default
             direction: 'desc',
             gw: null
-        }
+        },
+        positionFilter: 'ALL'  // 'ALL' | 'DEF' | 'MID' | 'FWD'
     },
     latestGW: 0
 };
+
+// ==========================================
+// HELPER FUNCTIONS
+// ==========================================
+
+// Map player object to a simple position key: 'GK' | 'DEF' | 'MID' | 'FWD'
+function getPlayerPositionKey(player) {
+    if (!player) return 'UNK';
+
+    // common FPL / custom fields
+    const rawPos = getVal(player, 'position', 'pos', 'element_type', 'primary_position');
+    if (typeof rawPos === 'number') {
+        // FPL convention: 1=GK,2=DEF,3=MID,4=FWD
+        if (rawPos === 1) return 'GK';
+        if (rawPos === 2) return 'DEF';
+        if (rawPos === 3) return 'MID';
+        if (rawPos === 4) return 'FWD';
+    } else if (typeof rawPos === 'string') {
+        const p = rawPos.trim().toUpperCase();
+        if (p.startsWith('G')) return 'GK';
+        if (p.startsWith('D')) return 'DEF';
+        if (p.startsWith('M')) return 'MID';
+        if (p.startsWith('F')) return 'FWD';
+    }
+
+    return 'UNK';
+}
 
 // ==========================================
 // DATA PROCESSING
@@ -74,10 +103,14 @@ function processData() {
     const goalsResult = processGoalsData({
         fixtures: STATE.data.fixtures,
         teams: STATE.data.teams,
-        fixturesByTeam: STATE.lookups.fixturesByTeam
+        fixturesByTeam: STATE.lookups.fixturesByTeam,
+        stats: STATE.data.stats,
+        playersById: STATE.lookups.playersById,
+        teamsById: STATE.lookups.teamsById
     });
 
     STATE.lookups.teamGoals = goalsResult.teamGoals;
+    STATE.lookups.positionGoalsRaw = goalsResult.positionGoalsRaw;
     STATE.latestGW = goalsResult.latestGW;
 
     const debugEl = document.getElementById('status-bar');
@@ -116,7 +149,7 @@ function updateFormFilterDisplay(value) {
 }
 
 function renderTable() {
-    const { statType, venueFilter, sortMode, formFilter } = STATE.ui;
+    const { statType, venueFilter, sortMode, formFilter, positionFilter } = STATE.ui;
     const startGW = parseInt(STATE.ui.startGW, 10);
     const endGW = parseInt(STATE.ui.endGW, 10);
 
@@ -131,7 +164,9 @@ function renderTable() {
         fixturesByTeam,
         latestGW: STATE.latestGW,
         formFilter,
-        maxGW: CONFIG.UI.MAX_GW
+        maxGW: CONFIG.UI.MAX_GW,
+        positionFilter,
+        positionGoalsRaw: STATE.lookups.positionGoalsRaw
     });
 
     const thead = document.getElementById('fixture-header');
@@ -376,6 +411,24 @@ function setupEventListeners() {
             renderTable();
         });
     });
+
+    // Position toggle (All / DEF / MID / FWD)
+    const positionToggle = document.getElementById('position-toggle');
+    if (positionToggle) {
+        positionToggle.querySelectorAll('.toggle-option').forEach(option => {
+            option.addEventListener('click', (e) => {
+                const value = e.target.dataset.value; // 'ALL', 'DEF', 'MID', 'FWD'
+                STATE.ui.positionFilter = value || 'ALL';
+
+                positionToggle.querySelectorAll('.toggle-option').forEach(opt => {
+                    opt.classList.remove('active');
+                });
+                e.target.classList.add('active');
+
+                renderTable();
+            });
+        });
+    }
 
     const formFilterSlider = document.getElementById('form-filter');
 
