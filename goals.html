@@ -42,6 +42,25 @@
             </div>
 
             <div class="control-group">
+                <label>Show DEFCON %</label>
+                <div class="toggle-switch" id="defcon-toggle">
+                    <div class="toggle-option" data-value="off">Off</div>
+                    <div class="toggle-option active" data-value="on">On</div>
+                </div>
+            </div>
+
+            <div class="control-group" id="position-control">
+                <label for="position-filter">DEFCON Position</label>
+                <select id="position-filter">
+                    <option value="CB" selected>Center Backs</option>
+                    <option value="LB">Left Backs</option>
+                    <option value="RB">Right Backs</option>
+                    <option value="MID">Midfielders</option>
+                    <option value="FWD">Forwards</option>
+                </select>
+            </div>
+
+            <div class="control-group">
                 <label for="form-filter">Form Window</label>
                 <div style="display: flex; align-items: center; gap: 10px;">
                     <input type="range" id="form-filter" min="0" max="12" value="8" step="1">

@@ -13,7 +13,8 @@ import {
     buildGWList,
     processGoalsData,
     calculateCumulativeGoals,
-    getGoalsColor
+    getGoalsColor,
+    processProbabilities
 } from './modules/index.js';
 
 // Application State
@@ -22,14 +23,17 @@ const STATE = {
         players: [],
         teams: [],
         stats: [],
-        fixtures: []
+        fixtures: [],
+        positionOverrides: []
     },
     lookups: {
         playersById: {},
         teamsById: {},
         teamsByCode: {},
         fixturesByTeam: {},
-        teamGoals: {}
+        teamGoals: {},
+        probabilities: {},
+        positionOverrides: {}
     },
     ui: {
         statType: 'for',
@@ -42,7 +46,9 @@ const STATE = {
             type: 'avg',      // now using Highest Average as default
             direction: 'desc',
             gw: null
-        }
+        },
+        showDefcon: true,
+        position: 'CB'
     },
     latestGW: 0
 };
@@ -59,6 +65,18 @@ function processData() {
             STATE.lookups.playersById[pid] = p;
         }
     });
+
+    // Build position overrides lookup
+    STATE.lookups.positionOverrides = {};
+    if (STATE.data.positionOverrides && STATE.data.positionOverrides.length > 0) {
+        STATE.data.positionOverrides.forEach(override => {
+            const pid = getVal(override, 'player_id', 'id');
+            const position = override.actual_position;
+            if (pid != null && position) {
+                STATE.lookups.positionOverrides[pid] = position;
+            }
+        });
+    }
 
     STATE.lookups.teamsById = {};
     STATE.data.teams.forEach(t => STATE.lookups.teamsById[t.id] = t);
@@ -79,6 +97,17 @@ function processData() {
 
     STATE.lookups.teamGoals = goalsResult.teamGoals;
     STATE.latestGW = goalsResult.latestGW;
+
+    // Process DEFCON probabilities
+    STATE.lookups.probabilities = processProbabilities({
+        stats: STATE.data.stats,
+        teams: STATE.data.teams,
+        playersById: STATE.lookups.playersById,
+        fixturesByTeam: STATE.lookups.fixturesByTeam,
+        teamsById: STATE.lookups.teamsById,
+        teamsByCode: STATE.lookups.teamsByCode,
+        positionOverrides: STATE.lookups.positionOverrides
+    });
 
     const debugEl = document.getElementById('status-bar');
     if (debugEl) {
@@ -116,14 +145,14 @@ function updateFormFilterDisplay(value) {
 }
 
 function renderTable() {
-    const { statType, venueFilter, sortMode, formFilter } = STATE.ui;
+    const { statType, venueFilter, sortMode, formFilter, showDefcon, position } = STATE.ui;
     const startGW = parseInt(STATE.ui.startGW, 10);
     const endGW = parseInt(STATE.ui.endGW, 10);
 
     const gwList = buildGWList(startGW, endGW, STATE.ui.excludedGWs);
 
     const { teams } = STATE.data;
-    const { fixturesByTeam, teamsByCode } = STATE.lookups;
+    const { fixturesByTeam, teamsByCode, probabilities } = STATE.lookups;
 
     // Calculate cumulative goals
     const cumulativeGoalsByTeam = calculateCumulativeGoals({
@@ -201,12 +230,17 @@ function renderTable() {
 
             const value = oppCumulativeValue;
 
+            // Get DEFCON probability for this fixture
+            const venueKey = String(isHome);
+            const defconProb = probabilities[opponentCode]?.[venueKey]?.[position] || 0;
+
             fixtures.push({
                 type: fix.finished ? 'MATCH' : 'FUTURE',
                 opponent: oppName,
                 venue: isHome ? '(H)' : '(A)',
                 value: value,
-                isFinished: fix.finished
+                isFinished: fix.finished,
+                defconProb: defconProb
             });
             metrics.push(value);
             gwValueMap[gw] = value;
@@ -282,7 +316,27 @@ function renderTable() {
 
                 const divValue = document.createElement('div');
                 divValue.className = 'match-value';
-                divValue.textContent = roundToTwo(cell.value);
+
+                if (showDefcon) {
+                    // Show both DEFCON % and goals value
+                    const defconSpan = document.createElement('span');
+                    defconSpan.textContent = `${Math.round(cell.defconProb * 100)}%`;
+                    defconSpan.style.marginRight = '4px';
+
+                    const sepSpan = document.createElement('span');
+                    sepSpan.textContent = '|';
+                    sepSpan.style.margin = '0 4px';
+
+                    const goalsSpan = document.createElement('span');
+                    goalsSpan.textContent = roundToTwo(cell.value);
+
+                    divValue.appendChild(defconSpan);
+                    divValue.appendChild(sepSpan);
+                    divValue.appendChild(goalsSpan);
+                } else {
+                    // Show only goals value
+                    divValue.textContent = roundToTwo(cell.value);
+                }
 
                 wrapper.appendChild(divOpp);
                 wrapper.appendChild(divValue);
@@ -377,6 +431,30 @@ function setupEventListeners() {
         });
     });
 
+    // DEFCON toggle
+    const defconToggle = document.getElementById('defcon-toggle');
+    defconToggle.querySelectorAll('.toggle-option').forEach(option => {
+        option.addEventListener('click', (e) => {
+            const value = e.target.dataset.value;
+            STATE.ui.showDefcon = (value === 'on');
+
+            // Update active state
+            defconToggle.querySelectorAll('.toggle-option').forEach(opt => {
+                opt.classList.remove('active');
+            });
+            e.target.classList.add('active');
+
+            renderTable();
+        });
+    });
+
+    // Position filter
+    const positionFilter = document.getElementById('position-filter');
+    positionFilter.addEventListener('change', (e) => {
+        STATE.ui.position = e.target.value;
+        renderTable();
+    });
+
     const formFilterSlider = document.getElementById('form-filter');
 
     // Ensure slider + label match default state (8)
@@ -456,7 +534,7 @@ async function init() {
     const errorEl = document.getElementById('error');
 
     try {
-        const rawData = await loadAllData(false);
+        const rawData = await loadAllData(true);
         STATE.data = rawData;
         processData();
 
