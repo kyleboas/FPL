@@ -109,14 +109,8 @@ export const processGoalsData = ({ fixtures, teams, fixturesByTeam, stats = [], 
         const goals = getVal(stat, 'goals_scored', 'goals', 'Gls', 'Goals', 'G');
         if (!goals || goals <= 0) return;
 
-        // Which team scored?
-        const teamId = getVal(stat, 'team', 'team_id', 'teamid', 'squad_id');
-        let teamCode = null;
-        if (teamId != null && teamsById[teamId]) {
-            teamCode = teamsById[teamId].code;
-        } else {
-            teamCode = getVal(stat, 'team_code', 'teamCode', 'team_short');
-        }
+        // Which team scored? Get team_code from the player object
+        const teamCode = getVal(player, 'team_code', 'teamCode', 'team');
         if (!teamCode || !positionGoalsRaw[teamCode]) return;
 
         // Find opponent using fixturesByTeam
