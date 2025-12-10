@@ -42,7 +42,8 @@ const STATE = {
             type: 'avg',      // now using Highest Average as default
             direction: 'desc',
             gw: null
-        }
+        },
+        thresholdValue: 8    // threshold in PERCENT for DEFCON sorting
     }
 };
 
@@ -120,6 +121,7 @@ function handleGwHeaderClick(gw) {
 
 function renderTable() {
     const { currentArchetype, sortMode } = STATE.ui;
+    const thresholdPercent = STATE.ui.thresholdValue || 0; // e.g. 8 => 8%
     const startGW = parseInt(STATE.ui.startGW, 10);
     const endGW = parseInt(STATE.ui.endGW, 10);
 
@@ -159,6 +161,7 @@ function renderTable() {
         const fixtures = [];
         const gwProbMap = {};
         let metrics = [];
+        let countAboveThreshold = 0;
 
         gwList.forEach(gw => {
             const fix = fixturesByTeam[teamCode] ? fixturesByTeam[teamCode][gw] : null;
@@ -192,18 +195,26 @@ function renderTable() {
             });
             metrics.push(prob);
             gwProbMap[gw] = prob;
+
+            // --- NEW: count fixtures at or above thresholdPercent ---
+            if ((prob * 100) >= thresholdPercent) {
+                countAboveThreshold += 1;
+            }
         });
 
         const validMetrics = metrics.filter(m => m > 0);
         const maxVal = validMetrics.length ? Math.max(...validMetrics) : 0;
-        const avgVal = validMetrics.length ? (validMetrics.reduce((a, b) => a + b, 0) / validMetrics.length) : 0;
+        const avgVal = validMetrics.length
+            ? (validMetrics.reduce((a, b) => a + b, 0) / validMetrics.length)
+            : 0;
 
         return {
             teamName: team.name,
             fixtures,
             gwProbMap,
             maxVal,
-            avgVal
+            avgVal,
+            countAboveThreshold   // --- NEW FIELD ---
         };
     });
 
@@ -212,6 +223,9 @@ function renderTable() {
         rowData.sort((a, b) => b.maxVal - a.maxVal);
     } else if (sortMode.type === 'avg') {
         rowData.sort((a, b) => b.avgVal - a.avgVal);
+    } else if (sortMode.type === 'threshold-count') {
+        // Sort by number of games at or above threshold (desc)
+        rowData.sort((a, b) => b.countAboveThreshold - a.countAboveThreshold);
     } else if (sortMode.type === 'column' && sortMode.gw != null) {
         const dir = sortMode.direction === 'asc' ? 1 : -1;
         const gw = sortMode.gw;
@@ -330,6 +344,23 @@ function setupEventListeners() {
         STATE.ui.sortMode.gw = null;
         STATE.ui.sortMode.direction = 'desc';
         renderTable();
+    });
+
+    const thresholdInput = document.getElementById('threshold-value');
+    STATE.ui.thresholdValue = parseFloat(thresholdInput.value) || 0;
+
+    thresholdInput.addEventListener('input', (e) => {
+        let val = parseFloat(e.target.value);
+        if (isNaN(val)) val = 0;
+        if (val < 0) val = 0;
+        if (val > 100) val = 100;
+
+        STATE.ui.thresholdValue = val;
+
+        // Re-render, especially if the threshold-count mode is active
+        if (STATE.ui.sortMode.type === 'threshold-count') {
+            renderTable();
+        }
     });
 }
 
