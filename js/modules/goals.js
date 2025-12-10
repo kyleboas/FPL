@@ -5,24 +5,21 @@
 
 import { getVal, roundToTwo } from './utils.js';
 import { CONFIG } from './config.js';
+import { deriveArchetype, getPositionGroup } from './defcon.js';
 
-// Helper: Map player position to a key
-function getPlayerPositionKey(player) {
+// Helper: Map player position to a key using position overrides
+function getPlayerPositionKey(player, positionOverrides = {}) {
     if (!player) return 'UNK';
-    const rawPos = getVal(player, 'actual_position', 'position', 'pos', 'element_type', 'position_short', 'primary_position');
-    if (typeof rawPos === 'number') {
-        if (rawPos === 1) return 'GK';
-        if (rawPos === 2) return 'DEF';
-        if (rawPos === 3) return 'MID';
-        if (rawPos === 4) return 'FWD';
-    } else if (typeof rawPos === 'string') {
-        const p = rawPos.trim().toUpperCase();
-        if (p.startsWith('G')) return 'GK';
-        if (p.startsWith('D')) return 'DEF';
-        if (p.startsWith('M')) return 'MID';
-        if (p.startsWith('F')) return 'FWD';
-    }
-    return 'UNK';
+
+    // Use deriveArchetype which properly checks position overrides
+    const archetype = deriveArchetype(player, positionOverrides);
+    if (!archetype) return 'UNK';
+
+    // Convert archetype to position group
+    const positionGroup = getPositionGroup(archetype);
+    if (!positionGroup) return 'UNK';
+
+    return positionGroup;
 }
 
 /**
@@ -34,9 +31,10 @@ function getPlayerPositionKey(player) {
  * @param {Array} params.stats - Player stats (optional, for position-based goals)
  * @param {Object} params.playersById - Players lookup (optional, for position-based goals)
  * @param {Object} params.teamsById - Teams lookup (optional, for position-based goals)
+ * @param {Object} params.positionOverrides - Position overrides lookup (optional)
  * @returns {Object} { teamGoals, latestGW, positionGoalsRaw }
  */
-export const processGoalsData = ({ fixtures, teams, fixturesByTeam, stats = [], playersById = {}, teamsById = {} }) => {
+export const processGoalsData = ({ fixtures, teams, fixturesByTeam, stats = [], playersById = {}, teamsById = {}, positionOverrides = {} }) => {
     const teamGoals = {};
     const positionGoalsRaw = {};
 
@@ -127,7 +125,7 @@ export const processGoalsData = ({ fixtures, teams, fixturesByTeam, stats = [], 
             : null;
         const opponentCode = fix ? fix.opponentCode : null;
 
-        const posKey = getPlayerPositionKey(player);
+        const posKey = getPlayerPositionKey(player, positionOverrides);
 
         // Scoring team
         const gwMapForTeam = ensurePositionGw(teamCode, gw);

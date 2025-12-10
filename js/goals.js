@@ -120,7 +120,8 @@ function processData() {
         fixturesByTeam: STATE.lookups.fixturesByTeam,
         stats: STATE.data.stats,
         playersById: STATE.lookups.playersById,
-        teamsById: STATE.lookups.teamsById
+        teamsById: STATE.lookups.teamsById,
+        positionOverrides: STATE.lookups.positionOverrides
     });
 
     STATE.lookups.teamGoals = goalsResult.teamGoals;
