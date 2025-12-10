@@ -59,7 +59,8 @@ const STATE = {
             direction: 'desc',
             gw: null
         }
-    }
+    },
+    latestGW: 0
 };
 
 // User-defined position overrides (separate from loaded overrides)
@@ -486,12 +487,18 @@ function processData() {
     STATE.lookups.fixturesByTeam = {};
     STATE.data.teams.forEach(t => STATE.lookups.fixturesByTeam[t.code] = {});
 
+    let latestCompletedGW = 0;
+
     STATE.data.fixtures.forEach(fix => {
         const hCode = getVal(fix, 'home_team', 'team_h', 'home_team_id');
         const aCode = getVal(fix, 'away_team', 'team_a', 'away_team_id');
 
         const isFin = String(getVal(fix, 'finished')).toLowerCase() === 'true';
         const gw = getVal(fix, 'gw', 'event', 'gameweek');
+
+        if (isFin && gw > latestCompletedGW) {
+            latestCompletedGW = gw;
+        }
 
         if (hCode != null && STATE.lookups.fixturesByTeam[hCode]) {
             STATE.lookups.fixturesByTeam[hCode][gw] = {
@@ -508,6 +515,8 @@ function processData() {
             };
         }
     });
+
+    STATE.latestGW = latestCompletedGW;
 
     processProbabilities();
 }
@@ -838,6 +847,28 @@ function renderTable() {
 }
 
 // ==========================================
+// DEFAULT GW WINDOW
+// ==========================================
+
+function applyDefaultGWWindow() {
+    const startInput = document.getElementById('gw-start');
+    const endInput = document.getElementById('gw-end');
+    const excludeInput = document.getElementById('gw-exclude');
+
+    // Default window: first unplayed GW (latest completed + 1) to 5 GWs after
+    const nextUnplayedGW = Math.min((STATE.latestGW || 0) + 1, CONFIG.UI.MAX_GW);
+    const defaultEndGW   = Math.min(nextUnplayedGW + 5, CONFIG.UI.MAX_GW);
+
+    STATE.ui.startGW = nextUnplayedGW;
+    STATE.ui.endGW   = defaultEndGW;
+    STATE.ui.excludedGWs = parseExcludedGWs(excludeInput.value);
+
+    // Reflect defaults in the inputs
+    startInput.value = String(nextUnplayedGW);
+    endInput.value   = String(defaultEndGW);
+}
+
+// ==========================================
 // EVENT LISTENERS
 // ==========================================
 
@@ -961,6 +992,7 @@ async function init() {
         document.getElementById('loading').style.display = 'none';
         document.getElementById('main-content').style.display = 'block';
 
+        applyDefaultGWWindow();
         setupEventListeners();
         renderTable();
 

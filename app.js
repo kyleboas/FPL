@@ -57,7 +57,8 @@ const STATE = {
             direction: 'desc',// 'asc' | 'desc'
             gw: null          // number when type === 'column'
         }
-    }
+    },
+    latestGW: 0
 };
 
 // ==========================================
@@ -386,12 +387,18 @@ function processData() {
     STATE.lookups.fixturesByTeam = {};
     STATE.data.teams.forEach(t => STATE.lookups.fixturesByTeam[t.code] = {});
 
+    let latestCompletedGW = 0;
+
     STATE.data.fixtures.forEach(fix => {
         const hCode = getVal(fix, 'home_team', 'team_h', 'home_team_id');
         const aCode = getVal(fix, 'away_team', 'team_a', 'away_team_id');
 
         const isFin = String(getVal(fix, 'finished')).toLowerCase() === 'true';
         const gw = getVal(fix, 'gw', 'event', 'gameweek');
+
+        if (isFin && gw > latestCompletedGW) {
+            latestCompletedGW = gw;
+        }
 
         if (hCode != null && STATE.lookups.fixturesByTeam[hCode]) {
             STATE.lookups.fixturesByTeam[hCode][gw] = {
@@ -408,6 +415,8 @@ function processData() {
             };
         }
     });
+
+    STATE.latestGW = latestCompletedGW;
 
     processProbabilities();
 
@@ -675,6 +684,28 @@ function renderTable() {
 }
 
 // ==========================================
+// DEFAULT GW WINDOW
+// ==========================================
+
+function applyDefaultGWWindow() {
+    const startInput = document.getElementById('gw-start');
+    const endInput = document.getElementById('gw-end');
+    const excludeInput = document.getElementById('gw-exclude');
+
+    // Default window: first unplayed GW (latest completed + 1) to 5 GWs after
+    const nextUnplayedGW = Math.min((STATE.latestGW || 0) + 1, CONFIG.UI.MAX_GW);
+    const defaultEndGW   = Math.min(nextUnplayedGW + 5, CONFIG.UI.MAX_GW);
+
+    STATE.ui.startGW = nextUnplayedGW;
+    STATE.ui.endGW   = defaultEndGW;
+    STATE.ui.excludedGWs = parseExcludedGWs(excludeInput.value);
+
+    // Reflect defaults in the inputs
+    startInput.value = String(nextUnplayedGW);
+    endInput.value   = String(defaultEndGW);
+}
+
+// ==========================================
 // 6. INITIALIZATION
 // ==========================================
 
@@ -688,10 +719,7 @@ function setupEventListeners() {
     const endInput = document.getElementById('gw-end');
     const excludeInput = document.getElementById('gw-exclude');
 
-    // Initialise state from DOM defaults
-    STATE.ui.startGW = parseInt(startInput.value, 10) || 1;
-    STATE.ui.endGW = parseInt(endInput.value, 10) || Math.min(STATE.ui.startGW + 5, CONFIG.UI.MAX_GW);
-    STATE.ui.excludedGWs = parseExcludedGWs(excludeInput.value);
+    // No initialisation here – applyDefaultGWWindow() already set STATE.ui and inputs
 
     startInput.addEventListener('input', (e) => {
         let val = parseInt(e.target.value, 10);
@@ -766,6 +794,7 @@ async function init() {
         loadingEl.style.display = 'none';
         mainEl.style.display = 'block';
 
+        applyDefaultGWWindow();
         setupEventListeners();
         renderTable();
 
