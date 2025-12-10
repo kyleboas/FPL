@@ -850,6 +850,19 @@ function renderTable() {
                 td.appendChild(cellDiv);
 
                 td.style.backgroundColor = getCombinedColor(fix.defconProb, fix.goalsValue, maxGoals);
+
+                // Set text color for readability based on combined intensity
+                const defconNorm = Math.min(1, Math.max(0, fix.defconProb));
+                const goalsNorm = Math.min(1, Math.max(0, fix.goalsValue / Math.max(1, maxGoals)));
+                const intensity = (defconNorm + goalsNorm) / 2;
+
+                // Use white text for darker backgrounds (higher intensity)
+                if (intensity > 0.4) {
+                    oppDiv.style.color = '#fff';
+                    defconSpan.style.color = '#fff';
+                    sepSpan.style.color = '#fff';
+                    goalsSpan.style.color = '#fff';
+                }
             }
 
             tr.appendChild(td);
