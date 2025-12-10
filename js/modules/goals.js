@@ -9,7 +9,7 @@ import { CONFIG } from './config.js';
 // Helper: Map player position to a key
 function getPlayerPositionKey(player) {
     if (!player) return 'UNK';
-    const rawPos = getVal(player, 'position', 'pos', 'element_type', 'primary_position');
+    const rawPos = getVal(player, 'actual_position', 'position', 'pos', 'element_type', 'position_short', 'primary_position');
     if (typeof rawPos === 'number') {
         if (rawPos === 1) return 'GK';
         if (rawPos === 2) return 'DEF';
@@ -108,7 +108,7 @@ export const processGoalsData = ({ fixtures, teams, fixturesByTeam, stats = [], 
         const gw = getVal(stat, 'gw', 'gameweek', 'event', 'round');
         if (!gw) return;
 
-        const goals = getVal(stat, 'goals_scored', 'goals', 'G');
+        const goals = getVal(stat, 'goals_scored', 'goals', 'Gls', 'Goals', 'G');
         if (!goals || goals <= 0) return;
 
         // Which team scored?
