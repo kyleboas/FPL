@@ -9,7 +9,7 @@ import {
     roundToTwo,
     parseExcludedGWs,
     loadAllData,
-    checkDefconHit,
+    deriveArchetype,
     processProbabilities,
     processGoalsData,
     buildFixturesLookup,
@@ -24,7 +24,8 @@ const STATE = {
         players: [],
         teams: [],
         stats: [],
-        fixtures: []
+        fixtures: [],
+        positionOverrides: []
     },
     lookups: {
         playersById: {},
@@ -32,7 +33,8 @@ const STATE = {
         teamsByCode: {},
         fixturesByTeam: {},
         probabilities: {},
-        teamGoals: {}
+        teamGoals: {},
+        positionOverrides: {}
     },
     ui: {
         position: 'CB',
@@ -55,95 +57,6 @@ const STATE = {
 // DATA PROCESSING
 // ==========================================
 
-function getPlayerArchetype(player) {
-    const detailedPos = (getVal(player, 'detailed_position', 'role') || '').toUpperCase();
-
-    if (['CB'].includes(detailedPos)) return 'CB';
-    if (['LB', 'LWB'].includes(detailedPos)) return 'LB';
-    if (['RB', 'RWB'].includes(detailedPos)) return 'RB';
-
-    const generalPos = (getVal(player, 'position') || '').toUpperCase();
-
-    if (generalPos === 'DEF') return 'CB';
-    if (generalPos === 'MID') return 'MID';
-    if (generalPos === 'FWD') return 'FWD';
-
-    return null;
-}
-
-function processDefconData() {
-    const { stats, players, teams } = STATE.data;
-    const { playersById, teamsByCode, fixturesByTeam, teamsById } = STATE.lookups;
-
-    const archetypes = ['CB', 'LB', 'RB', 'MID', 'FWD'];
-
-    const opponentAgg = {};
-    teams.forEach(t => {
-        opponentAgg[t.code] = {
-            'true': {},
-            'false': {}
-        };
-        ['true', 'false'].forEach(venueKey => {
-            archetypes.forEach(arch => {
-                opponentAgg[t.code][venueKey][arch] = { hits: 0, trials: 0 };
-            });
-        });
-    });
-
-    stats.forEach(stat => {
-        const playerId = getVal(stat, 'player_id', 'element', 'id');
-        const player = playersById[playerId];
-        if (!player) return;
-
-        const archetype = getPlayerArchetype(player);
-        if (!archetype || archetype === 'GKP') return;
-
-        const minutes = getVal(stat, 'minutes', 'minutes_played') || 0;
-        if (minutes < 45) return;
-
-        const teamId = getVal(player, 'team', 'team_id');
-        const team = teamsById[teamId];
-        if (!team) return;
-
-        const gw = getVal(stat, 'gw', 'gameweek', 'event');
-        const fixture = fixturesByTeam[team.code]?.[gw];
-        if (!fixture || !fixture.finished) return;
-
-        const opponentCode = fixture.opponentCode;
-        const venueKey = String(fixture.wasHome);
-
-        const isHit = checkDefconHit(stat, archetype);
-
-        const bucket = opponentAgg[opponentCode][venueKey][archetype];
-        bucket.trials++;
-        if (isHit) bucket.hits++;
-    });
-
-    STATE.lookups.probabilities = {};
-
-    teams.forEach(team => {
-        const teamCode = team.code;
-        STATE.lookups.probabilities[teamCode] = { 'true': {}, 'false': {} };
-
-        ['true', 'false'].forEach(venueKey => {
-            archetypes.forEach(arch => {
-                let hits = 0;
-                let trials = 0;
-
-                if (opponentAgg[teamCode] && opponentAgg[teamCode][venueKey] && opponentAgg[teamCode][venueKey][arch]) {
-                    hits = opponentAgg[teamCode][venueKey][arch].hits;
-                    trials = opponentAgg[teamCode][venueKey][arch].trials;
-                }
-
-                const prob = trials > 0 ? (hits / trials) : 0;
-                STATE.lookups.probabilities[teamCode][venueKey][arch] = prob;
-            });
-        });
-    });
-
-    console.log('=== DEFCON Probabilities Processed ===');
-}
-
 function processData() {
     STATE.lookups.playersById = {};
     STATE.data.players.forEach(p => {
@@ -152,6 +65,18 @@ function processData() {
             STATE.lookups.playersById[pid] = p;
         }
     });
+
+    // Build position overrides lookup
+    STATE.lookups.positionOverrides = {};
+    if (STATE.data.positionOverrides && STATE.data.positionOverrides.length > 0) {
+        STATE.data.positionOverrides.forEach(override => {
+            const pid = getVal(override, 'player_id', 'id');
+            const position = override.actual_position;
+            if (pid != null && position) {
+                STATE.lookups.positionOverrides[pid] = position;
+            }
+        });
+    }
 
     STATE.lookups.teamsById = {};
     STATE.data.teams.forEach(t => STATE.lookups.teamsById[t.id] = t);
@@ -172,7 +97,16 @@ function processData() {
     STATE.lookups.teamGoals = goalsResult.teamGoals;
     STATE.latestGW = goalsResult.latestGW;
 
-    processDefconData();
+    // Use the correct processProbabilities function from modules
+    STATE.lookups.probabilities = processProbabilities({
+        stats: STATE.data.stats,
+        teams: STATE.data.teams,
+        playersById: STATE.lookups.playersById,
+        fixturesByTeam: STATE.lookups.fixturesByTeam,
+        teamsById: STATE.lookups.teamsById,
+        teamsByCode: STATE.lookups.teamsByCode,
+        positionOverrides: STATE.lookups.positionOverrides
+    });
 
     const debugEl = document.getElementById('status-bar');
     if (debugEl) {
@@ -484,7 +418,7 @@ function setupControls() {
 
 async function init() {
     try {
-        const data = await loadAllData(false);
+        const data = await loadAllData(true);
         STATE.data = data;
 
         document.getElementById('loading').style.display = 'none';
