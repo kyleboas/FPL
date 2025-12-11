@@ -4,6 +4,9 @@
  *
  * Fetches players from the external FPL-Elo-Insights repo and maps their positions
  * to canonical positions for the FPL analytics application.
+ *
+ * Canonical positions:
+ *   GK, CB, LB, RB, CDM, CM, AM, LW, RW, CF
  */
 
 import fs from 'fs/promises';
@@ -13,25 +16,49 @@ import { fileURLToPath } from 'url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const PLAYERS_CSV_URL = 'https://raw.githubusercontent.com/olbauday/FPL-Elo-Insights/main/data/2025-2026/players.csv';
+const PLAYERS_CSV_URL =
+  'https://raw.githubusercontent.com/olbauday/FPL-Elo-Insights/main/data/2025-2026/players.csv';
 const OUTPUT_PATH = path.join(__dirname, '..', 'data', 'player_position_overrides.csv');
 
 /**
- * Map various position strings to canonical positions
- * Canonical positions: GK, CB, LB, RB, CDM, MID, FWD
+ * Map various position strings (from APIs) to canonical positions.
+ *
+ * Handles:
+ * - Sportmonks detailed positions like `centre-back`, `defensive-midfied`,
+ *   `attacking-midfied`, `central-midfied`, `centre-forward`, `left-wing`,
+ *   `right-wing`, `left-midfield`, `right-midfield`, `secondary_striker`, etc.
+ * - FPL-Elo / FPL base positions: Goalkeeper, Defender, Midfielder, Forward.
  */
 const POSITION_MAPPING = {
   // Goalkeepers
   'goalkeeper': 'GK',
   'gk': 'GK',
+  'gkp': 'GK',
+  'goal keeper': 'GK',
+  'keeper': 'GK',
+  'goalie': 'GK',
 
-  // Defenders
-  'centre-back': 'CB',
-  'center-back': 'CB',
-  'cb': 'CB',
+  // Generic high-level buckets (fall back to something sensible)
   'defender': 'CB',
   'def': 'CB',
 
+  'midfielder': 'CM',
+  'midfield': 'CM',
+  'mid': 'CM',
+
+  'forward': 'CF',
+  'attacker': 'CF',
+  'attack': 'CF',
+  'fwd': 'CF',
+
+  // Centre-backs / central defenders
+  'centre-back': 'CB',
+  'center-back': 'CB',
+  'centre back': 'CB',
+  'center back': 'CB',
+  'cb': 'CB',
+
+  // Full-backs & wing-backs
   'left-back': 'LB',
   'left back': 'LB',
   'lb': 'LB',
@@ -46,51 +73,63 @@ const POSITION_MAPPING = {
   'right wing-back': 'RB',
   'right wingback': 'RB',
 
-  // Midfielders
+  // Defensive midfield
   'defensive midfield': 'CDM',
-  'defensive mid': 'CDM',
   'defensive midfielder': 'CDM',
-  'cdm': 'CDM',
+  'defensive mid': 'CDM',
+  'defensive-midfied': 'CDM',     // sportmonks typo
   'dm': 'CDM',
+  'cdm': 'CDM',
 
+  // Central midfield
   'central midfield': 'CM',
   'central midfielder': 'CM',
   'central mid': 'CM',
+  'central-midfied': 'CM',        // sportmonks typo
   'cm': 'CM',
-  'midfield': 'CM',
-  'midfielder': 'CM',
-  'mid': 'CM',
 
+  // Wide midfield (LM/RM) – fold into CM for now
+  'left-midfield': 'CM',
+  'left midfield': 'CM',
+  'lm': 'CM',
+  'right-midfield': 'CM',
+  'right midfield': 'CM',
+  'rm': 'CM',
+
+  // Attacking midfield / 10s
   'attacking midfield': 'AM',
   'attacking midfielder': 'AM',
   'attacking mid': 'AM',
+  'attacking-midfied': 'AM',      // sportmonks typo
   'am': 'AM',
+  'cam': 'AM',
 
-  'left winger': 'LW',
+  // Wingers
   'left wing': 'LW',
+  'left-wing': 'LW',
+  'left winger': 'LW',
   'lw': 'LW',
 
-  'right winger': 'RW,
   'right wing': 'RW',
+  'right-wing': 'RW',
+  'right winger': 'RW',
   'rw': 'RW',
 
-  'winger': 'MID',
-  'wing': 'MID',
+  // Generic "winger/wing" when side isn’t specified – treat as AM by default
+  'winger': 'AM',
+  'wing': 'AM',
 
-  // Forwards
+  // Forwards / 9s
   'centre-forward': 'CF',
   'center-forward': 'CF',
+  'centre forward': 'CF',
+  'center forward': 'CF',
   'cf': 'CF',
-  'forward': 'FWD',
-  'fwd': 'CF',
-
   'striker': 'CF',
-  'st': 'CF
-
+  'st': 'CF',
   'second striker': 'CF',
+  'secondary_striker': 'CF',
   'ss': 'CF',
-
-  'attacker': 'FWD',
 };
 
 /**
@@ -99,7 +138,25 @@ const POSITION_MAPPING = {
 function toCanonical(positionStr) {
   if (!positionStr) return null;
   const normalized = positionStr.trim().toLowerCase();
-  return POSITION_MAPPING[normalized] || null;
+
+  // Direct mapping
+  if (POSITION_MAPPING[normalized]) {
+    return POSITION_MAPPING[normalized];
+  }
+
+  // Extra fallbacks for some common formats
+  // e.g. "Left Midfielder" -> "left midfielder" -> we mapped "left-midfield"/"left midfield"
+  const noHyphen = normalized.replace(/-/g, ' ');
+  if (POSITION_MAPPING[noHyphen]) {
+    return POSITION_MAPPING[noHyphen];
+  }
+
+  const noUnderscore = normalized.replace(/_/g, ' ');
+  if (POSITION_MAPPING[noUnderscore]) {
+    return POSITION_MAPPING[noUnderscore];
+  }
+
+  return null;
 }
 
 /**
@@ -168,7 +225,7 @@ function parseCSV(text) {
  * Tries detailed_position first, then role, then position
  */
 function derivePosition(player) {
-  // Try detailed_position first (most specific)
+  // Try detailed_position first (most specific – from APIs like Sportmonks)
   const detailedPos = player.detailed_position || player.detailedPosition;
   if (detailedPos) {
     const canonical = toCanonical(detailedPos);
@@ -182,7 +239,7 @@ function derivePosition(player) {
     if (canonical) return canonical;
   }
 
-  // Try position last (most generic)
+  // Try position last (most generic – e.g. "Goalkeeper", "Defender", etc.)
   const pos = player.position;
   if (pos) {
     const canonical = toCanonical(pos);
@@ -232,7 +289,11 @@ async function main() {
 
     // Write CSV
     console.log(`📝 Writing ${OUTPUT_PATH}...`);
-    const csvContent = ['player_id,actual_position', ...overrides.map(([id, pos]) => `${id},${pos}`)].join('\n');
+    const csvContent = [
+      'player_id,actual_position',
+      ...overrides.map(([id, pos]) => `${id},${pos}`)
+    ].join('\n');
+
     await fs.writeFile(OUTPUT_PATH, csvContent, 'utf8');
 
     console.log(`✅ Successfully wrote ${overrides.length} position overrides`);
