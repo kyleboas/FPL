@@ -2,7 +2,7 @@
 /**
  * Generate player_position_overrides.csv from FPL players data
  *
- * Fetches players from the external FPL-Elo-Insights repo and maps their positions
+ * Fetches players from the external FPL‑Elo‑Insights repo and maps their positions
  * to canonical positions for the FPL analytics application.
  *
  * Canonical positions:
@@ -16,18 +16,30 @@ import { fileURLToPath } from 'url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+// Source of FPL player data (complete season snapshot)
 const PLAYERS_CSV_URL =
   'https://raw.githubusercontent.com/olbauday/FPL-Elo-Insights/main/data/2025-2026/players.csv';
-const OUTPUT_PATH = path.join(__dirname, '..', 'data', 'player_position_overrides.csv');
+// Destination path for generated overrides CSV
+const OUTPUT_PATH = path.join(__dirname, 'player_position_overrides.csv');
+
+// Additional source: per‑gameweek stats.  We use this file solely to
+// determine the set of valid player IDs.  The gameweek stats file
+// contains an `id` column that should match the `player_id` column
+// in players.csv.  Filtering the players by this set prevents
+// generating overrides for players that are not present in the
+// stats data.
+const GAMEWEEK_STATS_CSV_URL =
+  'https://raw.githubusercontent.com/olbauday/FPL-Elo-Insights/main/data/2025-2026/By%20Tournament/Premier%20League/GW1/player_gameweek_stats.csv';
 
 /**
- * Map various position strings (from APIs) to canonical positions.
+ * Map various position strings (from APIs or FPL data) to canonical positions.
  *
- * Handles:
- * - Sportmonks detailed positions like `centre-back`, `defensive-midfied`,
- *   `attacking-midfied`, `central-midfied`, `centre-forward`, `left-wing`,
- *   `right-wing`, `left-midfield`, `right-midfield`, `secondary_striker`, etc.
- * - FPL-Elo / FPL base positions: Goalkeeper, Defender, Midfielder, Forward.
+ * The Sportmonks Football API uses names like `centre-back`, `defensive-midfied`,
+ * `attacking-midfied`, `central-midfied`, `centre-forward`, `left-wing`,
+ * `right-wing`, `left-midfield`, `right-midfield`, `secondary_striker` etc【873026161308000†L219-L299】.
+ * The FPL‑Elo dataset uses high‑level positions: Goalkeeper, Defender, Midfielder,
+ * Forward【690444723428106†L0-L3】. This mapping handles both cases and normalizes them
+ * to a fixed set of canonical codes: GK, CB, LB, RB, CDM, CM, AM, LW, RW, CF.
  */
 const POSITION_MAPPING = {
   // Goalkeepers
@@ -38,46 +50,39 @@ const POSITION_MAPPING = {
   'keeper': 'GK',
   'goalie': 'GK',
 
-  // Generic high-level buckets (fall back to something sensible)
-  'defender': 'CB',
-  'def': 'CB',
-
-  'midfielder': 'CM',
-  'midfield': 'CM',
-  'mid': 'CM',
-
-  'forward': 'CF',
-  'attacker': 'CF',
-  'attack': 'CF',
-  'fwd': 'CF',
-
-  // Centre-backs / central defenders
+  // Centre‑backs / central defenders
   'centre-back': 'CB',
   'center-back': 'CB',
   'centre back': 'CB',
   'center back': 'CB',
+  'centre_back': 'CB',
+  'center_back': 'CB',
   'cb': 'CB',
 
-  // Full-backs & wing-backs
+  // Full‑backs & wing‑backs
   'left-back': 'LB',
   'left back': 'LB',
+  'left_back': 'LB',
   'lb': 'LB',
   'lwb': 'LB',
   'left wing-back': 'LB',
   'left wingback': 'LB',
+  'left wing back': 'LB',
 
   'right-back': 'RB',
   'right back': 'RB',
+  'right_back': 'RB',
   'rb': 'RB',
   'rwb': 'RB',
   'right wing-back': 'RB',
   'right wingback': 'RB',
+  'right wing back': 'RB',
 
   // Defensive midfield
   'defensive midfield': 'CDM',
   'defensive midfielder': 'CDM',
   'defensive mid': 'CDM',
-  'defensive-midfied': 'CDM',     // sportmonks typo
+  'defensive-midfied': 'CDM',
   'dm': 'CDM',
   'cdm': 'CDM',
 
@@ -85,76 +90,76 @@ const POSITION_MAPPING = {
   'central midfield': 'CM',
   'central midfielder': 'CM',
   'central mid': 'CM',
-  'central-midfied': 'CM',        // sportmonks typo
+  'central-midfied': 'CM',
   'cm': 'CM',
 
-  // Wide midfield (LM/RM) – fold into CM for now
-  'left-midfield': 'CM',
-  'left midfield': 'CM',
-  'lm': 'CM',
-  'right-midfield': 'CM',
-  'right midfield': 'CM',
-  'rm': 'CM',
+  // Wide midfield (LM/RM) – fold into CM
+  'left-midfield': 'LW',
+  'left midfield': 'LW',
+  'left_midfield': 'LW',
+  'lm': 'LW',
+  'right-midfield': 'RW',
+  'right midfield': 'RW',
+  'right_midfield': 'RW',
+  'rm': 'RW',
 
-  // Attacking midfield / 10s
+  // Attacking midfield / number 10s
   'attacking midfield': 'AM',
   'attacking midfielder': 'AM',
   'attacking mid': 'AM',
-  'attacking-midfied': 'AM',      // sportmonks typo
+  'attacking-midfied': 'AM',
   'am': 'AM',
   'cam': 'AM',
 
-  // Wingers
+  // Wingers (wide forwards)
   'left wing': 'LW',
   'left-wing': 'LW',
   'left winger': 'LW',
+  'left_wing': 'LW',
   'lw': 'LW',
 
   'right wing': 'RW',
   'right-wing': 'RW',
   'right winger': 'RW',
+  'right_wing': 'RW',
   'rw': 'RW',
 
-  // Generic "winger/wing" when side isn’t specified – treat as AM by default
-  'winger': 'AM',
-  'wing': 'AM',
-
-  // Forwards / 9s
+  // Forwards (strikers)
   'centre-forward': 'CF',
   'center-forward': 'CF',
   'centre forward': 'CF',
   'center forward': 'CF',
+  'centre_forward': 'CF',
+  'center_forward': 'CF',
   'cf': 'CF',
   'striker': 'CF',
   'st': 'CF',
   'second striker': 'CF',
+  'secondary striker': 'CF',
   'secondary_striker': 'CF',
   'ss': 'CF',
 };
 
 /**
- * Parse a position string to canonical position
+ * Convert a raw position string to its canonical code.
+ *
+ * If the input string contains hyphens or underscores, normalizes them to spaces
+ * before looking up. Handles undefined / empty input gracefully.
  */
 function toCanonical(positionStr) {
   if (!positionStr) return null;
   const normalized = positionStr.trim().toLowerCase();
 
-  // Direct mapping
-  if (POSITION_MAPPING[normalized]) {
-    return POSITION_MAPPING[normalized];
-  }
+  // Try exact match
+  if (POSITION_MAPPING[normalized]) return POSITION_MAPPING[normalized];
 
-  // Extra fallbacks for some common formats
-  // e.g. "Left Midfielder" -> "left midfielder" -> we mapped "left-midfield"/"left midfield"
+  // Replace hyphens with spaces
   const noHyphen = normalized.replace(/-/g, ' ');
-  if (POSITION_MAPPING[noHyphen]) {
-    return POSITION_MAPPING[noHyphen];
-  }
+  if (POSITION_MAPPING[noHyphen]) return POSITION_MAPPING[noHyphen];
 
+  // Replace underscores with spaces
   const noUnderscore = normalized.replace(/_/g, ' ');
-  if (POSITION_MAPPING[noUnderscore]) {
-    return POSITION_MAPPING[noUnderscore];
-  }
+  if (POSITION_MAPPING[noUnderscore]) return POSITION_MAPPING[noUnderscore];
 
   return null;
 }
@@ -163,145 +168,156 @@ function toCanonical(positionStr) {
  * Fetch text content from a URL
  */
 async function fetchText(url) {
-  try {
-    const response = await fetch(url);
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-    }
-    return response.text();
-  } catch (error) {
-    throw new Error(`Failed to fetch ${url}: ${error.message}`);
+  const res = await fetch(url);
+  if (!res.ok) {
+    throw new Error(`HTTP ${res.status}: ${res.statusText}`);
   }
+  return res.text();
 }
 
 /**
- * Parse CSV text into array of objects
+ * Parse CSV text into an array of objects. Handles quoted fields with commas.
  */
 function parseCSV(text) {
-  const lines = text.trim().split('\n').filter(line => line.trim());
+  const lines = text.trim().split(/\r?\n/).filter(Boolean);
   if (lines.length < 2) return [];
 
   const headers = lines[0].split(',').map(h => h.trim());
   const result = [];
 
   for (let i = 1; i < lines.length; i++) {
-    const line = lines[i].trim();
-    if (!line) continue;
-
-    // Simple CSV parsing - handles quoted fields
+    const line = lines[i];
     const values = [];
     let current = '';
     let inQuotes = false;
-
-    for (let char of line) {
+    for (const char of line) {
       if (char === '"') {
         inQuotes = !inQuotes;
       } else if (char === ',' && !inQuotes) {
-        values.push(current.trim().replace(/^"|"$/g, ''));
+        values.push(current.replace(/^"|"$/g, '').trim());
         current = '';
       } else {
         current += char;
       }
     }
-    values.push(current.trim().replace(/^"|"$/g, ''));
-
+    values.push(current.replace(/^"|"$/g, '').trim());
     if (values.length !== headers.length) {
-      console.warn(`⚠ Row ${i + 1}: expected ${headers.length} columns, got ${values.length}`);
+      console.warn(`⚠️ Row ${i + 1}: expected ${headers.length} columns, got ${values.length}`);
       continue;
     }
-
     const obj = {};
     headers.forEach((header, idx) => {
       obj[header] = values[idx];
     });
     result.push(obj);
   }
-
   return result;
 }
 
 /**
- * Derive canonical position from player row
- * Tries detailed_position first, then role, then position
+ * Determine the canonical position for a player.
+ * Looks at detailed_position, role, and position fields in order.
  */
 function derivePosition(player) {
-  // Try detailed_position first (most specific – from APIs like Sportmonks)
+  // Sportmonks / API detailed position
   const detailedPos = player.detailed_position || player.detailedPosition;
   if (detailedPos) {
     const canonical = toCanonical(detailedPos);
     if (canonical) return canonical;
   }
-
-  // Try role second
+  // Generic role field
   const role = player.role;
   if (role) {
     const canonical = toCanonical(role);
     if (canonical) return canonical;
   }
-
-  // Try position last (most generic – e.g. "Goalkeeper", "Defender", etc.)
+  // FPL‑Elo position field
   const pos = player.position;
   if (pos) {
     const canonical = toCanonical(pos);
     if (canonical) return canonical;
   }
-
   return null;
 }
 
 /**
- * Main function
+ * Main entrypoint.
+ * Fetch players CSV, map positions to canonical codes, and write to output.
  */
 async function main() {
+  console.log('🔄 Fetching players CSV…');
+  const csvText = await fetchText(PLAYERS_CSV_URL);
+
+  console.log('🔄 Fetching gameweek stats CSV…');
+  // The stats file is optional: if it fails to load we still proceed
+  // without filtering.  This ensures the script remains robust when
+  // the stats file is unavailable (e.g. offline or different season).
+  let statsText;
   try {
-    console.log('🔄 Fetching players data...');
-    const csvText = await fetchText(PLAYERS_CSV_URL);
-
-    console.log('📊 Parsing CSV...');
-    const players = parseCSV(csvText);
-    console.log(`   Found ${players.length} players`);
-
-    console.log('🗺️  Mapping positions...');
-    const overrides = [];
-    let mapped = 0;
-    let skipped = 0;
-
-    for (const player of players) {
-      const playerId = player.id || player.player_id;
-      if (!playerId) {
-        skipped++;
-        continue;
-      }
-
-      const canonicalPos = derivePosition(player);
-      if (canonicalPos) {
-        overrides.push([playerId, canonicalPos]);
-        mapped++;
-      } else {
-        skipped++;
-      }
-    }
-
-    console.log(`   ✓ Mapped ${mapped} positions`);
-    if (skipped > 0) {
-      console.log(`   ⚠ Skipped ${skipped} players without position data`);
-    }
-
-    // Write CSV
-    console.log(`📝 Writing ${OUTPUT_PATH}...`);
-    const csvContent = [
-      'player_id,actual_position',
-      ...overrides.map(([id, pos]) => `${id},${pos}`)
-    ].join('\n');
-
-    await fs.writeFile(OUTPUT_PATH, csvContent, 'utf8');
-
-    console.log(`✅ Successfully wrote ${overrides.length} position overrides`);
-    process.exit(0);
-  } catch (error) {
-    console.error(`❌ Error: ${error.message}`);
-    process.exit(1);
+    statsText = await fetchText(GAMEWEEK_STATS_CSV_URL);
+  } catch (err) {
+    console.warn(
+      `⚠️ Failed to fetch gameweek stats: ${err.message}. Proceeding without stats filter.`
+    );
   }
+
+  console.log('📊 Parsing CSV…');
+  const players = parseCSV(csvText);
+  console.log(`   Found ${players.length} players`);
+
+  // Build a set of valid player IDs from the stats file, if loaded.
+  let validPlayerIds = null;
+  if (statsText) {
+    const statsRows = parseCSV(statsText);
+    validPlayerIds = new Set();
+    for (const row of statsRows) {
+      const id = row.id || row.player_id;
+      if (id) validPlayerIds.add(id);
+    }
+    console.log(
+      `   Loaded ${validPlayerIds.size} player IDs from gameweek stats`
+    );
+  }
+
+  const overrides = [];
+  let mapped = 0;
+  let skipped = 0;
+  for (const player of players) {
+    const playerId = player.player_id || player.id;
+    if (!playerId) {
+      skipped++;
+      continue;
+    }
+
+    // If we loaded valid IDs from the stats file, skip players not present there.
+    if (validPlayerIds && !validPlayerIds.has(playerId)) {
+      skipped++;
+      continue;
+    }
+
+    const canonical = derivePosition(player);
+    if (canonical) {
+      overrides.push([playerId, canonical]);
+      mapped++;
+    } else {
+      skipped++;
+    }
+  }
+  console.log(`   ✓ Mapped ${mapped} positions`);
+  if (skipped > 0) {
+    console.log(`   ⚠️ Skipped ${skipped} players without position data`);
+  }
+
+  console.log(`📝 Writing overrides to ${OUTPUT_PATH}…`);
+  const content = [
+    'player_id,actual_position',
+    ...overrides.map(([id, pos]) => `${id},${pos}`),
+  ].join('\n');
+  await fs.writeFile(OUTPUT_PATH, content, 'utf8');
+  console.log(`✅ Done. Saved ${overrides.length} records.`);
 }
 
-main();
+main().catch(err => {
+  console.error(err);
+  process.exit(1);
+});
