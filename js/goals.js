@@ -188,6 +188,83 @@ function getScorersForFixture(teamCode, opponentCode, gw) {
         .sort((a, b) => b.goals - a.goals || a.teamLabel.localeCompare(b.teamLabel));
 }
 
+// Return list of historical scorers against a specific opponent (for future fixtures)
+// Filters by position if positionFilter is set
+function getHistoricalScorersVsOpponent(teamCode, opponentCode, positionFilter = 'ALL') {
+    // Find opponent team
+    let opp = STATE.data.teams.find(t => t.code === opponentCode);
+    if (!opp) {
+        opp = STATE.data.teams.find(t => getVal(t, 'id', 'team_id') === opponentCode);
+    }
+    if (!opp) return [];
+
+    const oppId = Number(getVal(opp, 'id', 'team_id', 'code'));
+
+    // Find all stats where the opponent was the opposition
+    const historicalStats = STATE.data.stats.filter(row => {
+        const rowOpp = getOppTeamId(row);
+        return rowOpp === oppId;
+    });
+
+    const scorers = [];
+
+    historicalStats.forEach(row => {
+        const goals = getGoals(row);
+        if (!goals || goals <= 0) return;
+
+        const playerId = getPlayerId(row);
+        const player = STATE.lookups.playersById[playerId];
+        if (!player) return;
+
+        // Apply position filter
+        if (positionFilter && positionFilter !== 'ALL') {
+            const playerPos = getPlayerPositionKey(player);
+            if (playerPos !== positionFilter) return;
+        }
+
+        const firstName  = getVal(player, 'first_name')  || '';
+        const secondName = getVal(player, 'second_name') || '';
+        const webName    = getVal(player, 'web_name')    || '';
+
+        const name =
+            webName ||
+            `${firstName} ${secondName}`.trim() ||
+            `Player ${playerId}`;
+
+        // Get player's team name
+        const playerTeamCode = getVal(player, 'team_code', 'teamCode', 'team');
+        let playerTeam = STATE.data.teams.find(t => t.code === playerTeamCode);
+        if (!playerTeam) {
+            playerTeam = STATE.data.teams.find(t => getVal(t, 'id', 'team_id') === playerTeamCode);
+        }
+        const teamLabel = playerTeam ? (playerTeam.short_name || playerTeam.name) : 'Unknown';
+
+        const gw = getGWValue(row);
+
+        scorers.push({
+            name,
+            goals,
+            teamLabel,
+            gw
+        });
+    });
+
+    // Combine duplicates: same player, aggregate goals across all matches
+    const merged = {};
+    scorers.forEach(s => {
+        const key = `${s.teamLabel}::${s.name}`;
+        if (!merged[key]) {
+            merged[key] = { name: s.name, goals: s.goals, teamLabel: s.teamLabel, matches: 1 };
+        } else {
+            merged[key].goals += s.goals;
+            merged[key].matches += 1;
+        }
+    });
+
+    return Object.values(merged)
+        .sort((a, b) => b.goals - a.goals || a.name.localeCompare(b.name));
+}
+
 // Classify fixture quality into simple ratings
 function classifyFixture(value, statType) {
     if (value == null) return 'blank';
@@ -355,15 +432,56 @@ function showScorersPanel(row, cell, scorers, options = {}) {
     const homeSide = cell.venue === '(H)' ? teamName : oppName;
     const awaySide = cell.venue === '(H)' ? oppName  : teamName;
 
-    titleEl.textContent = `GW ${cell.gw} – ${homeSide} vs ${awaySide}`;
+    // Build title based on whether it's historical or match data
+    if (options.isHistorical) {
+        const posLabel = options.positionFilter && options.positionFilter !== 'ALL'
+            ? ` (${options.positionFilter})`
+            : '';
+        titleEl.textContent = `GW ${cell.gw} – ${homeSide} vs ${awaySide}`;
+        titleEl.innerHTML = `GW ${cell.gw} – ${homeSide} vs ${awaySide}<br><small style="font-weight:normal;color:#666;">Historical scorers vs ${oppName}${posLabel}</small>`;
+    } else {
+        titleEl.textContent = `GW ${cell.gw} – ${homeSide} vs ${awaySide}`;
+    }
 
     if (!scorers.length) {
-        if (options.isFuture) {
+        if (options.isHistorical) {
+            const posLabel = options.positionFilter && options.positionFilter !== 'ALL'
+                ? ` ${options.positionFilter.toLowerCase()}s`
+                : '';
+            bodyEl.innerHTML = `<p>No${posLabel} have scored against ${oppName} this season.</p>`;
+        } else if (options.isFuture) {
             bodyEl.innerHTML = `<p>Match not yet played.</p>`;
         } else {
             bodyEl.innerHTML = `<p>No goals scored in this match (0-0).</p>`;
         }
+    } else if (options.isHistorical) {
+        // Historical data: show matches count
+        const rowsHtml = scorers.map(s => `
+            <tr>
+                <td>${s.teamLabel}</td>
+                <td>${s.name}</td>
+                <td style="text-align:right;">${s.goals}</td>
+                <td style="text-align:right;color:#666;">${s.matches}</td>
+            </tr>
+        `).join('');
+
+        bodyEl.innerHTML = `
+            <table style="border-collapse: collapse; width: 100%; max-width: 520px;">
+                <thead>
+                    <tr>
+                        <th style="text-align:left; padding: 4px 0;">Team</th>
+                        <th style="text-align:left; padding: 4px 0;">Player</th>
+                        <th style="text-align:right; padding: 4px 0;">Goals</th>
+                        <th style="text-align:right; padding: 4px 0;">Matches</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${rowsHtml}
+                </tbody>
+            </table>
+        `;
     } else {
+        // Regular match data
         const rowsHtml = scorers.map(s => `
             <tr>
                 <td>${s.teamLabel}</td>
@@ -392,14 +510,25 @@ function showScorersPanel(row, cell, scorers, options = {}) {
 }
 
 function handleCellClick(row, cell) {
-    // FUTURE fixtures → nothing to show yet
+    const positionFilter = STATE.ui.positionFilter;
+
+    // FUTURE fixtures → show historical scorers against this opponent
     if (cell.type === 'FUTURE') {
-        showScorersPanel(row, cell, [], { isFuture: true });
+        const historicalScorers = getHistoricalScorersVsOpponent(
+            cell.teamCode,
+            cell.opponentCode,
+            positionFilter
+        );
+        showScorersPanel(row, cell, historicalScorers, {
+            isFuture: true,
+            isHistorical: true,
+            positionFilter
+        });
         return;
     }
 
     const scorers = getScorersForFixture(cell.teamCode, cell.opponentCode, cell.gw);
-    showScorersPanel(row, cell, scorers, { isFuture: false });
+    showScorersPanel(row, cell, scorers, { isFuture: false, positionFilter });
 }
 
 // ==========================================
