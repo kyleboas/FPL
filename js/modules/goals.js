@@ -66,7 +66,10 @@ export const processGoalsData = ({ fixtures, teams, fixturesByTeam, stats = [], 
         const aCode = getVal(fix, 'away_team', 'team_a', 'away_team_id');
         const hGoals = getVal(fix, 'team_h_score', 'home_score', 'home_goals') || 0;
         const aGoals = getVal(fix, 'team_a_score', 'away_score', 'away_goals') || 0;
-        const isFin = String(getVal(fix, 'finished')).toLowerCase() === 'true';
+        // Handle various boolean formats: true/false, "true"/"false", 1/0, "yes"/"no"
+        const finVal = getVal(fix, 'finished', 'is_finished', 'completed');
+        const isFin = finVal === true || finVal === 1 ||
+            (typeof finVal === 'string' && ['true', 'yes', '1'].includes(finVal.toLowerCase()));
         const gw = getVal(fix, 'gw', 'event', 'gameweek');
 
         // Track latest completed gameweek

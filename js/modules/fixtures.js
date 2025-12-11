@@ -22,7 +22,10 @@ export const buildFixturesLookup = ({ fixtures, teams }) => {
     fixtures.forEach(fix => {
         const hCode = getVal(fix, 'home_team', 'team_h', 'home_team_id');
         const aCode = getVal(fix, 'away_team', 'team_a', 'away_team_id');
-        const isFin = String(getVal(fix, 'finished')).toLowerCase() === 'true';
+        // Handle various boolean formats: true/false, "true"/"false", 1/0, "yes"/"no"
+        const finVal = getVal(fix, 'finished', 'is_finished', 'completed');
+        const isFin = finVal === true || finVal === 1 ||
+            (typeof finVal === 'string' && ['true', 'yes', '1'].includes(finVal.toLowerCase()));
         const gw = getVal(fix, 'gw', 'event', 'gameweek');
 
         // Home team

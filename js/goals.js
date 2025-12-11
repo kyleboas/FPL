@@ -113,13 +113,22 @@ function getGoals(statRow) {
 
 // Return list of scorers for that fixture (both teams)
 function getScorersForFixture(teamCode, opponentCode, gw) {
-    const team = STATE.data.teams.find(t => t.code === teamCode);
-    const opp  = STATE.data.teams.find(t => t.code === opponentCode);
+    // Try to find team by code first, then by id (code might be numeric id)
+    let team = STATE.data.teams.find(t => t.code === teamCode);
+    if (!team) {
+        team = STATE.data.teams.find(t => getVal(t, 'id', 'team_id') === teamCode);
+    }
+
+    let opp = STATE.data.teams.find(t => t.code === opponentCode);
+    if (!opp) {
+        opp = STATE.data.teams.find(t => getVal(t, 'id', 'team_id') === opponentCode);
+    }
 
     if (!team || !opp) return [];
 
-    const teamId = team.id;  // numeric from teams.csv
-    const oppId  = opp.id;
+    // Extract team IDs using getVal with fallbacks, ensure numeric
+    const teamId = Number(getVal(team, 'id', 'team_id', 'code'));
+    const oppId  = Number(getVal(opp, 'id', 'team_id', 'code'));
 
     const gwStats = STATE.data.stats.filter(row => {
         const rowGW   = getGWValue(row);
@@ -332,7 +341,7 @@ function processData() {
 // SCORERS PANEL
 // ==========================================
 
-function showScorersPanel(row, cell, scorers) {
+function showScorersPanel(row, cell, scorers, options = {}) {
     const panel  = document.getElementById('goal-detail-panel');
     const titleEl = document.getElementById('goal-detail-title');
     const bodyEl  = document.getElementById('goal-detail-body');
@@ -349,7 +358,11 @@ function showScorersPanel(row, cell, scorers) {
     titleEl.textContent = `GW ${cell.gw} – ${homeSide} vs ${awaySide}`;
 
     if (!scorers.length) {
-        bodyEl.innerHTML = `<p>No goal data found for this match.</p>`;
+        if (options.isFuture) {
+            bodyEl.innerHTML = `<p>Match not yet played.</p>`;
+        } else {
+            bodyEl.innerHTML = `<p>No goals scored in this match (0-0).</p>`;
+        }
     } else {
         const rowsHtml = scorers.map(s => `
             <tr>
@@ -381,12 +394,12 @@ function showScorersPanel(row, cell, scorers) {
 function handleCellClick(row, cell) {
     // FUTURE fixtures → nothing to show yet
     if (cell.type === 'FUTURE') {
-        showScorersPanel(row, cell, []);
+        showScorersPanel(row, cell, [], { isFuture: true });
         return;
     }
 
     const scorers = getScorersForFixture(cell.teamCode, cell.opponentCode, cell.gw);
-    showScorersPanel(row, cell, scorers);
+    showScorersPanel(row, cell, scorers, { isFuture: false });
 }
 
 // ==========================================
