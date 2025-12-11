@@ -103,10 +103,10 @@ function isHighlightCell(value, statType) {
 
     if (statType === 'against') {
         // Good for attackers: opponent concedes a lot
-        return value >= 1.25;
+        return value >= 1.6;
     } else { // 'for'
         // Good for defenders: opponent scores very little
-        return value <= 1.0;
+        return value <= 1.25;
     }
 }
 
@@ -433,7 +433,7 @@ function renderTable() {
                     if (cell.highlight) {
                         td.style.opacity = '1';
                     } else {
-                        td.style.opacity = '0.35';  // fade non-highlighted cells
+                        td.style.opacity = '0.15';  // fade non-highlighted cells
                     }
                 } else {
                     td.style.opacity = '1';
