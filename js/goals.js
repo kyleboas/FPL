@@ -78,6 +78,53 @@ function getPlayerPositionKey(player) {
     return 'UNK';
 }
 
+// Classify fixture quality into simple ratings
+function classifyFixture(value, statType) {
+    if (value == null) return 'blank';
+
+    if (statType === 'against') {
+        // Higher = better for attackers
+        if (value >= 2.0) return 'great';
+        if (value >= 1.4) return 'good';
+        if (value >= 1.0) return 'ok';
+        return 'bad';
+    } else { // 'for' – lower is better for defenders
+        if (value <= 0.6) return 'great';
+        if (value <= 0.9) return 'good';
+        if (value <= 1.3) return 'ok';
+        return 'bad';
+    }
+}
+
+// Find runs of good fixtures (consecutive 'great' or 'good' ratings)
+function findGoodRuns(fixtures, minLen = 3) {
+    const runs = [];
+    let start = null;
+    let length = 0;
+
+    fixtures.forEach((cell, idx) => {
+        const isGood = cell.rating === 'great' || cell.rating === 'good';
+
+        if (isGood) {
+            if (start === null) start = idx;
+            length++;
+        } else {
+            if (start !== null && length >= minLen) {
+                runs.push({ startIdx: start, endIdx: start + length - 1 });
+            }
+            start = null;
+            length = 0;
+        }
+    });
+
+    // handle run that extends to last GW
+    if (start !== null && length >= minLen) {
+        runs.push({ startIdx: start, endIdx: start + length - 1 });
+    }
+
+    return runs;
+}
+
 // ==========================================
 // DATA PROCESSING
 // ==========================================
@@ -220,7 +267,7 @@ function renderTable() {
             const fix = fixturesByTeam[teamCode] ? fixturesByTeam[teamCode][gw] : null;
 
             if (!fix) {
-                fixtures.push({ type: 'BLANK', cumulativeValue: null });
+                fixtures.push({ type: 'BLANK', cumulativeValue: null, rating: 'blank' });
                 gwValueMap[gw] = null;
                 return;
             }
@@ -240,7 +287,7 @@ function renderTable() {
                 : null;
 
             if (!oppCumulative) {
-                fixtures.push({ type: 'BLANK', cumulativeValue: null });
+                fixtures.push({ type: 'BLANK', cumulativeValue: null, rating: 'blank' });
                 gwValueMap[gw] = null;
                 return;
             }
@@ -250,13 +297,15 @@ function renderTable() {
                 : oppCumulative.against;
 
             const value = oppCumulativeValue;
+            const rating = classifyFixture(value, statType);
 
             fixtures.push({
                 type: fix.finished ? 'MATCH' : 'FUTURE',
                 opponent: oppName,
                 venue: isHome ? '(H)' : '(A)',
                 value: value,
-                isFinished: fix.finished
+                isFinished: fix.finished,
+                rating: rating
             });
             metrics.push(value);
             gwValueMap[gw] = value;
@@ -275,6 +324,16 @@ function renderTable() {
             avgVal,
             totalVal
         };
+    });
+
+    // Detect good fixture runs and mark cells
+    rowData.forEach(row => {
+        row.runs = findGoodRuns(row.fixtures, 3);
+
+        // Mark which cells belong to a run
+        row.fixtures.forEach((cell, idx) => {
+            cell.isInRun = row.runs.some(run => idx >= run.startIdx && idx <= run.endIdx);
+        });
     });
 
     // Sorting
@@ -340,6 +399,13 @@ function renderTable() {
 
                 td.style.backgroundColor = getGoalsColor(cell.value, statType, globalMaxValue);
 
+                // Lower opacity of all cells NOT in a run
+                if (!cell.isInRun) {
+                    td.style.opacity = '0.35';
+                } else {
+                    td.style.opacity = '1';
+                }
+
                 // Adjust text color for readability
                 if (cell.value <= 0.8) {
                     divOpp.style.color = '#000';
@@ -351,7 +417,6 @@ function renderTable() {
 
                 // Style future fixtures slightly differently
                 if (cell.type === 'FUTURE') {
-                    td.style.opacity = '0.9';
                     td.style.fontStyle = 'italic';
                 }
             }
