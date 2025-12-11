@@ -11,6 +11,9 @@ on:
     # Adjust as you like – e.g. every Monday at 06:00 UTC
     - cron: "0 6 * * 1"
 
+permissions:
+  contents: write
+
 jobs:
   fetch-and-save:
     runs-on: ubuntu-latest
@@ -22,6 +25,9 @@ jobs:
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          persist-credentials: true
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -54,7 +60,7 @@ jobs:
         if: always()
         run: |
           git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
           git add data/football-api || true
 
@@ -64,4 +70,4 @@ jobs:
           fi
 
           git commit -m "Update scorers+positions for GW ${{ steps.gw.outputs.gw }}"
-          git push
+          git push origin HEAD:${GITHUB_REF#refs/heads/}
