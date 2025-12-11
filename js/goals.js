@@ -98,33 +98,38 @@ function classifyFixture(value, statType) {
     }
 }
 
-// Compute a dynamic threshold based on a % above the best (lowest) value
-function computeDynamicHighlightThreshold(values, statType, percentAboveBase = 0.5) {
-    // percentAboveBase: 0.5 = 50% above best
+// Compute a dynamic threshold based on a % above/below the best value
+function computeDynamicHighlightThreshold(values, statType, percent = 0.5) {
     const filtered = values.filter(v => v != null && !Number.isNaN(v));
     if (!filtered.length) return { base: null, threshold: null };
 
-    // sort ascending so [0] is lowest
     filtered.sort((a, b) => a - b);
 
-    // base = "best" (lowest) non-zero value
-    let base = filtered[0];
-    if (base === 0) {
-        const nonZero = filtered.find(v => v > 0);
-        base = nonZero != null ? nonZero : 1; // fallback if everything is 0
+    if (statType === 'for') {
+        // DEFENSE view → highlight ABOVE best (lowest)
+        let best = filtered[0];
+        if (best === 0) {
+            const nz = filtered.find(v => v > 0);
+            best = nz != null ? nz : 1;
+        }
+        const threshold = best * (1 + percent);  // ABOVE best
+        return { base: best, threshold };
+    } else {
+        // ATTACK view → highlight BELOW best (highest)
+        let best = filtered[filtered.length - 1]; // highest
+        const threshold = best * (1 - percent);   // BELOW best
+        return { base: best, threshold };
     }
-
-    const threshold = base * (1 + percentAboveBase);
-    return { base, threshold };
 }
 
-function shouldHighlightCellDynamic(value, statType, threshold) {
+function shouldHighlightCellDynamic(value, statType, threshold, base) {
     if (value == null || threshold == null) return false;
 
-    if (statType === 'against') {
-        // Higher is better for attackers – target teams that concede
+    if (statType === 'for') {
+        // DEFENSE: highlight ABOVE best
         return value >= threshold;
-    } else { // 'for' – lower is better for defenders
+    } else {
+        // ATTACK: highlight BELOW best
         return value <= threshold;
     }
 }
@@ -367,16 +372,21 @@ function renderTable() {
     });
 
     // Dynamic highlight threshold based on UI setting (percent)
-    const percentAboveBase = (STATE.ui.highlightPercent ?? 50) / 100;
+    const percent = (STATE.ui.highlightPercent ?? 50) / 100;
 
     const { base: highlightBase, threshold: highlightThreshold } =
-        computeDynamicHighlightThreshold(allValues, statType, percentAboveBase);
+        computeDynamicHighlightThreshold(allValues, statType, percent);
 
     // Apply highlight flags based on the dynamic threshold
     rowData.forEach(row => {
         row.fixtures.forEach(cell => {
             if (cell.type === 'MATCH' || cell.type === 'FUTURE') {
-                cell.highlight = shouldHighlightCellDynamic(cell.value, statType, highlightThreshold);
+                cell.highlight = shouldHighlightCellDynamic(
+                    cell.value,
+                    statType,
+                    highlightThreshold,
+                    highlightBase
+                );
             }
         });
     });
