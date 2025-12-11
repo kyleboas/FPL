@@ -80,6 +80,105 @@ function getPlayerPositionKey(player) {
     return 'UNK';
 }
 
+// ==========================================
+// GOAL SCORERS HELPERS
+// ==========================================
+
+// From GW stats CSV: "..., gw, ..."
+function getGWValue(statRow) {
+    return Number(getVal(statRow, 'gw'));
+}
+
+// From GW stats CSV: first column is "id"
+function getPlayerId(statRow) {
+    return Number(getVal(statRow, 'id'));
+}
+
+// From GW stats CSV: "team" and "team_id" are numeric team IDs
+function getTeamId(statRow) {
+    return Number(getVal(statRow, 'team', 'team_id'));
+}
+
+// From GW stats CSV: "opponent_team" or "opp_team"
+function getOppTeamId(statRow) {
+    return Number(getVal(statRow, 'opponent_team', 'opp_team'));
+}
+
+// From GW stats CSV: "goals_scored"
+function getGoals(statRow) {
+    const raw = getVal(statRow, 'goals_scored');
+    const n = Number(raw);
+    return Number.isNaN(n) ? 0 : n;
+}
+
+// Return list of scorers for that fixture (both teams)
+function getScorersForFixture(teamCode, opponentCode, gw) {
+    const team = STATE.data.teams.find(t => t.code === teamCode);
+    const opp  = STATE.data.teams.find(t => t.code === opponentCode);
+
+    if (!team || !opp) return [];
+
+    const teamId = team.id;  // numeric from teams.csv
+    const oppId  = opp.id;
+
+    const gwStats = STATE.data.stats.filter(row => {
+        const rowGW   = getGWValue(row);
+        const rowTeam = getTeamId(row);
+        const rowOpp  = getOppTeamId(row);
+
+        return rowGW === gw &&
+            (
+                (rowTeam === teamId && rowOpp === oppId) ||
+                (rowTeam === oppId  && rowOpp === teamId)
+            );
+    });
+
+    const scorers = [];
+
+    gwStats.forEach(row => {
+        const goals = getGoals(row);
+        if (!goals || goals <= 0) return;
+
+        const playerId = getPlayerId(row);
+        const player = STATE.lookups.playersById[playerId];
+
+        const firstName  = player ? getVal(player, 'first_name')  : '';
+        const secondName = player ? getVal(player, 'second_name') : '';
+        const webName    = player ? getVal(player, 'web_name')    : '';
+
+        const name =
+            webName ||
+            `${firstName} ${secondName}`.trim() ||
+            `Player ${playerId}`;
+
+        const rowTeamId = getTeamId(row);
+        const isHomeTeam = rowTeamId === teamId;
+        const teamLabel = isHomeTeam
+            ? (team.short_name || team.name)
+            : (opp.short_name  || opp.name);
+
+        scorers.push({
+            name,
+            goals,
+            teamLabel
+        });
+    });
+
+    // Combine duplicates: same player multiple goals
+    const merged = {};
+    scorers.forEach(s => {
+        const key = `${s.teamLabel}::${s.name}`;
+        if (!merged[key]) {
+            merged[key] = { ...s };
+        } else {
+            merged[key].goals += s.goals;
+        }
+    });
+
+    return Object.values(merged)
+        .sort((a, b) => b.goals - a.goals || a.teamLabel.localeCompare(b.teamLabel));
+}
+
 // Classify fixture quality into simple ratings
 function classifyFixture(value, statType) {
     if (value == null) return 'blank';
@@ -230,6 +329,67 @@ function processData() {
 }
 
 // ==========================================
+// SCORERS PANEL
+// ==========================================
+
+function showScorersPanel(row, cell, scorers) {
+    const panel  = document.getElementById('goal-detail-panel');
+    const titleEl = document.getElementById('goal-detail-title');
+    const bodyEl  = document.getElementById('goal-detail-body');
+
+    const team = STATE.data.teams.find(t => t.code === row.teamCode);
+    const opp  = STATE.data.teams.find(t => t.code === cell.opponentCode);
+
+    const teamName = team ? (team.short_name || team.name) : row.teamName;
+    const oppName  = opp  ? (opp.short_name  || opp.name)  : cell.opponent;
+
+    const homeSide = cell.venue === '(H)' ? teamName : oppName;
+    const awaySide = cell.venue === '(H)' ? oppName  : teamName;
+
+    titleEl.textContent = `GW ${cell.gw} – ${homeSide} vs ${awaySide}`;
+
+    if (!scorers.length) {
+        bodyEl.innerHTML = `<p>No goal data found for this match.</p>`;
+    } else {
+        const rowsHtml = scorers.map(s => `
+            <tr>
+                <td>${s.teamLabel}</td>
+                <td>${s.name}</td>
+                <td style="text-align:right;">${s.goals}</td>
+            </tr>
+        `).join('');
+
+        bodyEl.innerHTML = `
+            <table style="border-collapse: collapse; width: 100%; max-width: 480px;">
+                <thead>
+                    <tr>
+                        <th style="text-align:left; padding: 4px 0;">Team</th>
+                        <th style="text-align:left; padding: 4px 0;">Player</th>
+                        <th style="text-align:right; padding: 4px 0;">Goals</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${rowsHtml}
+                </tbody>
+            </table>
+        `;
+    }
+
+    panel.style.display = 'block';
+}
+
+function handleCellClick(row, cell) {
+    // FUTURE fixtures → nothing to show yet
+    if (cell.type === 'FUTURE') {
+        showScorersPanel(row, cell, []);
+        return;
+    }
+
+    const scorers = getScorersForFixture(cell.teamCode, cell.opponentCode, cell.gw);
+    showScorersPanel(row, cell, scorers);
+}
+
+// ==========================================
 // RENDERING
 // ==========================================
 
@@ -354,6 +514,9 @@ function renderTable() {
             fixtures.push({
                 type: fix.finished ? 'MATCH' : 'FUTURE',
                 opponent: oppName,
+                opponentCode,
+                teamCode,
+                gw,
                 venue: isHome ? '(H)' : '(A)',
                 value: value,
                 isFinished: fix.finished,
@@ -371,6 +534,7 @@ function renderTable() {
 
         return {
             teamName: team.short_name || team.name,
+            teamCode,
             fixtures,
             gwValueMap,
             maxVal,
@@ -496,6 +660,12 @@ function renderTable() {
                 } else {
                     td.style.opacity = '1';
                 }
+
+                // >>> NEW: click to show who scored <<<
+                td.style.cursor = 'pointer';
+                td.addEventListener('click', () => {
+                    handleCellClick(row, cell);
+                });
             }
             tr.appendChild(td);
         });
