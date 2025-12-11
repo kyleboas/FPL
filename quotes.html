@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>YouTube Quote Extractor</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="quotes.css">
+</head>
+<body>
+
+<div class="container">
+    <header>
+        <h1>YouTube Quote Extractor</h1>
+        <p>Subscribe to channels, extract quotes from videos</p>
+        <div class="nav-links">
+            <a href="index.html">DEFCON Matrix</a>
+            <a href="player-defcon.html">Player DEFCON</a>
+            <a href="goals.html">Goals</a>
+            <a href="combined.html">Combined</a>
+            <a href="tracker.html">Tracker</a>
+        </div>
+    </header>
+
+    <div id="error"></div>
+
+    <!-- API Key Configuration -->
+    <div class="controls" id="api-config">
+        <div class="control-group">
+            <label for="youtube-api-key">YouTube API Key</label>
+            <input type="password" id="youtube-api-key" placeholder="Enter your YouTube API key">
+        </div>
+        <div class="control-group">
+            <label for="openai-api-key">OpenAI API Key</label>
+            <input type="password" id="openai-api-key" placeholder="Enter your OpenAI API key">
+        </div>
+        <button id="save-api-keys">Save API Keys</button>
+        <span id="api-status" class="api-status"></span>
+    </div>
+
+    <!-- Channel Subscription -->
+    <div class="controls" id="channel-subscription">
+        <div class="control-group" style="flex: 1;">
+            <label for="channel-input">Subscribe to Channel</label>
+            <input type="text" id="channel-input" placeholder="Enter YouTube channel URL or ID" style="width: 100%;">
+        </div>
+        <button id="subscribe-btn">Subscribe</button>
+    </div>
+
+    <!-- Subscribed Channels -->
+    <div class="panel" id="channels-panel">
+        <div class="panel-header">
+            <h2>Subscribed Channels</h2>
+            <div class="panel-actions">
+                <button id="refresh-all-btn" class="secondary">Refresh All</button>
+                <a href="data/quotes/rss.xml" target="_blank" class="rss-link">RSS Feed</a>
+            </div>
+        </div>
+        <div id="channels-list" class="channels-list">
+            <p class="empty-state">No channels subscribed yet. Add a channel above to get started.</p>
+        </div>
+    </div>
+
+    <!-- View Toggle -->
+    <div class="controls">
+        <div class="toggle-switch" id="view-toggle">
+            <span class="toggle-option active" data-view="videos">Videos</span>
+            <span class="toggle-option" data-view="quotes">All Quotes</span>
+        </div>
+        <div class="control-group">
+            <label for="channel-filter">Filter by Channel</label>
+            <select id="channel-filter">
+                <option value="all">All Channels</option>
+            </select>
+        </div>
+        <div class="control-group">
+            <label for="search-quotes">Search Quotes</label>
+            <input type="text" id="search-quotes" placeholder="Search in quotes...">
+        </div>
+    </div>
+
+    <!-- Videos View -->
+    <div id="videos-view" class="content-view">
+        <div id="videos-list" class="videos-grid">
+            <p class="empty-state">No videos processed yet. Subscribe to a channel and click "Fetch Videos" to get started.</p>
+        </div>
+    </div>
+
+    <!-- Quotes View -->
+    <div id="quotes-view" class="content-view" style="display: none;">
+        <div id="quotes-list" class="quotes-list">
+            <p class="empty-state">No quotes extracted yet.</p>
+        </div>
+    </div>
+
+    <!-- Video Detail Modal -->
+    <div id="video-modal" class="modal">
+        <div class="modal-content modal-large">
+            <div class="modal-header">
+                <h2 id="modal-video-title">Video Title</h2>
+                <button class="close-btn">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="video-info">
+                    <p id="modal-video-channel" class="video-channel"></p>
+                    <p id="modal-video-date" class="video-date"></p>
+                    <a id="modal-video-link" href="" target="_blank" class="video-link">Watch on YouTube</a>
+                </div>
+                <div class="video-actions">
+                    <button id="extract-quotes-btn">Extract Quotes</button>
+                    <span id="extraction-status"></span>
+                </div>
+                <div id="video-quotes" class="video-quotes">
+                    <h3>Extracted Quotes</h3>
+                    <div id="video-quotes-list"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Processing Status -->
+    <div id="processing-status" class="processing-overlay" style="display: none;">
+        <div class="processing-content">
+            <div class="spinner"></div>
+            <p id="processing-message">Processing...</p>
+        </div>
+    </div>
+
+    <div class="status-bar" id="status-bar">
+        Ready
+    </div>
+</div>
+
+<script type="module" src="js/quotes-app.js"></script>
+
+</body>
+</html>
