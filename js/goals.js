@@ -106,18 +106,26 @@ function computeDynamicHighlightThreshold(values, statType, percent = 0.5) {
     filtered.sort((a, b) => a - b);
 
     if (statType === 'for') {
-        // DEFENSE view → highlight ABOVE best (lowest)
+        // DEFENSE view → best = lowest
         let best = filtered[0];
+
         if (best === 0) {
             const nz = filtered.find(v => v > 0);
             best = nz != null ? nz : 1;
         }
-        const threshold = best * (1 + percent);  // ABOVE best
+
+        let threshold = best * (1 + percent);
+
+        // --- NEW: enforce minimum defense threshold ---
+        const DEFENSE_MIN_THRESHOLD = 0.95;
+        threshold = Math.max(threshold, DEFENSE_MIN_THRESHOLD);
+
         return { base: best, threshold };
     } else {
-        // ATTACK view → highlight BELOW best (highest)
-        let best = filtered[filtered.length - 1]; // highest
-        const threshold = best * (1 - percent);   // BELOW best
+        // ATTACK view → best = highest
+        let best = filtered[filtered.length - 1];
+
+        const threshold = best * (1 - percent);
         return { base: best, threshold };
     }
 }
@@ -126,10 +134,10 @@ function shouldHighlightCellDynamic(value, statType, threshold) {
     if (value == null || threshold == null) return false;
 
     if (statType === 'for') {
-        // DEFENSE: lower is better → highlight values up to (best * (1 + %))
+        // DEFENSE: lower is better → highlight <= threshold
         return value <= threshold;
     } else {
-        // ATTACK: higher is better → highlight values down to (best * (1 - %))
+        // ATTACK: higher is better → highlight >= threshold
         return value >= threshold;
     }
 }
