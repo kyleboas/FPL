@@ -46,7 +46,8 @@ const STATE = {
             direction: 'desc',
             gw: null
         },
-        positionFilter: 'ALL'  // 'ALL' | 'DEF' | 'MID' | 'FWD'
+        positionFilter: 'ALL',  // 'ALL' | 'DEF' | 'MID' | 'FWD'
+        highlightMode: false     // NEW: jump-on opacity toggle
     },
     latestGW: 0
 };
@@ -93,6 +94,19 @@ function classifyFixture(value, statType) {
         if (value <= 0.9) return 'good';
         if (value <= 1.3) return 'ok';
         return 'bad';
+    }
+}
+
+// Highlight rule: determine if a cell should be highlighted based on thresholds
+function isHighlightCell(value, statType) {
+    if (value == null) return false;
+
+    if (statType === 'against') {
+        // Good for attackers: opponent concedes a lot
+        return value >= 1.25;
+    } else { // 'for'
+        // Good for defenders: opponent scores very little
+        return value <= 1.0;
     }
 }
 
@@ -305,7 +319,8 @@ function renderTable() {
                 venue: isHome ? '(H)' : '(A)',
                 value: value,
                 isFinished: fix.finished,
-                rating: rating
+                rating: rating,
+                highlight: isHighlightCell(value, statType)   // NEW
             });
             metrics.push(value);
             gwValueMap[gw] = value;
@@ -399,13 +414,6 @@ function renderTable() {
 
                 td.style.backgroundColor = getGoalsColor(cell.value, statType, globalMaxValue);
 
-                // Lower opacity of all cells NOT in a run
-                if (!cell.isInRun) {
-                    td.style.opacity = '0.35';
-                } else {
-                    td.style.opacity = '1';
-                }
-
                 // Adjust text color for readability
                 if (cell.value <= 0.8) {
                     divOpp.style.color = '#000';
@@ -418,6 +426,17 @@ function renderTable() {
                 // Style future fixtures slightly differently
                 if (cell.type === 'FUTURE') {
                     td.style.fontStyle = 'italic';
+                }
+
+                // NEW: opacity based on Jump On View toggle
+                if (STATE.ui.highlightMode) {
+                    if (cell.highlight) {
+                        td.style.opacity = '1';
+                    } else {
+                        td.style.opacity = '0.35';  // fade non-highlighted cells
+                    }
+                } else {
+                    td.style.opacity = '1';
                 }
             }
             tr.appendChild(td);
@@ -577,6 +596,24 @@ function setupEventListeners() {
         STATE.ui.sortMode.direction = 'desc';
         renderTable();
     });
+
+    // Jump On View toggle
+    const highlightToggle = document.getElementById('highlight-toggle');
+    if (highlightToggle) {
+        highlightToggle.querySelectorAll('.toggle-option').forEach(option => {
+            option.addEventListener('click', (e) => {
+                const value = e.currentTarget.dataset.value; // 'on' or 'off'
+                STATE.ui.highlightMode = (value === 'on');
+
+                highlightToggle.querySelectorAll('.toggle-option').forEach(opt => {
+                    opt.classList.remove('active');
+                });
+                e.currentTarget.classList.add('active');
+
+                renderTable();
+            });
+        });
+    }
 }
 
 // ==========================================
