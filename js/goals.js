@@ -103,7 +103,7 @@ function isHighlightCell(value, statType) {
 
     if (statType === 'against') {
         // Good for attackers: opponent concedes a lot
-        return value >= 1.6;
+        return value >= 1.5;
     } else { // 'for'
         // Good for defenders: opponent scores very little
         return value <= 1.25;
