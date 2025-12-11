@@ -122,15 +122,15 @@ function computeDynamicHighlightThreshold(values, statType, percent = 0.5) {
     }
 }
 
-function shouldHighlightCellDynamic(value, statType, threshold, base) {
+function shouldHighlightCellDynamic(value, statType, threshold) {
     if (value == null || threshold == null) return false;
 
     if (statType === 'for') {
-        // DEFENSE: highlight ABOVE best
-        return value >= threshold;
-    } else {
-        // ATTACK: highlight BELOW best
+        // DEFENSE: lower is better → highlight values up to (best * (1 + %))
         return value <= threshold;
+    } else {
+        // ATTACK: higher is better → highlight values down to (best * (1 - %))
+        return value >= threshold;
     }
 }
 
