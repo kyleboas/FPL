@@ -97,16 +97,34 @@ function classifyFixture(value, statType) {
     }
 }
 
-// Highlight rule: determine if a cell should be highlighted based on thresholds
-function isHighlightCell(value, statType) {
-    if (value == null) return false;
+// Compute a dynamic threshold based on a % above the best (lowest) value
+function computeDynamicHighlightThreshold(values, statType, percentAboveBase = 0.5) {
+    // percentAboveBase: 0.5 = 50% above best
+    const filtered = values.filter(v => v != null && !Number.isNaN(v));
+    if (!filtered.length) return { base: null, threshold: null };
+
+    // sort ascending so [0] is lowest
+    filtered.sort((a, b) => a - b);
+
+    // base = "best" (lowest) non-zero value
+    let base = filtered[0];
+    if (base === 0) {
+        const nonZero = filtered.find(v => v > 0);
+        base = nonZero != null ? nonZero : 1; // fallback if everything is 0
+    }
+
+    const threshold = base * (1 + percentAboveBase);
+    return { base, threshold };
+}
+
+function shouldHighlightCellDynamic(value, statType, threshold) {
+    if (value == null || threshold == null) return false;
 
     if (statType === 'against') {
-        // Good for attackers: opponent concedes a lot
-        return value >= 1.5;
-    } else { // 'for'
-        // Good for defenders: opponent scores very little
-        return value <= 1.25;
+        // Higher is better for attackers – target teams that concede
+        return value >= threshold;
+    } else { // 'for' – lower is better for defenders
+        return value <= threshold;
     }
 }
 
@@ -271,6 +289,8 @@ function renderTable() {
 
     thead.appendChild(headerRow);
 
+    const allValues = [];
+
     let rowData = teams.map(team => {
         const teamCode = team.code;
         const fixtures = [];
@@ -313,6 +333,10 @@ function renderTable() {
             const value = oppCumulativeValue;
             const rating = classifyFixture(value, statType);
 
+            if (value != null) {
+                allValues.push(value);
+            }
+
             fixtures.push({
                 type: fix.finished ? 'MATCH' : 'FUTURE',
                 opponent: oppName,
@@ -320,7 +344,7 @@ function renderTable() {
                 value: value,
                 isFinished: fix.finished,
                 rating: rating,
-                highlight: isHighlightCell(value, statType)   // NEW
+                highlight: false   // set later after we know the threshold
             });
             metrics.push(value);
             gwValueMap[gw] = value;
@@ -339,6 +363,21 @@ function renderTable() {
             avgVal,
             totalVal
         };
+    });
+
+    // Dynamic highlight threshold: e.g. 50% above best
+    const HIGHLIGHT_PERCENT_ABOVE_BASE = 0.5; // 0.5 = 50%. Change if you want tighter/looser.
+
+    const { base: highlightBase, threshold: highlightThreshold } =
+        computeDynamicHighlightThreshold(allValues, statType, HIGHLIGHT_PERCENT_ABOVE_BASE);
+
+    // Apply highlight flags based on the dynamic threshold
+    rowData.forEach(row => {
+        row.fixtures.forEach(cell => {
+            if (cell.type === 'MATCH' || cell.type === 'FUTURE') {
+                cell.highlight = shouldHighlightCellDynamic(cell.value, statType, highlightThreshold);
+            }
+        });
     });
 
     // Detect good fixture runs and mark cells
