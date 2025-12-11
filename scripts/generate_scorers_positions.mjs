@@ -191,20 +191,45 @@ function matchFplPlayer(apiName, fplIndex) {
 async function resolveRoundForGW(gw) {
   console.log(`🔎 Resolving round name for GW${gw}...`);
 
-  const data = await fetchJson(`${API_BASE}/fixtures/rounds`, {
+  // Fallback strategy: derive rounds from all fixtures for the season
+  const data = await fetchJson(`${API_BASE}/fixtures`, {
     league: LEAGUE_ID,
     season: SEASON,
   });
 
-  let rounds = data.response;
-  if (!Array.isArray(rounds)) {
-    // Some clients flatten, just in case
-    rounds = Array.isArray(data) ? data : [];
+  const fixtures = data.response || [];
+  if (!fixtures.length) {
+    throw new Error(
+      `No fixtures returned for league=${LEAGUE_ID} season=${SEASON}. ` +
+      `Check LEAGUE_ID/SEASON or your API key plan.`
+    );
   }
 
-  if (!rounds || rounds.length === 0) {
-    throw new Error('Could not fetch any rounds from API-Football for this league/season.');
+  const roundSet = new Set();
+  for (const f of fixtures) {
+    const round = f.league && f.league.round;
+    if (round) roundSet.add(round);
   }
+
+  let rounds = Array.from(roundSet);
+  if (!rounds.length) {
+    throw new Error(
+      'Could not derive any round names from fixtures for this league/season.'
+    );
+  }
+
+  // Sort rounds by trailing integer if present, otherwise lexicographically
+  rounds.sort((a, b) => {
+    const ma = String(a).match(/(\d+)\s*$/);
+    const mb = String(b).match(/(\d+)\s*$/);
+    const na = ma ? parseInt(ma[1], 10) : NaN;
+    const nb = mb ? parseInt(mb[1], 10) : NaN;
+
+    if (!Number.isNaN(na) && !Number.isNaN(nb) && na !== nb) {
+      return na - nb;
+    }
+    return String(a).localeCompare(String(b));
+  });
 
   console.log(`   Available rounds (${rounds.length}): ${rounds.join(' | ')}`);
 
@@ -214,7 +239,7 @@ async function resolveRoundForGW(gw) {
   if (!round) {
     throw new Error(
       `No round found for gw=${gw}. ` +
-      `Available rounds indices: 0..${rounds.length - 1}`
+      `Based on fixtures, valid GW range is 1..${rounds.length}.`
     );
   }
 
