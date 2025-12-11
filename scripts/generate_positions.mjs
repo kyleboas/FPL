@@ -53,42 +53,42 @@ const POSITION_MAPPING = {
   'cdm': 'CDM',
   'dm': 'CDM',
 
-  'central midfield': 'MID',
-  'central midfielder': 'MID',
-  'central mid': 'MID',
-  'cm': 'MID',
-  'midfield': 'MID',
-  'midfielder': 'MID',
-  'mid': 'MID',
+  'central midfield': 'CM',
+  'central midfielder': 'CM',
+  'central mid': 'CM',
+  'cm': 'CM',
+  'midfield': 'CM',
+  'midfielder': 'CM',
+  'mid': 'CM',
 
-  'attacking midfield': 'MID',
-  'attacking midfielder': 'MID',
-  'attacking mid': 'MID',
-  'am': 'MID',
+  'attacking midfield': 'AM',
+  'attacking midfielder': 'AM',
+  'attacking mid': 'AM',
+  'am': 'AM',
 
-  'left winger': 'MID',
-  'left wing': 'MID',
-  'lw': 'MID',
+  'left winger': 'LW',
+  'left wing': 'LW',
+  'lw': 'LW',
 
-  'right winger': 'MID',
-  'right wing': 'MID',
-  'rw': 'MID',
+  'right winger': 'RW,
+  'right wing': 'RW',
+  'rw': 'RW',
 
   'winger': 'MID',
   'wing': 'MID',
 
   // Forwards
-  'centre-forward': 'FWD',
-  'center-forward': 'FWD',
-  'cf': 'FWD',
+  'centre-forward': 'CF',
+  'center-forward': 'CF',
+  'cf': 'CF',
   'forward': 'FWD',
-  'fwd': 'FWD',
+  'fwd': 'CF',
 
-  'striker': 'FWD',
-  'st': 'FWD',
+  'striker': 'CF',
+  'st': 'CF
 
-  'second striker': 'FWD',
-  'ss': 'FWD',
+  'second striker': 'CF',
+  'ss': 'CF',
 
   'attacker': 'FWD',
 };
