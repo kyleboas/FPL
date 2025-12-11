@@ -1,0 +1,67 @@
+name: Fetch scorers + positions per GW
+
+on:
+  workflow_dispatch:
+    inputs:
+      gw:
+        description: "Gameweek number"
+        required: true
+        default: "1"
+  schedule:
+    # Adjust as you like – e.g. every Monday at 06:00 UTC
+    - cron: "0 6 * * 1"
+
+jobs:
+  fetch-and-save:
+    runs-on: ubuntu-latest
+
+    env:
+      FOOTBALL_API_KEY: ${{ secrets.FOOTBALL_API_KEY }}
+      NODE_ENV: production
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install deps (if needed)
+        run: |
+          if [ -f package.json ]; then
+            npm ci
+          fi
+
+      - name: Determine GW to fetch
+        id: gw
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            GW="${{ github.event.inputs.gw }}"
+          else
+            # For scheduled runs you can hard-code or compute GW here.
+            # For now, you might just set this manually, or later read from a config file.
+            GW="1"
+          fi
+          echo "gw=$GW" >> $GITHUB_OUTPUT
+
+      - name: Run scorers + positions script
+        run: |
+          node scripts/generate_scorers_positions.mjs --gw=${{ steps.gw.outputs.gw }}
+
+      - name: Commit and push CSV (if changed)
+        if: always()
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git add data/football-api || true
+
+          if git diff --cached --quiet; then
+            echo "No changes to commit."
+            exit 0
+          fi
+
+          git commit -m "Update scorers+positions for GW ${{ steps.gw.outputs.gw }}"
+          git push
