@@ -1,0 +1,53 @@
+name: Update player positions
+
+on:
+  workflow_dispatch:
+    # Allow manual triggering from GitHub Actions tab
+  schedule:
+    # Run every Monday at 04:00 UTC
+    - cron: '0 4 * * 1'
+
+permissions:
+  contents: write
+  # Only allow write access to contents
+
+jobs:
+  generate-positions:
+    runs-on: ubuntu-latest
+    name: Generate player position overrides
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Generate player_position_overrides.csv
+        run: node scripts/generate_positions.mjs
+
+      - name: Check for changes
+        id: check_changes
+        run: |
+          if [ -n "$(git status --porcelain data/player_position_overrides.csv)" ]; then
+            echo "has_changes=true" >> $GITHUB_OUTPUT
+          else
+            echo "has_changes=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Commit and push changes
+        if: steps.check_changes.outputs.has_changes == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/player_position_overrides.csv
+          git commit -m "chore: update player position overrides"
+          git push
+
+      - name: Report no changes
+        if: steps.check_changes.outputs.has_changes == 'false'
+        run: echo "✓ No changes to player position overrides"
