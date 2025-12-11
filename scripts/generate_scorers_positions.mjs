@@ -188,10 +188,44 @@ function matchFplPlayer(apiName, fplIndex) {
 // Football-API data fetch
 // -------------------------
 
+async function resolveRoundForGW(gw) {
+  console.log(`🔎 Resolving round name for GW${gw}...`);
+
+  const data = await fetchJson(`${API_BASE}/fixtures/rounds`, {
+    league: LEAGUE_ID,
+    season: SEASON,
+  });
+
+  let rounds = data.response;
+  if (!Array.isArray(rounds)) {
+    // Some clients flatten, just in case
+    rounds = Array.isArray(data) ? data : [];
+  }
+
+  if (!rounds || rounds.length === 0) {
+    throw new Error('Could not fetch any rounds from API-Football for this league/season.');
+  }
+
+  console.log(`   Available rounds (${rounds.length}): ${rounds.join(' | ')}`);
+
+  const idx = gw - 1;
+  const round = rounds[idx];
+
+  if (!round) {
+    throw new Error(
+      `No round found for gw=${gw}. ` +
+      `Available rounds indices: 0..${rounds.length - 1}`
+    );
+  }
+
+  console.log(`   Using round "${round}" for GW${gw}`);
+  return round;
+}
+
 async function fetchFixturesForGW(gw) {
   console.log(`🔄 Fetching fixtures for GW${gw} (Premier League)...`);
-  // API-Football usually uses "Round" names like "Regular Season - 1"
-  const round = `Regular Season - ${gw}`;
+
+  const round = await resolveRoundForGW(gw);
 
   const data = await fetchJson(`${API_BASE}/fixtures`, {
     league: LEAGUE_ID,
@@ -200,7 +234,7 @@ async function fetchFixturesForGW(gw) {
   });
 
   const fixtures = data.response || [];
-  console.log(`   Found ${fixtures.length} fixtures for GW${gw}`);
+  console.log(`   Found ${fixtures.length} fixtures for GW${gw} (round="${round}")`);
   return fixtures;
 }
 
