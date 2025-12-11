@@ -47,7 +47,8 @@ const STATE = {
             gw: null
         },
         positionFilter: 'ALL',  // 'ALL' | 'DEF' | 'MID' | 'FWD'
-        highlightMode: false     // NEW: jump-on opacity toggle
+        highlightMode: false,    // NEW: jump-on opacity toggle
+        highlightPercent: 50     // NEW: % above best (default 50%)
     },
     latestGW: 0
 };
@@ -365,11 +366,11 @@ function renderTable() {
         };
     });
 
-    // Dynamic highlight threshold: e.g. 50% above best
-    const HIGHLIGHT_PERCENT_ABOVE_BASE = 0.5; // 0.5 = 50%. Change if you want tighter/looser.
+    // Dynamic highlight threshold based on UI setting (percent)
+    const percentAboveBase = (STATE.ui.highlightPercent ?? 50) / 100;
 
     const { base: highlightBase, threshold: highlightThreshold } =
-        computeDynamicHighlightThreshold(allValues, statType, HIGHLIGHT_PERCENT_ABOVE_BASE);
+        computeDynamicHighlightThreshold(allValues, statType, percentAboveBase);
 
     // Apply highlight flags based on the dynamic threshold
     rowData.forEach(row => {
@@ -651,6 +652,22 @@ function setupEventListeners() {
 
                 renderTable();
             });
+        });
+    }
+
+    // Highlight % input
+    const highlightPercentInput = document.getElementById('highlight-percent');
+    if (highlightPercentInput) {
+        // sync default from state
+        highlightPercentInput.value = STATE.ui.highlightPercent;
+
+        highlightPercentInput.addEventListener('input', (e) => {
+            let val = parseFloat(e.target.value);
+            if (isNaN(val)) val = 50;
+            if (val < 0) val = 0;
+            if (val > 200) val = 200; // cap at 200% if you want
+            STATE.ui.highlightPercent = val;
+            renderTable();
         });
     }
 }
