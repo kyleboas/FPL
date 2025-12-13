@@ -12,7 +12,7 @@
 export const getProbabilityColor = (prob, archetype) => {
     // Looser / lower thresholds for mids
     let start = 0.8;
-    let span = 0.20;
+    let span = 0.20; 
 
     if (archetype === 'MID') {
         start = 0.8;   // start "heating up" earlier
