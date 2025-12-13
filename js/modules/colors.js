@@ -10,19 +10,22 @@
  * @returns {string} RGB color string
  */
 export const getProbabilityColor = (prob, archetype) => {
-    // Looser / lower thresholds for mids
-    let start = 0.20;
-    let span = 0.8; 
+  // prob assumed to be 0–1 (e.g., 0.16 = 16%)
 
-    if (archetype === 'MID') {
-        start = 0.8;   // start "heating up" earlier
-        span = 0.40;    // saturate by ~50%
-    }
+  let start = 0.16; // DEF: 16%
+  let end   = 0.50; // DEF: 50%
 
-    const intensity = Math.min(1, Math.max(0, (prob - start) / span));
-    const g = Math.floor(255 * (1 - intensity));
-    const b = Math.floor(255 * (1 - intensity));
-    return `rgb(255, ${g}, ${b})`;
+  if (archetype === 'MID') {
+    start = 0.08; // MID: 8%
+    end   = 0.20; // MID: 20%
+  }
+
+  const span = Math.max(1e-9, end - start);
+  const intensity = Math.min(1, Math.max(0, (prob - start) / span));
+
+  const g = Math.floor(255 * (1 - intensity));
+  const b = Math.floor(255 * (1 - intensity));
+  return `rgb(255, ${g}, ${b})`;
 };
 
 /**
