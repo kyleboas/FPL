@@ -12,11 +12,11 @@
 export const getProbabilityColor = (prob, archetype) => {
   // prob assumed to be 0–1 (e.g., 0.16 = 16%)
 
-  let start = 0.16; // DEF: 16%
+  let start = 0.14; // DEF: 16%
   let end   = 0.65; // DEF: 50%
 
   if (archetype === 'MID') {
-    start = 0.08; // MID: 8%
+    start = 0.07; // MID: 8%
     end   = 0.50; // MID: 20%
   }
 
