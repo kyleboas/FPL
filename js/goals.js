@@ -789,16 +789,28 @@ function renderTable() {
         divGoals.textContent = row.teamGoalsValue != null ? roundToTwo(row.teamGoalsValue) : '-';
 
         // Color the cell background based on team goals value
-        if (row.teamGoalsValue != null) {
-            tdName.style.backgroundColor = getGoalsColor(row.teamGoalsValue, statType, maxTeamGoalsValue);
-            // Adjust text color for readability
-            if (row.teamGoalsValue <= 0.8) {
-                divName.style.color = '#000';
-                divGoals.style.color = '#000';
+        // Goals FOR: higher = better (green), lower = worse (red)
+        // Goals AGAINST: lower = better (green), higher = worse (red)
+        if (row.teamGoalsValue != null && maxTeamGoalsValue > 0) {
+            const scale = Math.max(1, maxTeamGoalsValue);
+            let intensity;
+
+            if (statType === 'against') {
+                // Attack view (goals for): higher = green
+                intensity = row.teamGoalsValue / scale;
             } else {
-                divName.style.color = '#fff';
-                divGoals.style.color = 'rgba(255,255,255,0.8)';
+                // Defense view (goals against): lower = green
+                intensity = 1 - (row.teamGoalsValue / scale);
             }
+
+            // Green to red gradient: green for good, red for bad
+            const r = Math.floor(255 * (1 - intensity));
+            const g = Math.floor(255 * intensity);
+            tdName.style.backgroundColor = `rgb(${r}, ${g}, 0)`;
+
+            // Adjust text color for readability
+            divName.style.color = '#fff';
+            divGoals.style.color = 'rgba(255,255,255,0.85)';
         } else {
             divGoals.style.color = '#666';
         }
