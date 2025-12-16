@@ -760,6 +760,14 @@ function renderTable() {
         });
     });
 
+    // Calculate max team goals value for column 1 color scaling
+    let maxTeamGoalsValue = 0;
+    rowData.forEach(row => {
+        if (row.teamGoalsValue != null) {
+            maxTeamGoalsValue = Math.max(maxTeamGoalsValue, row.teamGoalsValue);
+        }
+    });
+
     tbody.innerHTML = '';
     rowData.forEach(row => {
         const tr = document.createElement('tr');
@@ -778,8 +786,22 @@ function renderTable() {
         const divGoals = document.createElement('div');
         divGoals.className = 'team-goals';
         divGoals.style.fontSize = '0.85em';
-        divGoals.style.color = '#666';
         divGoals.textContent = row.teamGoalsValue != null ? roundToTwo(row.teamGoalsValue) : '-';
+
+        // Color the cell background based on team goals value
+        if (row.teamGoalsValue != null) {
+            tdName.style.backgroundColor = getGoalsColor(row.teamGoalsValue, statType, maxTeamGoalsValue);
+            // Adjust text color for readability
+            if (row.teamGoalsValue <= 0.8) {
+                divName.style.color = '#000';
+                divGoals.style.color = '#000';
+            } else {
+                divName.style.color = '#fff';
+                divGoals.style.color = 'rgba(255,255,255,0.8)';
+            }
+        } else {
+            divGoals.style.color = '#666';
+        }
 
         nameWrapper.appendChild(divName);
         nameWrapper.appendChild(divGoals);
