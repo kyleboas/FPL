@@ -674,6 +674,21 @@ function renderTable() {
         const avgVal = validMetrics.length ? roundToTwo(validMetrics.reduce((a, b) => a + b, 0) / validMetrics.length) : 0;
         const totalVal = roundToTwo(validMetrics.reduce((a, b) => a + b, 0));
 
+        // Get team's own goals for/against (use latest GW available or last GW in range)
+        // This shows the team's own performance metric
+        let teamGoalsValue = null;
+        const lastGwInRange = gwList[gwList.length - 1];
+        const teamCumulative = cumulativeGoalsByTeam[teamCode]
+            ? cumulativeGoalsByTeam[teamCode]['combined'][lastGwInRange]
+            : null;
+        if (teamCumulative) {
+            // statType 'for' (defense view) -> show team's goals against
+            // statType 'against' (attack view) -> show team's goals for
+            teamGoalsValue = statType === 'for'
+                ? teamCumulative.against
+                : teamCumulative.for;
+        }
+
         return {
             teamName: team.short_name || team.name,
             teamCode,
@@ -681,7 +696,8 @@ function renderTable() {
             gwValueMap,
             maxVal,
             avgVal,
-            totalVal
+            totalVal,
+            teamGoalsValue
         };
     });
 
@@ -744,13 +760,64 @@ function renderTable() {
         });
     });
 
+    // Calculate max team goals value for column 1 color scaling
+    let maxTeamGoalsValue = 0;
+    rowData.forEach(row => {
+        if (row.teamGoalsValue != null) {
+            maxTeamGoalsValue = Math.max(maxTeamGoalsValue, row.teamGoalsValue);
+        }
+    });
+
     tbody.innerHTML = '';
     rowData.forEach(row => {
         const tr = document.createElement('tr');
 
         const tdName = document.createElement('td');
-        tdName.textContent = row.teamName;
         tdName.style.fontWeight = '600';
+
+        // Create wrapper for team name and goals value
+        const nameWrapper = document.createElement('div');
+        nameWrapper.className = 'team-cell';
+
+        const divName = document.createElement('div');
+        divName.className = 'team-name';
+        divName.textContent = row.teamName;
+
+        const divGoals = document.createElement('div');
+        divGoals.className = 'team-goals';
+        divGoals.style.fontSize = '0.85em';
+        divGoals.textContent = row.teamGoalsValue != null ? roundToTwo(row.teamGoalsValue) : '-';
+
+        // Color the cell background based on team goals value
+        // Goals FOR: higher = better (green), lower = worse (red)
+        // Goals AGAINST: lower = better (green), higher = worse (red)
+        if (row.teamGoalsValue != null && maxTeamGoalsValue > 0) {
+            const scale = Math.max(1, maxTeamGoalsValue);
+            let intensity;
+
+            if (statType === 'against') {
+                // Attack view (goals for): higher = green
+                intensity = row.teamGoalsValue / scale;
+            } else {
+                // Defense view (goals against): lower = green
+                intensity = 1 - (row.teamGoalsValue / scale);
+            }
+
+            // Green to red gradient: green for good, red for bad
+            const r = Math.floor(255 * (1 - intensity));
+            const g = Math.floor(255 * intensity);
+            tdName.style.backgroundColor = `rgb(${r}, ${g}, 0)`;
+
+            // Adjust text color for readability
+            divName.style.color = '#fff';
+            divGoals.style.color = 'rgba(255,255,255,0.85)';
+        } else {
+            divGoals.style.color = '#666';
+        }
+
+        nameWrapper.appendChild(divName);
+        nameWrapper.appendChild(divGoals);
+        tdName.appendChild(nameWrapper);
         tr.appendChild(tdName);
 
         row.fixtures.forEach(cell => {
