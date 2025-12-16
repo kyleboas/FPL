@@ -675,18 +675,58 @@ function renderTable() {
         const totalVal = roundToTwo(validMetrics.reduce((a, b) => a + b, 0));
 
         // Get team's own goals for/against (use latest GW available or last GW in range)
-        // This shows the team's own performance metric
+        // This shows the team's own performance metric, respecting the venue filter
         let teamGoalsValue = null;
         const lastGwInRange = gwList[gwList.length - 1];
-        const teamCumulative = cumulativeGoalsByTeam[teamCode]
-            ? cumulativeGoalsByTeam[teamCode]['combined'][lastGwInRange]
-            : null;
-        if (teamCumulative) {
-            // statType 'for' (defense view) -> show team's goals against
-            // statType 'against' (attack view) -> show team's goals for
-            teamGoalsValue = statType === 'for'
-                ? teamCumulative.against
-                : teamCumulative.for;
+
+        if (venueFilter === 'combined') {
+            // Use combined stats
+            const teamCumulative = cumulativeGoalsByTeam[teamCode]
+                ? cumulativeGoalsByTeam[teamCode]['combined'][lastGwInRange]
+                : null;
+            if (teamCumulative) {
+                // statType 'for' (defense view) -> show team's goals against
+                // statType 'against' (attack view) -> show team's goals for
+                teamGoalsValue = statType === 'for'
+                    ? teamCumulative.against
+                    : teamCumulative.for;
+            }
+        } else {
+            // venueFilter === 'homeaway': calculate weighted average based on home/away fixtures in range
+            let homeCount = 0, awayCount = 0;
+
+            gwList.forEach(gw => {
+                const fix = fixturesByTeam[teamCode] ? fixturesByTeam[teamCode][gw] : null;
+                if (!fix) return;
+
+                if (fix.wasHome) {
+                    homeCount++;
+                } else {
+                    awayCount++;
+                }
+            });
+
+            const teamHome = cumulativeGoalsByTeam[teamCode]
+                ? cumulativeGoalsByTeam[teamCode]['home'][lastGwInRange]
+                : null;
+            const teamAway = cumulativeGoalsByTeam[teamCode]
+                ? cumulativeGoalsByTeam[teamCode]['away'][lastGwInRange]
+                : null;
+
+            const getValue = (cumulative) => {
+                if (!cumulative) return 0;
+                // statType 'for' (defense view) -> show team's goals against
+                // statType 'against' (attack view) -> show team's goals for
+                return statType === 'for' ? cumulative.against : cumulative.for;
+            };
+
+            const homeVal = getValue(teamHome);
+            const awayVal = getValue(teamAway);
+
+            const total = homeCount + awayCount;
+            if (total > 0) {
+                teamGoalsValue = roundToTwo((homeVal * homeCount + awayVal * awayCount) / total);
+            }
         }
 
         return {
