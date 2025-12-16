@@ -627,46 +627,26 @@ function renderTable() {
             const oppTeam = teamsByCode[opponentCode];
             const oppName = oppTeam ? oppTeam.short_name : 'UNK';
 
-            // Determine venue for stats lookup
             let oppVenue = 'combined';
-            let teamVenue = 'combined';
             if (venueFilter === 'homeaway') {
                 oppVenue = isHome ? 'away' : 'home';
-                teamVenue = isHome ? 'home' : 'away';
             }
 
-            // Get opponent's cumulative goals
             const oppCumulative = cumulativeGoalsByTeam[opponentCode]
                 ? cumulativeGoalsByTeam[opponentCode][oppVenue][gw]
                 : null;
 
-            // Get team's own cumulative goals
-            const teamCumulative = cumulativeGoalsByTeam[teamCode]
-                ? cumulativeGoalsByTeam[teamCode][teamVenue][gw]
-                : null;
-
-            if (!oppCumulative || !teamCumulative) {
+            if (!oppCumulative) {
                 fixtures.push({ type: 'BLANK', cumulativeValue: null, rating: 'blank' });
                 gwValueMap[gw] = null;
                 return;
             }
 
-            // Calculate comparison values:
-            // Attack view (statType === 'against'): Team's goals for vs opponent's goals against
-            // Defense view (statType === 'for'): Team's goals against vs opponent's goals for
-            let teamValue, oppValue;
-            if (statType === 'against') {
-                // Attack: Team's goals for vs opponent's goals against
-                teamValue = teamCumulative.for;
-                oppValue = oppCumulative.against;
-            } else {
-                // Defense: Team's goals against vs opponent's goals for
-                teamValue = teamCumulative.against;
-                oppValue = oppCumulative.for;
-            }
+            const oppCumulativeValue = statType === 'for'
+                ? oppCumulative.for
+                : oppCumulative.against;
 
-            // Use opponent's value for coloring/rating (keeps existing behavior for fixture difficulty)
-            const value = oppValue;
+            const value = oppCumulativeValue;
             const rating = classifyFixture(value, statType);
 
             if (value != null) {
@@ -681,8 +661,6 @@ function renderTable() {
                 gw,
                 venue: isHome ? '(H)' : '(A)',
                 value: value,
-                teamValue: teamValue,
-                oppValue: oppValue,
                 isFinished: fix.finished,
                 rating: rating,
                 highlight: false   // set later after we know the threshold
@@ -696,6 +674,21 @@ function renderTable() {
         const avgVal = validMetrics.length ? roundToTwo(validMetrics.reduce((a, b) => a + b, 0) / validMetrics.length) : 0;
         const totalVal = roundToTwo(validMetrics.reduce((a, b) => a + b, 0));
 
+        // Get team's own goals for/against (use latest GW available or last GW in range)
+        // This shows the team's own performance metric
+        let teamGoalsValue = null;
+        const lastGwInRange = gwList[gwList.length - 1];
+        const teamCumulative = cumulativeGoalsByTeam[teamCode]
+            ? cumulativeGoalsByTeam[teamCode]['combined'][lastGwInRange]
+            : null;
+        if (teamCumulative) {
+            // statType 'for' (defense view) -> show team's goals against
+            // statType 'against' (attack view) -> show team's goals for
+            teamGoalsValue = statType === 'for'
+                ? teamCumulative.against
+                : teamCumulative.for;
+        }
+
         return {
             teamName: team.short_name || team.name,
             teamCode,
@@ -703,7 +696,8 @@ function renderTable() {
             gwValueMap,
             maxVal,
             avgVal,
-            totalVal
+            totalVal,
+            teamGoalsValue
         };
     });
 
@@ -771,8 +765,25 @@ function renderTable() {
         const tr = document.createElement('tr');
 
         const tdName = document.createElement('td');
-        tdName.textContent = row.teamName;
         tdName.style.fontWeight = '600';
+
+        // Create wrapper for team name and goals value
+        const nameWrapper = document.createElement('div');
+        nameWrapper.className = 'team-cell';
+
+        const divName = document.createElement('div');
+        divName.className = 'team-name';
+        divName.textContent = row.teamName;
+
+        const divGoals = document.createElement('div');
+        divGoals.className = 'team-goals';
+        divGoals.style.fontSize = '0.85em';
+        divGoals.style.color = '#666';
+        divGoals.textContent = row.teamGoalsValue != null ? roundToTwo(row.teamGoalsValue) : '-';
+
+        nameWrapper.appendChild(divName);
+        nameWrapper.appendChild(divGoals);
+        tdName.appendChild(nameWrapper);
         tr.appendChild(tdName);
 
         row.fixtures.forEach(cell => {
@@ -790,10 +801,9 @@ function renderTable() {
                 divOpp.className = 'match-opp';
                 divOpp.textContent = `${cell.opponent} ${cell.venue}`;
 
-                // Display both team's value and opponent's value
                 const divValue = document.createElement('div');
                 divValue.className = 'match-value';
-                divValue.textContent = `${roundToTwo(cell.teamValue)} vs ${roundToTwo(cell.oppValue)}`;
+                divValue.textContent = roundToTwo(cell.value);
 
                 wrapper.appendChild(divOpp);
                 wrapper.appendChild(divValue);
