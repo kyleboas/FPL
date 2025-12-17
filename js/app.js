@@ -35,7 +35,7 @@ const STATE = {
     },
     ui: {
         currentArchetype: 'CB',
-        formFilter: 0, // 0 = all gameweeks, 1-12 = last N gameweeks
+        formFilter: 6, // 0 = all gameweeks, 1-12 = last N gameweeks
         startGW: 1,
         endGW: 6,
         excludedGWs: [],
