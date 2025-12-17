@@ -37,6 +37,14 @@
             </div>
 
             <div class="control-group">
+                <label for="form-filter">Form Window</label>
+                <div style="display: flex; align-items: center; gap: 10px;">
+                    <input type="range" id="form-filter" min="0" max="12" value="8" step="1">
+                    <span class="form-filter-value" id="form-filter-value">Last 8 GWs</span>
+                </div>
+            </div>
+
+            <div class="control-group">
                 <label for="gw-start">Start GW</label>
                 <input type="number" id="gw-start" min="1" max="38" value="1" step="1">
             </div>
