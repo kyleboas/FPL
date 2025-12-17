@@ -91,6 +91,8 @@ export const checkDefconHit = (stats, archetype) => {
  * @param {Object} params.teamsById - Teams lookup by ID
  * @param {Object} params.teamsByCode - Teams lookup by code
  * @param {Object} params.positionOverrides - Position overrides lookup
+ * @param {number} params.formFilter - Form window filter (0 = all time, 1-12 = last N GWs)
+ * @param {number} params.latestGW - Latest completed gameweek
  * @returns {Object} Probabilities by opponent code, venue, and archetype
  */
 export const processProbabilities = ({
@@ -100,11 +102,17 @@ export const processProbabilities = ({
     fixturesByTeam,
     teamsById,
     teamsByCode,
-    positionOverrides = {}
+    positionOverrides = {},
+    formFilter = 0,
+    latestGW = 0
 }) => {
     const opponentAgg = {};
     const initAgg = () => ({ hits: 0, trials: 0 });
     const archetypes = ['CB', 'LB', 'RB', 'MID', 'FWD'];
+
+    // Calculate form window bounds
+    const windowEnd = latestGW;
+    const windowStart = formFilter > 0 ? Math.max(1, windowEnd - formFilter + 1) : 1;
 
     stats.forEach(statRecord => {
         const minutes = getVal(statRecord, 'minutes', 'minutes_played', 'minutes_x');
@@ -119,6 +127,9 @@ export const processProbabilities = ({
 
         const gw = getVal(statRecord, 'gw', 'gameweek', 'event', 'round');
         if (!gw) return;
+
+        // Filter by form window: skip stats outside the window
+        if (formFilter > 0 && (gw < windowStart || gw > windowEnd)) return;
 
         const teamRef = getVal(player, 'team', 'team_id', 'teamid', 'team_code');
         let teamCode = null;
