@@ -117,6 +117,24 @@ function processData() {
 }
 
 // ==========================================
+// PROBABILITY CALCULATION
+// ==========================================
+
+function recalculateProbabilities() {
+    STATE.lookups.probabilities = processProbabilities({
+        stats: STATE.data.stats,
+        teams: STATE.data.teams,
+        playersById: STATE.lookups.playersById,
+        fixturesByTeam: STATE.lookups.fixturesByTeam,
+        teamsById: STATE.lookups.teamsById,
+        teamsByCode: STATE.lookups.teamsByCode,
+        positionOverrides: STATE.lookups.positionOverrides,
+        formFilter: STATE.ui.formFilter,
+        latestGW: STATE.latestGW
+    });
+}
+
+// ==========================================
 // RENDERING
 // ==========================================
 
@@ -133,6 +151,9 @@ function handleGwHeaderClick(gw) {
 }
 
 function renderTable() {
+    // Recalculate probabilities based on current form filter
+    recalculateProbabilities();
+
     const { currentArchetype, sortMode } = STATE.ui;
     const thresholdPercent = STATE.ui.thresholdValue || 0; // e.g. 8 => 8%
     const startGW = parseInt(STATE.ui.startGW, 10);
@@ -441,6 +462,7 @@ async function init() {
         mainEl.style.display = 'block';
 
         applyDefaultGWWindow();
+        updateFormFilterDisplay(STATE.ui.formFilter);
         setupEventListeners();
         renderTable();
 
