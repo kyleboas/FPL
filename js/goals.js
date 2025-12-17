@@ -37,7 +37,7 @@ const STATE = {
     ui: {
         statType: 'for',
         venueFilter: 'homeaway',
-        formFilter: 8,
+        formFilter: 6,
         startGW: 1,
         endGW: 6,
         excludedGWs: [],

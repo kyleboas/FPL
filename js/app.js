@@ -35,6 +35,7 @@ const STATE = {
     },
     ui: {
         currentArchetype: 'CB',
+        formFilter: 6, // 0 = all gameweeks, 1-12 = last N gameweeks
         startGW: 1,
         endGW: 6,
         excludedGWs: [],
@@ -290,6 +291,21 @@ function renderTable() {
 }
 
 // ==========================================
+// FORM FILTER LOGIC
+// ==========================================
+
+function updateFormFilterDisplay(value) {
+    const displayEl = document.getElementById('form-filter-value');
+    if (!displayEl) return;
+
+    if (value === 0) {
+        displayEl.textContent = 'All Time';
+    } else {
+        displayEl.textContent = `Last ${value} GW${value > 1 ? 's' : ''}`;
+    }
+}
+
+// ==========================================
 // DEFAULT GW WINDOW
 // ==========================================
 
@@ -318,6 +334,15 @@ function applyDefaultGWWindow() {
 function setupEventListeners() {
     document.getElementById('archetype-filter').addEventListener('change', (e) => {
         STATE.ui.currentArchetype = e.target.value;
+        renderTable();
+    });
+
+    // Form filter slider
+    const formFilterSlider = document.getElementById('form-filter');
+    formFilterSlider.addEventListener('input', (e) => {
+        const value = parseInt(e.target.value, 10);
+        STATE.ui.formFilter = value;
+        updateFormFilterDisplay(value);
         renderTable();
     });
 
