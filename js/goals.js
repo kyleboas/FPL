@@ -196,7 +196,8 @@ function getScorersForFixture(teamCode, opponentCode, gw) {
 
 // Return list of historical scorers against a specific opponent (for future fixtures)
 // Filters by position if positionFilter is set
-function getHistoricalScorersVsOpponent(teamCode, opponentCode, positionFilter = 'ALL') {
+// Filters by venue if venueFilter is 'homeaway' and isHome is specified
+function getHistoricalScorersVsOpponent(teamCode, opponentCode, positionFilter = 'ALL', venueFilter = 'combined', isHome = null) {
     // Find opponent team
     let opp = STATE.data.teams.find(t => t.code === opponentCode);
     if (!opp) {
@@ -237,6 +238,12 @@ function getHistoricalScorersVsOpponent(teamCode, opponentCode, positionFilter =
 
         // Check if this team played against the opponent we're looking for
         if (fix.opponentCode !== opponentCode) return;
+
+        // Apply venue filter if homeaway mode is active
+        if (venueFilter === 'homeaway' && isHome !== null) {
+            // Only include scorers from matches at the same venue
+            if (fix.wasHome !== isHome) return;
+        }
 
         // This player scored against the opponent - add to scorers list
         const firstName  = getVal(player, 'first_name')  || '';
@@ -469,8 +476,11 @@ function showScorersPanel(row, cell, scorers, options = {}) {
         const posLabel = options.positionFilter && options.positionFilter !== 'ALL'
             ? ` (${options.positionFilter})`
             : '';
+        const venueLabel = options.venueFilter === 'homeaway'
+            ? ` - ${cell.venue === '(H)' ? 'Home' : 'Away'} only`
+            : '';
         titleEl.textContent = `GW ${cell.gw} – ${homeSide} vs ${awaySide}`;
-        titleEl.innerHTML = `GW ${cell.gw} – ${homeSide} vs ${awaySide}<br><small style="font-weight:normal;color:#666;">Historical scorers vs ${oppName}${posLabel}</small>`;
+        titleEl.innerHTML = `GW ${cell.gw} – ${homeSide} vs ${awaySide}<br><small style="font-weight:normal;color:#666;">Historical scorers vs ${oppName}${posLabel}${venueLabel}</small>`;
     } else {
         titleEl.textContent = `GW ${cell.gw} – ${homeSide} vs ${awaySide}`;
     }
@@ -480,7 +490,10 @@ function showScorersPanel(row, cell, scorers, options = {}) {
             const posLabel = options.positionFilter && options.positionFilter !== 'ALL'
                 ? ` ${options.positionFilter.toLowerCase()}s`
                 : '';
-            bodyEl.innerHTML = `<p>No${posLabel} have scored against ${oppName} this season.</p>`;
+            const venueLabel = options.venueFilter === 'homeaway'
+                ? ` in ${cell.venue === '(H)' ? 'home' : 'away'} matches`
+                : '';
+            bodyEl.innerHTML = `<p>No${posLabel} have scored against ${oppName}${venueLabel} this season.</p>`;
         } else if (options.isFuture) {
             bodyEl.innerHTML = `<p>Match not yet played.</p>`;
         } else {
@@ -543,18 +556,25 @@ function showScorersPanel(row, cell, scorers, options = {}) {
 
 function handleCellClick(row, cell) {
     const positionFilter = STATE.ui.positionFilter;
+    const venueFilter = STATE.ui.venueFilter;
 
     // FUTURE fixtures → show historical scorers against this opponent
     if (cell.type === 'FUTURE') {
+        // Determine if this is a home fixture
+        const isHome = cell.venue === '(H)';
+
         const historicalScorers = getHistoricalScorersVsOpponent(
             cell.teamCode,
             cell.opponentCode,
-            positionFilter
+            positionFilter,
+            venueFilter,
+            isHome
         );
         showScorersPanel(row, cell, historicalScorers, {
             isFuture: true,
             isHistorical: true,
-            positionFilter
+            positionFilter,
+            venueFilter
         });
         return;
     }
