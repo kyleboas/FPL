@@ -204,17 +204,10 @@ function getHistoricalScorersVsOpponent(teamCode, opponentCode, positionFilter =
     }
     if (!opp) return [];
 
-    const oppId = Number(getVal(opp, 'id', 'team_id', 'code'));
-
-    // Find all stats where ANY team played against this opponent
-    const historicalStats = STATE.data.stats.filter(row => {
-        const rowOpp = getOppTeamId(row);
-        return rowOpp === oppId;
-    });
-
     const scorers = [];
 
-    historicalStats.forEach(row => {
+    // Process all stats to find goals scored against this opponent
+    STATE.data.stats.forEach(row => {
         const goals = getGoals(row);
         if (!goals || goals <= 0) return;
 
@@ -228,6 +221,24 @@ function getHistoricalScorersVsOpponent(teamCode, opponentCode, positionFilter =
             if (playerPos !== positionFilter) return;
         }
 
+        // Get the player's team
+        const playerTeamCode = getVal(player, 'team_code', 'teamCode', 'team');
+        if (!playerTeamCode) return;
+
+        // Get the gameweek
+        const gw = getGWValue(row);
+        if (!gw) return;
+
+        // Find the fixture for this player's team in this gameweek
+        const fix = STATE.lookups.fixturesByTeam[playerTeamCode]
+            ? STATE.lookups.fixturesByTeam[playerTeamCode][gw]
+            : null;
+        if (!fix) return;
+
+        // Check if this team played against the opponent we're looking for
+        if (fix.opponentCode !== opponentCode) return;
+
+        // This player scored against the opponent - add to scorers list
         const firstName  = getVal(player, 'first_name')  || '';
         const secondName = getVal(player, 'second_name') || '';
         const webName    = getVal(player, 'web_name')    || '';
@@ -238,14 +249,11 @@ function getHistoricalScorersVsOpponent(teamCode, opponentCode, positionFilter =
             `Player ${playerId}`;
 
         // Get player's team name
-        const playerTeamCode = getVal(player, 'team_code', 'teamCode', 'team');
         let playerTeam = STATE.data.teams.find(t => t.code === playerTeamCode);
         if (!playerTeam) {
             playerTeam = STATE.data.teams.find(t => getVal(t, 'id', 'team_id') === playerTeamCode);
         }
         const teamLabel = playerTeam ? (playerTeam.short_name || playerTeam.name) : 'Unknown';
-
-        const gw = getGWValue(row);
 
         scorers.push({
             name,
