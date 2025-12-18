@@ -197,13 +197,21 @@ function getScorersForFixture(teamCode, opponentCode, gw) {
 // Return list of historical scorers against a specific opponent (for future fixtures)
 // Filters by position if positionFilter is set
 // Filters by venue if venueFilter is 'homeaway' and isHome is specified
-function getHistoricalScorersVsOpponent(teamCode, opponentCode, positionFilter = 'ALL', venueFilter = 'combined', isHome = null) {
+// Respects form window (formFilter) to show only recent gameweeks
+function getHistoricalScorersVsOpponent(teamCode, opponentCode, positionFilter = 'ALL', venueFilter = 'combined', isHome = null, formFilter = 0, latestGW = 0) {
     // Find opponent team
     let opp = STATE.data.teams.find(t => t.code === opponentCode);
     if (!opp) {
         opp = STATE.data.teams.find(t => getVal(t, 'id', 'team_id') === opponentCode);
     }
     if (!opp) return [];
+
+    // Calculate form window range
+    let windowStart = 1;
+    if (formFilter > 0 && latestGW > 0) {
+        windowStart = Math.max(1, latestGW - formFilter + 1);
+    }
+    const windowEnd = latestGW > 0 ? latestGW : CONFIG.UI.MAX_GW;
 
     const scorers = [];
 
@@ -229,6 +237,11 @@ function getHistoricalScorersVsOpponent(teamCode, opponentCode, positionFilter =
         // Get the gameweek
         const gw = getGWValue(row);
         if (!gw) return;
+
+        // Apply form window filter: only include gameweeks within the window
+        if (formFilter > 0) {
+            if (gw < windowStart || gw > windowEnd) return;
+        }
 
         // Find the fixture for this player's team in this gameweek
         const fix = STATE.lookups.fixturesByTeam[playerTeamCode]
@@ -270,9 +283,9 @@ function getHistoricalScorersVsOpponent(teamCode, opponentCode, positionFilter =
         });
     });
 
-    // Sort by goals (descending), then by gameweek (descending), then by name
+    // Sort by gameweek (descending - latest first), then by goals (descending), then by name
     return scorers
-        .sort((a, b) => b.goals - a.goals || b.gw - a.gw || a.name.localeCompare(b.name));
+        .sort((a, b) => b.gw - a.gw || b.goals - a.goals || a.name.localeCompare(b.name));
 }
 
 // Classify fixture quality into simple ratings
@@ -568,7 +581,9 @@ function handleCellClick(row, cell) {
             cell.opponentCode,
             positionFilter,
             venueFilter,
-            isHome
+            isHome,
+            STATE.ui.formFilter,
+            STATE.latestGW
         );
         showScorersPanel(row, cell, historicalScorers, {
             isFuture: true,
