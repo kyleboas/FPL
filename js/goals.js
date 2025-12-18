@@ -197,13 +197,6 @@ function getScorersForFixture(teamCode, opponentCode, gw) {
 // Return list of historical scorers against a specific opponent (for future fixtures)
 // Filters by position if positionFilter is set
 function getHistoricalScorersVsOpponent(teamCode, opponentCode, positionFilter = 'ALL') {
-    // Find team
-    let team = STATE.data.teams.find(t => t.code === teamCode);
-    if (!team) {
-        team = STATE.data.teams.find(t => getVal(t, 'id', 'team_id') === teamCode);
-    }
-    if (!team) return [];
-
     // Find opponent team
     let opp = STATE.data.teams.find(t => t.code === opponentCode);
     if (!opp) {
@@ -211,14 +204,12 @@ function getHistoricalScorersVsOpponent(teamCode, opponentCode, positionFilter =
     }
     if (!opp) return [];
 
-    const teamId = Number(getVal(team, 'id', 'team_id', 'code'));
     const oppId = Number(getVal(opp, 'id', 'team_id', 'code'));
 
-    // Find all stats where the team played against the opponent
+    // Find all stats where ANY team played against this opponent
     const historicalStats = STATE.data.stats.filter(row => {
-        const rowTeam = getTeamId(row);
         const rowOpp = getOppTeamId(row);
-        return rowTeam === teamId && rowOpp === oppId;
+        return rowOpp === oppId;
     });
 
     const scorers = [];
