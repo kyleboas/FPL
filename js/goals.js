@@ -36,6 +36,7 @@ const STATE = {
         positionOverrides: {},
         teamGoals: {},
         positionGoalsRaw: {},  // teamCode -> gw -> { ALL:{for,against}, DEF:{...}, MID:{...}, FWD:{...} }
+        positionGoalsSingle: {},  // Single contribution version (each player capped at 1 goal per match)
         probabilities: {}      // DEFCON probabilities by opponent
     },
     ui: {
@@ -51,6 +52,7 @@ const STATE = {
             gw: null
         },
         positionFilter: 'ALL',  // 'ALL' | 'DEF' | 'MID' | 'FWD'
+        singleContributionMode: false, // If true, cap each player at 1 goal contribution per match
         highlightMode: false,    // NEW: jump-on opacity toggle
         highlightPercent: 50,    // NEW: % above best (default 50%)
         showDefcon: true,        // DEFCON visibility toggle (default: shown)
@@ -414,6 +416,7 @@ function processData() {
 
     STATE.lookups.teamGoals = goalsResult.teamGoals;
     STATE.lookups.positionGoalsRaw = goalsResult.positionGoalsRaw;
+    STATE.lookups.positionGoalsSingle = goalsResult.positionGoalsSingle;
     STATE.latestGW = goalsResult.latestGW;
 
     // Calculate DEFCON probabilities
@@ -631,7 +634,9 @@ function renderTable() {
         formFilter,
         maxGW: CONFIG.UI.MAX_GW,
         positionFilter,
-        positionGoalsRaw: STATE.lookups.positionGoalsRaw
+        positionGoalsRaw: STATE.lookups.positionGoalsRaw,
+        positionGoalsSingle: STATE.lookups.positionGoalsSingle,
+        singleContributionMode: STATE.ui.singleContributionMode
     });
 
     const thead = document.getElementById('fixture-header');
@@ -1071,6 +1076,24 @@ function setupEventListeners() {
                     opt.classList.remove('active');
                 });
                 e.target.classList.add('active');
+
+                renderTable();
+            });
+        });
+    }
+
+    // Single Contribution toggle
+    const singleContribToggle = document.getElementById('single-contrib-toggle');
+    if (singleContribToggle) {
+        singleContribToggle.querySelectorAll('.toggle-option').forEach(option => {
+            option.addEventListener('click', (e) => {
+                const value = e.currentTarget.dataset.value; // 'off' or 'on'
+                STATE.ui.singleContributionMode = (value === 'on');
+
+                singleContribToggle.querySelectorAll('.toggle-option').forEach(opt => {
+                    opt.classList.remove('active');
+                });
+                e.currentTarget.classList.add('active');
 
                 renderTable();
             });
