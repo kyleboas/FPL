@@ -13,7 +13,10 @@ import {
     buildGWList,
     processGoalsData,
     calculateCumulativeGoals,
-    getGoalsColor
+    getGoalsColor,
+    processProbabilities,
+    getProbabilityColor,
+    shouldUseWhiteText
 } from './modules/index.js';
 
 // Application State
@@ -32,7 +35,8 @@ const STATE = {
         fixturesByTeam: {},
         positionOverrides: {},
         teamGoals: {},
-        positionGoalsRaw: {}  // teamCode -> gw -> { ALL:{for,against}, DEF:{...}, MID:{...}, FWD:{...} }
+        positionGoalsRaw: {},  // teamCode -> gw -> { ALL:{for,against}, DEF:{...}, MID:{...}, FWD:{...} }
+        probabilities: {}      // DEFCON probabilities by opponent
     },
     ui: {
         statType: 'for',
@@ -48,7 +52,9 @@ const STATE = {
         },
         positionFilter: 'ALL',  // 'ALL' | 'DEF' | 'MID' | 'FWD'
         highlightMode: false,    // NEW: jump-on opacity toggle
-        highlightPercent: 50     // NEW: % above best (default 50%)
+        highlightPercent: 50,    // NEW: % above best (default 50%)
+        showDefcon: true,        // DEFCON visibility toggle (default: shown)
+        defconArchetype: 'CB'    // DEFCON archetype filter
     },
     latestGW: 0
 };
@@ -406,12 +412,41 @@ function processData() {
     STATE.lookups.positionGoalsRaw = goalsResult.positionGoalsRaw;
     STATE.latestGW = goalsResult.latestGW;
 
+    // Calculate DEFCON probabilities
+    STATE.lookups.probabilities = processProbabilities({
+        stats: STATE.data.stats,
+        teams: STATE.data.teams,
+        playersById: STATE.lookups.playersById,
+        fixturesByTeam: STATE.lookups.fixturesByTeam,
+        teamsById: STATE.lookups.teamsById,
+        teamsByCode: STATE.lookups.teamsByCode,
+        positionOverrides: STATE.lookups.positionOverrides
+    });
+
     const debugEl = document.getElementById('status-bar');
     if (debugEl) {
         debugEl.textContent =
             `Data Ready: ${STATE.data.teams.length} Teams, ` +
             `${STATE.data.fixtures.length} Fixtures processed.`;
     }
+}
+
+// ==========================================
+// DEFCON PROBABILITY CALCULATION
+// ==========================================
+
+function recalculateProbabilities() {
+    STATE.lookups.probabilities = processProbabilities({
+        stats: STATE.data.stats,
+        teams: STATE.data.teams,
+        playersById: STATE.lookups.playersById,
+        fixturesByTeam: STATE.lookups.fixturesByTeam,
+        teamsById: STATE.lookups.teamsById,
+        teamsByCode: STATE.lookups.teamsByCode,
+        positionOverrides: STATE.lookups.positionOverrides,
+        formFilter: STATE.ui.formFilter,
+        latestGW: STATE.latestGW
+    });
 }
 
 // ==========================================
@@ -559,14 +594,17 @@ function updateFormFilterDisplay(value) {
 }
 
 function renderTable() {
-    const { statType, venueFilter, sortMode, formFilter, positionFilter } = STATE.ui;
+    // Recalculate DEFCON probabilities based on current form filter
+    recalculateProbabilities();
+
+    const { statType, venueFilter, sortMode, formFilter, positionFilter, showDefcon, defconArchetype } = STATE.ui;
     const startGW = parseInt(STATE.ui.startGW, 10);
     const endGW = parseInt(STATE.ui.endGW, 10);
 
     const gwList = buildGWList(startGW, endGW, STATE.ui.excludedGWs);
 
     const { teams } = STATE.data;
-    const { fixturesByTeam, teamsByCode } = STATE.lookups;
+    const { fixturesByTeam, teamsByCode, probabilities } = STATE.lookups;
 
     // Calculate cumulative goals
     const cumulativeGoalsByTeam = calculateCumulativeGoals({
@@ -653,6 +691,15 @@ function renderTable() {
                 allValues.push(value);
             }
 
+            // Calculate DEFCON probability for this fixture
+            let defconProb = CONFIG.MODEL.MIN_PROB;
+            const venueKey = String(isHome);  // 'true' for home, 'false' for away
+            if (probabilities[opponentCode] &&
+                probabilities[opponentCode][venueKey] &&
+                probabilities[opponentCode][venueKey][defconArchetype]) {
+                defconProb = probabilities[opponentCode][venueKey][defconArchetype];
+            }
+
             fixtures.push({
                 type: fix.finished ? 'MATCH' : 'FUTURE',
                 opponent: oppName,
@@ -661,6 +708,7 @@ function renderTable() {
                 gw,
                 venue: isHome ? '(H)' : '(A)',
                 value: value,
+                defconProb: defconProb,  // DEFCON probability for display
                 isFinished: fix.finished,
                 rating: rating,
                 highlight: false   // set later after we know the threshold
@@ -877,7 +925,13 @@ function renderTable() {
 
                 const divValue = document.createElement('div');
                 divValue.className = 'match-value';
-                divValue.textContent = roundToTwo(cell.value);
+                // Show DEFCON percentage when toggle is on
+                if (showDefcon) {
+                    const defconPercent = Math.round(cell.defconProb * 100);
+                    divValue.textContent = `${roundToTwo(cell.value)} (${defconPercent}%)`;
+                } else {
+                    divValue.textContent = roundToTwo(cell.value);
+                }
 
                 wrapper.appendChild(divOpp);
                 wrapper.appendChild(divValue);
@@ -1104,6 +1158,33 @@ function setupEventListeners() {
             if (val < 0) val = 0;
             if (val > 200) val = 200; // cap at 200% if you want
             STATE.ui.highlightPercent = val;
+            renderTable();
+        });
+    }
+
+    // DEFCON toggle (Show/Hide)
+    const defconToggle = document.getElementById('defcon-toggle');
+    if (defconToggle) {
+        defconToggle.querySelectorAll('.toggle-option').forEach(option => {
+            option.addEventListener('click', (e) => {
+                const value = e.currentTarget.dataset.value; // 'show' or 'hide'
+                STATE.ui.showDefcon = (value === 'show');
+
+                defconToggle.querySelectorAll('.toggle-option').forEach(opt => {
+                    opt.classList.remove('active');
+                });
+                e.currentTarget.classList.add('active');
+
+                renderTable();
+            });
+        });
+    }
+
+    // DEFCON Archetype selector
+    const defconArchetypeSelect = document.getElementById('defcon-archetype');
+    if (defconArchetypeSelect) {
+        defconArchetypeSelect.addEventListener('change', (e) => {
+            STATE.ui.defconArchetype = e.target.value;
             renderTable();
         });
     }
