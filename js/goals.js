@@ -263,20 +263,9 @@ function getHistoricalScorersVsOpponent(teamCode, opponentCode, positionFilter =
         });
     });
 
-    // Combine duplicates: same player, aggregate goals across all matches
-    const merged = {};
-    scorers.forEach(s => {
-        const key = `${s.teamLabel}::${s.name}`;
-        if (!merged[key]) {
-            merged[key] = { name: s.name, goals: s.goals, teamLabel: s.teamLabel, matches: 1 };
-        } else {
-            merged[key].goals += s.goals;
-            merged[key].matches += 1;
-        }
-    });
-
-    return Object.values(merged)
-        .sort((a, b) => b.goals - a.goals || a.name.localeCompare(b.name));
+    // Sort by goals (descending), then by gameweek (descending), then by name
+    return scorers
+        .sort((a, b) => b.goals - a.goals || b.gw - a.gw || a.name.localeCompare(b.name));
 }
 
 // Classify fixture quality into simple ratings
@@ -498,13 +487,13 @@ function showScorersPanel(row, cell, scorers, options = {}) {
             bodyEl.innerHTML = `<p>No goals scored in this match (0-0).</p>`;
         }
     } else if (options.isHistorical) {
-        // Historical data: show matches count
+        // Historical data: show gameweek
         const rowsHtml = scorers.map(s => `
             <tr>
                 <td>${s.teamLabel}</td>
+                <td style="text-align:center;">GW${s.gw}</td>
                 <td>${s.name}</td>
                 <td style="text-align:right;">${s.goals}</td>
-                <td style="text-align:right;color:#666;">${s.matches}</td>
             </tr>
         `).join('');
 
@@ -513,9 +502,9 @@ function showScorersPanel(row, cell, scorers, options = {}) {
                 <thead>
                     <tr>
                         <th style="text-align:left; padding: 4px 0;">Team</th>
+                        <th style="text-align:center; padding: 4px 0;">Gameweek</th>
                         <th style="text-align:left; padding: 4px 0;">Player</th>
                         <th style="text-align:right; padding: 4px 0;">Goals</th>
-                        <th style="text-align:right; padding: 4px 0;">Matches</th>
                     </tr>
                 </thead>
                 <tbody>
