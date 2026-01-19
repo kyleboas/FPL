@@ -62,13 +62,7 @@ const STATE = {
     },
     latestGW: 0,
     fplTeamId: null,
-    myPlayerTeams: new Set(),  // Set of team codes where I have players
-    myPlayerTeamsByPosition: {  // Sets of team codes by position
-        ALL: new Set(),
-        DEF: new Set(),
-        MID: new Set(),
-        FWD: new Set()
-    }
+    myPlayerTeams: new Set()  // Set of team codes where I have players
 };
 
 // ==========================================
@@ -896,11 +890,8 @@ function renderTable() {
     let otherTeams = [];
 
     if (teamFilter === 'split' && STATE.myPlayerTeams.size > 0) {
-        // Use position-specific set based on current position filter
-        const relevantTeamSet = STATE.myPlayerTeamsByPosition[positionFilter] || STATE.myPlayerTeams;
-
         rowData.forEach(row => {
-            if (relevantTeamSet.has(row.teamCode)) {
+            if (STATE.myPlayerTeams.has(row.teamCode)) {
                 myTeams.push(row);
             } else {
                 otherTeams.push(row);
@@ -1051,25 +1042,15 @@ function renderTable() {
 
     // Render teams with my players
     if (teamFilter === 'split' && STATE.myPlayerTeams.size > 0) {
-        // Create position-specific header text
-        let positionLabel = 'Players';
-        if (positionFilter === 'DEF') {
-            positionLabel = 'Defenders';
-        } else if (positionFilter === 'MID') {
-            positionLabel = 'Midfielders';
-        } else if (positionFilter === 'FWD') {
-            positionLabel = 'Forwards';
-        }
-
         if (myTeams.length > 0) {
-            tbody.appendChild(createSectionHeader(`Teams With My ${positionLabel} (${myTeams.length})`));
+            tbody.appendChild(createSectionHeader(`Teams With My Players (${myTeams.length})`));
             myTeams.forEach(row => {
                 tbody.appendChild(renderTeamRow(row));
             });
         }
 
         if (otherTeams.length > 0) {
-            tbody.appendChild(createSectionHeader(`Teams Without My ${positionLabel} (${otherTeams.length})`));
+            tbody.appendChild(createSectionHeader(`Teams Without My Players (${otherTeams.length})`));
             otherTeams.forEach(row => {
                 tbody.appendChild(renderTeamRow(row));
             });
@@ -1136,11 +1117,6 @@ async function handleLoadTeam() {
 
         // Build a set of team codes where I have players
         STATE.myPlayerTeams.clear();
-        STATE.myPlayerTeamsByPosition.ALL.clear();
-        STATE.myPlayerTeamsByPosition.DEF.clear();
-        STATE.myPlayerTeamsByPosition.MID.clear();
-        STATE.myPlayerTeamsByPosition.FWD.clear();
-
         playerIds.forEach(playerId => {
             const player = STATE.lookups.playersById[playerId];
             if (player) {
@@ -1155,26 +1131,12 @@ async function handleLoadTeam() {
 
                 if (teamCode) {
                     STATE.myPlayerTeams.add(teamCode);
-                    STATE.myPlayerTeamsByPosition.ALL.add(teamCode);
-
-                    // Get player position and add to position-specific set
-                    const playerPos = getPlayerPositionKey(player);
-                    if (playerPos === 'DEF') {
-                        STATE.myPlayerTeamsByPosition.DEF.add(teamCode);
-                    } else if (playerPos === 'MID') {
-                        STATE.myPlayerTeamsByPosition.MID.add(teamCode);
-                    } else if (playerPos === 'FWD') {
-                        STATE.myPlayerTeamsByPosition.FWD.add(teamCode);
-                    }
                 }
             }
         });
 
         const statusEl = document.getElementById('status-bar');
-        const defCount = STATE.myPlayerTeamsByPosition.DEF.size;
-        const midCount = STATE.myPlayerTeamsByPosition.MID.size;
-        const fwdCount = STATE.myPlayerTeamsByPosition.FWD.size;
-        statusEl.textContent = `Loaded ${playerIds.length} players from Team ${teamId} (GW${eventId}). Teams: ${STATE.myPlayerTeams.size} total (DEF: ${defCount}, MID: ${midCount}, FWD: ${fwdCount})`;
+        statusEl.textContent = `Loaded ${playerIds.length} players from Team ${teamId} (GW${eventId}). Found ${STATE.myPlayerTeams.size} teams with your players.`;
 
         renderTable();
     } catch (error) {
