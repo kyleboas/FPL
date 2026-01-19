@@ -16,7 +16,8 @@ import {
     getGoalsColor,
     processProbabilities,
     getProbabilityColor,
-    shouldUseWhiteText
+    shouldUseWhiteText,
+    fetchFPLTeam
 } from './modules/index.js';
 
 // Application State
@@ -56,9 +57,12 @@ const STATE = {
         highlightMode: false,    // NEW: jump-on opacity toggle
         highlightPercent: 50,    // NEW: % above best (default 50%)
         showDefcon: true,        // DEFCON visibility toggle (default: shown)
-        defconArchetype: 'CB'    // DEFCON archetype filter
+        defconArchetype: 'CB',   // DEFCON archetype filter
+        teamFilter: 'all'        // 'all' | 'split' - filter teams by FPL ownership
     },
-    latestGW: 0
+    latestGW: 0,
+    fplTeamId: null,
+    myPlayerTeams: new Set()  // Set of team codes where I have players
 };
 
 // ==========================================
@@ -879,7 +883,27 @@ function renderTable() {
     });
 
     tbody.innerHTML = '';
-    rowData.forEach(row => {
+
+    // Split teams based on ownership if filter is active
+    const teamFilter = STATE.ui.teamFilter;
+    let myTeams = [];
+    let otherTeams = [];
+
+    if (teamFilter === 'split' && STATE.myPlayerTeams.size > 0) {
+        rowData.forEach(row => {
+            if (STATE.myPlayerTeams.has(row.teamCode)) {
+                myTeams.push(row);
+            } else {
+                otherTeams.push(row);
+            }
+        });
+    } else {
+        // Show all teams in one section
+        myTeams = rowData;
+    }
+
+    // Helper function to render a team row
+    const renderTeamRow = (row) => {
         const tr = document.createElement('tr');
 
         const tdName = document.createElement('td');
@@ -995,8 +1019,48 @@ function renderTable() {
             tr.appendChild(td);
         });
 
-        tbody.appendChild(tr);
-    });
+        return tr;
+    };
+
+    // Helper function to create a section header row
+    const createSectionHeader = (title) => {
+        const tr = document.createElement('tr');
+        tr.style.backgroundColor = '#f8f9fa';
+        tr.style.fontWeight = 'bold';
+
+        const td = document.createElement('td');
+        td.colSpan = gwList.length + 1;
+        td.style.padding = '12px 8px';
+        td.style.textAlign = 'center';
+        td.style.borderTop = '2px solid #dee2e6';
+        td.style.borderBottom = '2px solid #dee2e6';
+        td.textContent = title;
+
+        tr.appendChild(td);
+        return tr;
+    };
+
+    // Render teams with my players
+    if (teamFilter === 'split' && STATE.myPlayerTeams.size > 0) {
+        if (myTeams.length > 0) {
+            tbody.appendChild(createSectionHeader(`Teams With My Players (${myTeams.length})`));
+            myTeams.forEach(row => {
+                tbody.appendChild(renderTeamRow(row));
+            });
+        }
+
+        if (otherTeams.length > 0) {
+            tbody.appendChild(createSectionHeader(`Teams Without My Players (${otherTeams.length})`));
+            otherTeams.forEach(row => {
+                tbody.appendChild(renderTeamRow(row));
+            });
+        }
+    } else {
+        // Render all teams without split
+        myTeams.forEach(row => {
+            tbody.appendChild(renderTeamRow(row));
+        });
+    }
 }
 
 // ==========================================
@@ -1019,6 +1083,74 @@ function applyDefaultGWWindow() {
     // Reflect defaults in the inputs
     startInput.value = String(nextUnplayedGW);
     endInput.value   = String(defaultEndGW);
+}
+
+// ==========================================
+// FPL TEAM MANAGEMENT
+// ==========================================
+
+function showError(message, details) {
+    const errorEl = document.getElementById('error');
+    errorEl.textContent = details ? `${message} (${details})` : message;
+    errorEl.style.display = 'block';
+    setTimeout(() => {
+        errorEl.style.display = 'none';
+    }, 5000);
+}
+
+async function handleLoadTeam() {
+    const teamIdInput = document.getElementById('team-id');
+    const teamId = teamIdInput.value.trim();
+
+    if (!teamId || isNaN(teamId)) {
+        showError('Please enter a valid FPL Team ID');
+        return;
+    }
+
+    const loadBtn = document.getElementById('load-team');
+    loadBtn.disabled = true;
+    loadBtn.textContent = 'Loading...';
+
+    try {
+        const { playerIds, eventId } = await fetchFPLTeam(teamId);
+        STATE.fplTeamId = teamId;
+
+        // Build a set of team codes where I have players
+        STATE.myPlayerTeams.clear();
+        playerIds.forEach(playerId => {
+            const player = STATE.lookups.playersById[playerId];
+            if (player) {
+                const teamRef = getVal(player, 'team', 'team_id', 'teamid', 'team_code');
+                let teamCode;
+
+                if (STATE.lookups.teamsByCode[teamRef]) {
+                    teamCode = teamRef;
+                } else if (STATE.lookups.teamsById[teamRef]) {
+                    teamCode = STATE.lookups.teamsById[teamRef].code;
+                }
+
+                if (teamCode) {
+                    STATE.myPlayerTeams.add(teamCode);
+                }
+            }
+        });
+
+        const statusEl = document.getElementById('status-bar');
+        statusEl.textContent = `Loaded ${playerIds.length} players from Team ${teamId} (GW${eventId}). Found ${STATE.myPlayerTeams.size} teams with your players.`;
+
+        renderTable();
+    } catch (error) {
+        console.error('Load team error:', error);
+        const errMsg = error.message || error.toString() || 'Unknown error';
+        if (errMsg.includes('All proxies failed')) {
+            showError('Failed to load team - FPL API unavailable. Please try again later.');
+        } else {
+            showError('Failed to load team', errMsg);
+        }
+    } finally {
+        loadBtn.disabled = false;
+        loadBtn.textContent = 'Load My Team';
+    }
 }
 
 // ==========================================
@@ -1226,6 +1358,30 @@ function setupEventListeners() {
         defconArchetypeSelect.addEventListener('change', (e) => {
             STATE.ui.defconArchetype = e.target.value;
             renderTable();
+        });
+    }
+
+    // FPL Team controls
+    const loadTeamBtn = document.getElementById('load-team');
+    if (loadTeamBtn) {
+        loadTeamBtn.addEventListener('click', handleLoadTeam);
+    }
+
+    // Team filter toggle
+    const teamFilterToggle = document.getElementById('team-filter-toggle');
+    if (teamFilterToggle) {
+        teamFilterToggle.querySelectorAll('.toggle-option').forEach(option => {
+            option.addEventListener('click', (e) => {
+                const value = e.currentTarget.dataset.value; // 'all' or 'split'
+                STATE.ui.teamFilter = value;
+
+                teamFilterToggle.querySelectorAll('.toggle-option').forEach(opt => {
+                    opt.classList.remove('active');
+                });
+                e.currentTarget.classList.add('active');
+
+                renderTable();
+            });
         });
     }
 }
