@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chip Strategy Planner | FPL</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div class="container">
+    <header>
+        <h1>Chip Strategy Planner</h1>
+        <p>Optimize your Free Hit, Wildcard, and Bench Boost timing</p>
+        <div class="nav-links">
+            <a href="index.html">Team DEFCON View</a>
+            <a href="player-defcon.html">Player DEFCON Stats</a>
+            <a href="goals.html">Goals Statistics</a>
+            <a href="combined.html">Combined DEFCON & Goals</a>
+            <a href="tracker.html">My Team Tracker</a>
+        </div>
+    </header>
+
+    <div id="error"></div>
+    <div id="loading">Loading Season Data...</div>
+
+    <div id="main-content" style="display: none;">
+        <div class="controls">
+            <div class="control-group">
+                <label for="team-id">FPL Team ID</label>
+                <input type="text" id="team-id" placeholder="Enter your team ID" style="width: 150px;">
+            </div>
+
+            <div class="control-group">
+                <label>&nbsp;</label>
+                <button id="load-team">Analyze My Team</button>
+            </div>
+
+            <div class="control-group">
+                <label for="analysis-weeks">Analysis Window (GWs ahead)</label>
+                <input type="number" id="analysis-weeks" min="5" max="15" value="10" step="1" style="width: 80px;">
+            </div>
+
+            <div class="control-group">
+                <label for="form-window">Form Window (Last N GWs)</label>
+                <input type="number" id="form-window" min="3" max="10" value="6" step="1" style="width: 80px;">
+            </div>
+        </div>
+
+        <div id="team-summary" class="chip-section" style="display: none;">
+            <h2>Team Coverage Summary</h2>
+            <div id="team-coverage-content"></div>
+        </div>
+
+        <div id="chip-recommendations" class="chip-section" style="display: none;">
+            <h2>Chip Recommendations</h2>
+            <div id="chip-cards-container"></div>
+        </div>
+
+        <div id="fixture-difficulty" class="chip-section" style="display: none;">
+            <h2>Fixture Difficulty Analysis</h2>
+            <p style="margin-bottom: 16px; color: #888;">Based on goals for/against averages - Green = Easy, Yellow = Medium, Red = Hard</p>
+            <div class="table-container">
+                <table>
+                    <thead id="fixture-header">
+                    </thead>
+                    <tbody id="fixture-body">
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <div id="weakness-analysis" class="chip-section" style="display: none;">
+            <h2>Team Weakness Analysis</h2>
+            <div id="weakness-content"></div>
+        </div>
+
+        <div class="status-bar" id="status-bar">
+            Enter your FPL Team ID and click "Analyze My Team" to get chip recommendations
+        </div>
+    </div>
+</div>
+
+<script type="module" src="js/chip-strategy.js"></script>
+</body>
+</html>

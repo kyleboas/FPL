@@ -57,3 +57,11 @@ export {
     fetchFPL,
     fetchFPLTeam
 } from './fpl-api.js';
+
+// Chip Strategy Planning
+export {
+    calculateFixtureDifficulty,
+    analyzeTeamCoverage,
+    findWeakCoverage,
+    analyzeChipStrategy
+} from './chip-planner.js';
