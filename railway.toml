@@ -1,16 +1,9 @@
 [build]
-command = "npm install --frozen-lockfile"
+command = "npm install"
 
 [deploy]
-startCommand = "node autoresearch-fpl/run.mjs backtest"
+startCommand = "node server.mjs"
+healthcheckPath = "/health"
 
 [env]
 NODE_ENV = "production"
-
-[deployments.production]
-command = "node autoresearch-fpl/run.mjs backtest"
-
-[[services]]
-name = "fpl-autoresearch"
-port = 3000
-healthcheck = "/health"
