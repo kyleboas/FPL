@@ -1,0 +1,48 @@
+{
+  "historyWindow": 4,
+  "minimumRecentMinutes": 180,
+  "minimumChanceOfPlaying": 50,
+  "minimumSeasonMinutes": 600,
+  "picksPerPosition": {
+    "GK": 2,
+    "DEF": 8,
+    "MID": 8,
+    "FWD": 5
+  },
+  "common": {
+    "availability": 2.0,
+    "fixtureEase": 1.5,
+    "fixtureCountBonus": 1.4,
+    "epNext": 2.1,
+    "form": 0.8,
+    "pointsPerGame": 0.6,
+    "seasonMinutes": 0.7,
+    "recentMinutesRatio": 1.8,
+    "recentPointsPer90": 1.3,
+    "recentXgiPer90": 0.9,
+    "recentBonusPer90": 0.3,
+    "value": 0.4
+  },
+  "byPosition": {
+    "GK": {
+      "recentCleanSheetRate": 1.6,
+      "recentSavesPer90": 1.2,
+      "recentGoalsConcededPer90": -0.9
+    },
+    "DEF": {
+      "recentCleanSheetRate": 1.4,
+      "recentExpectedGoalsPer90": 0.8,
+      "recentExpectedAssistsPer90": 0.7,
+      "recentGoalsConcededPer90": -0.8
+    },
+    "MID": {
+      "recentExpectedGoalsPer90": 1.2,
+      "recentExpectedAssistsPer90": 1.0,
+      "recentCleanSheetRate": 0.2
+    },
+    "FWD": {
+      "recentExpectedGoalsPer90": 1.5,
+      "recentExpectedAssistsPer90": 0.6
+    }
+  }
+}
