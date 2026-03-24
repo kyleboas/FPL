@@ -1,16 +1,10 @@
 [build]
-command = "npm install --frozen-lockfile"
+builder = "nixpacks"
 
 [deploy]
-startCommand = "node autoresearch-fpl/run.mjs backtest"
+startCommand = "python3 -m http.server 8080"
+restartPolicyType = "on_failure"
 
-[env]
-NODE_ENV = "production"
-
-[deployments.production]
-command = "node autoresearch-fpl/run.mjs backtest"
-
-[[services]]
-name = "fpl-autoresearch"
-port = 3000
-healthcheck = "/health"
+[services.fpl]
+name = "fpl"
+port = 8080
