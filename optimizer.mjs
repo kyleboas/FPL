@@ -34,7 +34,7 @@ const WEIGHTS_PATH = join(ROOT, "autoresearch-fpl", "weights.json");
 const RUN_SCRIPT = join(ROOT, "autoresearch-fpl", "run.mjs");
 
 const OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions";
-const DEFAULT_MODEL = "openrouter/free";
+const DEFAULT_MODEL = "qwen/qwen3-coder:free";
 
 // ── Train/test split ────────────────────────────────────────────────────────
 
