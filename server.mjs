@@ -219,6 +219,49 @@ const server = createServer(async (req, res) => {
     return;
   }
 
+
+  // Reset endpoint - clears volume and copies fresh strategy.mjs
+  if (url.pathname === "/reset") {
+    const triggerSecret = process.env.TRIGGER_SECRET;
+    const providedSecret = url.searchParams.get("secret") || req.headers["x-trigger-secret"];
+    
+    if (triggerSecret && providedSecret !== triggerSecret) {
+      res.writeHead(401, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "Unauthorized" }));
+      return;
+    }
+    
+    if (!DATA_DIR) {
+      res.writeHead(400, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "No DATA_DIR set" }));
+      return;
+    }
+    
+    try {
+      const { unlink } = await import("node:fs/promises");
+      const volumeStrategy = join(DATA_DIR, "strategy.mjs");
+      const volumeExperiments = join(DATA_DIR, "experiments.json");
+      
+      // Delete old files
+      for (const file of [volumeStrategy, volumeExperiments]) {
+        try { await unlink(file); console.log(`[reset] deleted ${file}`); } catch {}
+      }
+      
+      // Copy fresh strategy.mjs from repo
+      const repoStrategy = join(ROOT, "autoresearch-fpl", "strategy.mjs");
+      const fresh = await readFile(repoStrategy, "utf8");
+      await writeFile(volumeStrategy, fresh, "utf8");
+      console.log("[reset] copied fresh strategy.mjs");
+      
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ status: "reset", message: "Volume cleared, fresh code copied" }));
+    } catch (err) {
+      res.writeHead(500, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: err.message }));
+    }
+    return;
+  }
+
   // Report endpoint — renders latest-report.md as HTML with progress chart
   if (url.pathname === "/report") {
     let md;
