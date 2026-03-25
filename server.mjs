@@ -163,10 +163,36 @@ const server = createServer(async (req, res) => {
       res.end(JSON.stringify({ error: "Cycle already running" }));
       return;
     }
-    // Run cycle in background
-    runCycle();
+    // Get optional experiments count from query param
+    const experimentsParam = url.searchParams.get("experiments");
+    const nExperiments = experimentsParam ? parseInt(experimentsParam, 10) : parseInt(process.env.EXPERIMENTS_PER_CRON ?? "1", 10);
+    
+    // Run cycle in background with specified experiment count
+    cycleRunning = true;
+    cycleCount += 1;
+    console.log(`[trigger] starting cycle #${cycleCount} with ${nExperiments} experiments...`);
+    
+    // Fire and forget
+    (async () => {
+      try {
+        for (let i = 0; i < nExperiments; i++) {
+          await runOptimizationCycle();
+          if (i < nExperiments - 1) {
+            console.log(`[trigger] waiting 10s before experiment ${i + 2}...`);
+            await new Promise(r => setTimeout(r, 10000));
+          }
+        }
+        await generateChart();
+        console.log(`[trigger] cycle #${cycleCount} complete`);
+      } catch (err) {
+        console.error(`[trigger] cycle #${cycleCount} failed:`, err.message);
+      } finally {
+        cycleRunning = false;
+      }
+    })();
+    
     res.writeHead(202, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ status: "triggered", cycleCount: cycleCount + 1 }));
+    res.end(JSON.stringify({ status: "triggered", cycleCount, experiments: nExperiments }));
     return;
   }
 
