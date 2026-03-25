@@ -399,20 +399,28 @@ export function selectStartingEleven(squad, scoreKey = "score") {
   }
 
   const starting = [];
-  const bench = [];
+  const startingSet = new Set();
 
   if (byPosition.GK.length > 0) {
-    starting.push(byPosition.GK.shift());
+    const p = byPosition.GK.shift();
+    starting.push(p);
+    startingSet.add(p);
   }
 
   for (let i = 0; i < 3 && byPosition.DEF.length > 0; i++) {
-    starting.push(byPosition.DEF.shift());
+    const p = byPosition.DEF.shift();
+    starting.push(p);
+    startingSet.add(p);
   }
   for (let i = 0; i < 2 && byPosition.MID.length > 0; i++) {
-    starting.push(byPosition.MID.shift());
+    const p = byPosition.MID.shift();
+    starting.push(p);
+    startingSet.add(p);
   }
   if (byPosition.FWD.length > 0) {
-    starting.push(byPosition.FWD.shift());
+    const p = byPosition.FWD.shift();
+    starting.push(p);
+    startingSet.add(p);
   }
 
   const remaining = [...byPosition.DEF, ...byPosition.MID, ...byPosition.FWD]
@@ -429,19 +437,13 @@ export function selectStartingEleven(squad, scoreKey = "score") {
     const maxMap = { DEF: 5, MID: 5, FWD: 3 };
     if (counts[pos] < maxMap[pos]) {
       starting.push(player);
+      startingSet.add(player);
       counts[pos]++;
     }
   }
 
-  for (const pos of Object.keys(byPosition)) {
-    bench.push(...byPosition[pos]);
-  }
-
-  for (const player of remaining) {
-    if (!starting.includes(player) && !bench.includes(player)) {
-      bench.push(player);
-    }
-  }
+  // Bench = all players not in starting 11
+  const bench = squad.filter(p => !startingSet.has(p));
 
   const sortedStarting = [...starting].sort((a, b) => b[scoreKey] - a[scoreKey]);
   const captain = sortedStarting[0] || null;
