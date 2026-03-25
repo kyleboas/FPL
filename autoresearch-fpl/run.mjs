@@ -773,9 +773,155 @@ function buildSeasonScores({
 }
 
 /**
- * Greedy transfer planner.
+ * Build the optimal budget squad for a single GW (used by Free Hit and Wildcard).
+ * Returns array of player IDs.
+ */
+function buildOptimalSquadForGw({
+  seasonScores,
+  weights,
+  gw,
+  budget,
+}) {
+  // Rank by this GW's score
+  const byGwScore = [...seasonScores.entries()]
+    .filter(([, data]) => data.scored)
+    .map(([id, data]) => {
+      const gwEntry = data.gwScores.find((g) => g.gw === gw);
+      return { id, score: gwEntry ? gwEntry.score : 0, data };
+    })
+    .sort((a, b) => b.score - a.score);
+
+  const squadSize = weights.squadSize ?? { GK: 2, DEF: 5, MID: 5, FWD: 3 };
+  const remaining = { ...squadSize };
+  const squad = [];
+  let spent = 0;
+
+  for (const { id, data } of byGwScore) {
+    const pos = data.scored.positionName;
+    if (!remaining[pos] || remaining[pos] <= 0) continue;
+
+    const cost = toNumber(data.scored.player.now_cost, 0);
+    if (spent + cost > budget) continue;
+
+    squad.push(id);
+    remaining[pos] -= 1;
+    spent += cost;
+
+    const totalSlots = Object.values(squadSize).reduce((a, b) => a + b, 0);
+    if (squad.length >= totalSlots) break;
+  }
+
+  return squad;
+}
+
+/**
+ * Evaluate chip value for each remaining GW.
+ *
+ * - Wildcard: score gain from rebuilding the entire squad for rest of season
+ * - Free Hit: score gain from using the optimal single-GW squad (reverts after)
+ * - Bench Boost: extra points from bench players that GW (assumes ~4 bench players)
+ */
+function evaluateChips({
+  currentSquadIds,
+  seasonScores,
+  weights,
+  fromGw,
+  toGw,
+  bank,
+}) {
+  const squadSize = weights.squadSize ?? { GK: 2, DEF: 5, MID: 5, FWD: 3 };
+  const totalBudget = bank + sum(
+    currentSquadIds.map((id) => toNumber(seasonScores.get(id)?.scored?.player?.now_cost, 0)),
+  );
+
+  const results = { wildcard: [], freeHit: [], benchBoost: [] };
+
+  // Current squad's per-GW scores
+  const currentGwTotals = new Map();
+  for (let gw = fromGw; gw <= toGw; gw += 1) {
+    let total = 0;
+    for (const id of currentSquadIds) {
+      const data = seasonScores.get(id);
+      const gwEntry = data?.gwScores?.find((g) => g.gw === gw);
+      total += gwEntry ? gwEntry.score : 0;
+    }
+    currentGwTotals.set(gw, total);
+  }
+
+  for (let gw = fromGw; gw <= toGw; gw += 1) {
+    const currentGwTotal = currentGwTotals.get(gw) ?? 0;
+
+    // --- Free Hit: optimal squad for just this GW ---
+    const fhSquad = buildOptimalSquadForGw({ seasonScores, weights, gw, budget: totalBudget });
+    let fhTotal = 0;
+    for (const id of fhSquad) {
+      const gwEntry = seasonScores.get(id)?.gwScores?.find((g) => g.gw === gw);
+      fhTotal += gwEntry ? gwEntry.score : 0;
+    }
+    results.freeHit.push({ gw, gain: fhTotal - currentGwTotal });
+
+    // --- Wildcard: optimal squad for rest of season from this GW ---
+    // Build squad optimized for remaining season score
+    const wcCandidates = [...seasonScores.entries()]
+      .filter(([, data]) => data.scored)
+      .map(([id, data]) => {
+        const remaining = data.gwScores
+          .filter((g) => g.gw >= gw)
+          .reduce((s, g) => s + g.score, 0);
+        return { id, remainingScore: remaining, data };
+      })
+      .sort((a, b) => b.remainingScore - a.remainingScore);
+
+    const wcRemaining = { ...squadSize };
+    const wcSquad = [];
+    let wcSpent = 0;
+    for (const { id, data } of wcCandidates) {
+      const pos = data.scored.positionName;
+      if (!wcRemaining[pos] || wcRemaining[pos] <= 0) continue;
+      const cost = toNumber(data.scored.player.now_cost, 0);
+      if (wcSpent + cost > totalBudget) continue;
+      wcSquad.push(id);
+      wcRemaining[pos] -= 1;
+      wcSpent += cost;
+      const totalSlots = Object.values(squadSize).reduce((a, b) => a + b, 0);
+      if (wcSquad.length >= totalSlots) break;
+    }
+
+    let wcSeasonTotal = 0;
+    let currentSeasonTotal = 0;
+    for (let futureGw = gw; futureGw <= toGw; futureGw += 1) {
+      for (const id of wcSquad) {
+        const gwEntry = seasonScores.get(id)?.gwScores?.find((g) => g.gw === futureGw);
+        wcSeasonTotal += gwEntry ? gwEntry.score : 0;
+      }
+      for (const id of currentSquadIds) {
+        const gwEntry = seasonScores.get(id)?.gwScores?.find((g) => g.gw === futureGw);
+        currentSeasonTotal += gwEntry ? gwEntry.score : 0;
+      }
+    }
+    results.wildcard.push({ gw, gain: wcSeasonTotal - currentSeasonTotal, wcSquad });
+
+    // --- Bench Boost: value of bench players ---
+    // Approximate: sort squad by this GW's score, bottom 4 are bench
+    const squadScores = currentSquadIds
+      .map((id) => {
+        const gwEntry = seasonScores.get(id)?.gwScores?.find((g) => g.gw === gw);
+        return { id, score: gwEntry ? gwEntry.score : 0 };
+      })
+      .sort((a, b) => b.score - a.score);
+    const benchScores = squadScores.slice(11);
+    const benchTotal = sum(benchScores.map((p) => p.score));
+    results.benchBoost.push({ gw, gain: benchTotal });
+  }
+
+  return results;
+}
+
+/**
+ * Greedy transfer planner with chip awareness.
  *
  * For each GW from nextGw to 38:
+ *   - Check if a chip should be played (wildcard, free hit, bench boost)
  *   - Use available free transfers to make the best upgrades
  *   - Optionally take hits if the gain over remaining GWs justifies it
  *   - Accumulate unused free transfers (max 5)
@@ -792,16 +938,119 @@ function planTransfers({
   bank,
 }) {
   const hitCost = toNumber(weights.hitCost, 4);
+  const chips = weights.chips ?? {};
   let freeTransfers = toNumber(weights.freeTransfers, 1);
   let currentBank = bank;
   const squadIds = new Set(currentSquadIds);
-  const transfers = []; // { gw, out, in, hit, gainPerGw }
+  const transfers = []; // { gw, out, in, hit, gainPerGw, chip }
+  const chipPlan = []; // { gw, chip, gain, details }
+
+  // Evaluate chips if any are available
+  let chipEval = null;
+  if (chips.wildcard || chips.freeHit || chips.benchBoost) {
+    chipEval = evaluateChips({
+      currentSquadIds: [...squadIds],
+      seasonScores,
+      weights,
+      fromGw,
+      toGw,
+      bank: currentBank,
+    });
+  }
+
+  // Decide which GW to play each chip (pick the GW with highest gain)
+  const chipSchedule = new Map(); // gw → chip name
+
+  if (chipEval) {
+    const available = [];
+
+    if (chips.wildcard && chipEval.wildcard.length > 0) {
+      const best = chipEval.wildcard.reduce((a, b) => (b.gain > a.gain ? b : a));
+      if (best.gain > 0) available.push({ chip: "wildcard", gw: best.gw, gain: best.gain, wcSquad: best.wcSquad });
+    }
+    if (chips.freeHit && chipEval.freeHit.length > 0) {
+      const best = chipEval.freeHit.reduce((a, b) => (b.gain > a.gain ? b : a));
+      if (best.gain > 0) available.push({ chip: "freeHit", gw: best.gw, gain: best.gain });
+    }
+    if (chips.benchBoost && chipEval.benchBoost.length > 0) {
+      const best = chipEval.benchBoost.reduce((a, b) => (b.gain > a.gain ? b : a));
+      if (best.gain > 0) available.push({ chip: "benchBoost", gw: best.gw, gain: best.gain });
+    }
+
+    // Sort by gain, assign to GWs (one chip per GW)
+    available.sort((a, b) => b.gain - a.gain);
+    const usedGws = new Set();
+    for (const entry of available) {
+      if (usedGws.has(entry.gw)) {
+        // Find next best GW for this chip
+        const chipList = chipEval[entry.chip]
+          .filter((e) => !usedGws.has(e.gw) && e.gain > 0)
+          .sort((a, b) => b.gain - a.gain);
+        if (chipList.length > 0) {
+          entry.gw = chipList[0].gw;
+          entry.gain = chipList[0].gain;
+          if (chipList[0].wcSquad) entry.wcSquad = chipList[0].wcSquad;
+        } else {
+          continue;
+        }
+      }
+      chipSchedule.set(entry.gw, entry);
+      usedGws.add(entry.gw);
+    }
+  }
 
   for (let gw = fromGw; gw <= toGw; gw += 1) {
+    const chipForGw = chipSchedule.get(gw);
     const remainingGws = toGw - gw + 1;
+
+    // --- Wildcard: rebuild entire squad ---
+    if (chipForGw?.chip === "wildcard" && chipForGw.wcSquad) {
+      const oldSquad = [...squadIds];
+      const newSquad = chipForGw.wcSquad;
+
+      // Record transfers
+      const outIds = oldSquad.filter((id) => !newSquad.includes(id));
+      const inIds = newSquad.filter((id) => !oldSquad.includes(id));
+
+      for (let i = 0; i < Math.max(outIds.length, inIds.length); i += 1) {
+        const outId = outIds[i];
+        const inId = inIds[i];
+        if (!outId || !inId) continue;
+        transfers.push({
+          gw,
+          out: seasonScores.get(outId)?.scored ?? { player: playerMetaById.get(outId) ?? {} },
+          in: seasonScores.get(inId)?.scored ?? { player: playerMetaById.get(inId) ?? {} },
+          hit: false,
+          gain: 0,
+          gainPerGw: 0,
+          chip: "wildcard",
+        });
+      }
+
+      squadIds.clear();
+      for (const id of newSquad) squadIds.add(id);
+      currentBank = toNumber(weights.budget, 1000) - sum(newSquad.map((id) => toNumber(seasonScores.get(id)?.scored?.player?.now_cost ?? playerMetaById.get(id)?.now_cost, 0)));
+      chipPlan.push({ gw, chip: "WILDCARD", gain: chipForGw.gain });
+      freeTransfers = 1;
+      continue;
+    }
+
+    // --- Free Hit: optimal squad for this GW only, reverts next GW ---
+    if (chipForGw?.chip === "freeHit") {
+      chipPlan.push({ gw, chip: "FREE HIT", gain: chipForGw.gain });
+      // Squad reverts — no permanent changes, just record the chip
+      freeTransfers = Math.min(5, freeTransfers + 1); // FT still accumulates
+      continue;
+    }
+
+    // --- Bench Boost: just flag it, no squad changes needed ---
+    if (chipForGw?.chip === "benchBoost") {
+      chipPlan.push({ gw, chip: "BENCH BOOST", gain: chipForGw.gain });
+    }
+
+    // --- Normal transfers ---
     const candidates = [];
 
-    // Find the best swap for each squad member
     for (const outId of squadIds) {
       const outData = seasonScores.get(outId);
       if (!outData) continue;
@@ -812,7 +1061,6 @@ function planTransfers({
         .reduce((s, g) => s + g.score, 0);
       const outCost = toNumber(outPlayer.player.now_cost, 0);
 
-      // Find best replacement at same position within budget
       for (const [inId, inData] of seasonScores) {
         if (squadIds.has(inId)) continue;
         if (!inData.scored) continue;
@@ -841,7 +1089,6 @@ function planTransfers({
       }
     }
 
-    // Sort by gain (best upgrades first)
     candidates.sort((a, b) => b.gain - a.gain);
 
     let transfersMade = 0;
@@ -852,7 +1099,6 @@ function planTransfers({
       if (usedOut.has(candidate.outId) || usedIn.has(candidate.inId)) continue;
 
       const isHit = transfersMade >= freeTransfers;
-      // Only take a hit if the gain justifies it (gain > hitCost equivalent in score)
       if (isHit && candidate.gain < hitCost * 1.5) continue;
 
       transfers.push({
@@ -871,7 +1117,6 @@ function planTransfers({
       usedIn.add(candidate.inId);
       transfersMade += 1;
 
-      // Max 3 transfers per GW (1 free + 2 hits max)
       if (transfersMade >= Math.min(freeTransfers + 2, 3)) break;
     }
 
@@ -880,7 +1125,7 @@ function planTransfers({
     freeTransfers = Math.min(5, 1 + unusedFree);
   }
 
-  return { transfers, finalSquadIds: [...squadIds], finalBank: currentBank };
+  return { transfers, finalSquadIds: [...squadIds], finalBank: currentBank, chipPlan };
 }
 
 function selectBudgetSquad(ranked, weights) {
@@ -929,7 +1174,9 @@ function renderReport({
   lines.push(`- Filters: min ${weights.minimumRecentMinutes} recent minutes, min ${weights.minimumChanceOfPlaying}% availability`);
 
   if (currentSquadScored) {
-    lines.push(`- Bank: ${formatMoney(bank)} | Free transfers: ${weights.freeTransfers}`);
+    const chipList = Object.entries(weights.chips ?? {}).filter(([, v]) => v).map(([k]) => k);
+    const chipStr = chipList.length > 0 ? chipList.join(", ") : "none";
+    lines.push(`- Bank: ${formatMoney(bank)} | Free transfers: ${weights.freeTransfers} | Chips: ${chipStr}`);
     lines.push("");
 
     // Current squad with season scores
@@ -949,9 +1196,20 @@ function renderReport({
     }
     lines.push("");
 
+    // Chip plan
+    if (transferPlan?.chipPlan?.length > 0) {
+      lines.push("## Chip strategy");
+      lines.push("");
+      for (const chip of transferPlan.chipPlan) {
+        lines.push(`- GW${chip.gw}: ${chip.chip} (projected gain: +${chip.gain.toFixed(1)})`);
+      }
+      lines.push("");
+    }
+
     // Transfer plan
     if (transferPlan && transferPlan.transfers.length > 0) {
-      const totalHits = transferPlan.transfers.filter((t) => t.hit).length;
+      const normalTransfers = transferPlan.transfers.filter((t) => !t.chip);
+      const totalHits = normalTransfers.filter((t) => t.hit).length;
       const totalHitCost = totalHits * toNumber(weights.hitCost, 4);
       lines.push(`## Transfer plan (${transferPlan.transfers.length} transfers, ${totalHits} hits = -${totalHitCost} pts)`);
       lines.push("");
@@ -959,14 +1217,16 @@ function renderReport({
       let lastGw = 0;
       for (const t of transferPlan.transfers) {
         if (t.gw !== lastGw) {
-          lines.push(`### GW${t.gw}${t.hit ? "" : ""}`);
+          const chipForGw = transferPlan.chipPlan?.find((c) => c.gw === t.gw);
+          const chipTag = chipForGw ? ` [${chipForGw.chip}]` : "";
+          lines.push(`### GW${t.gw}${chipTag}`);
           lastGw = t.gw;
         }
-        const outName = t.out.player.web_name ?? t.out.player.second_name;
-        const inName = t.in.player.web_name ?? t.in.player.second_name;
-        const hitTag = t.hit ? " [HIT]" : " [FREE]";
+        const outName = t.out?.player?.web_name ?? t.out?.player?.second_name ?? "?";
+        const inName = t.in?.player?.web_name ?? t.in?.player?.second_name ?? "?";
+        const tag = t.chip ? ` [${t.chip.toUpperCase()}]` : t.hit ? " [HIT]" : " [FREE]";
         lines.push(
-          `- OUT: ${outName} (${formatMoney(t.out.player.now_cost)}) → IN: ${inName} (${formatMoney(t.in.player.now_cost)}) — gain +${t.gain.toFixed(1)} over remaining GWs${hitTag}`,
+          `- OUT: ${outName} (${formatMoney(t.out?.player?.now_cost)}) → IN: ${inName} (${formatMoney(t.in?.player?.now_cost)})${t.gain ? ` — gain +${t.gain.toFixed(1)}` : ""}${tag}`,
         );
       }
       lines.push("");
