@@ -11,7 +11,8 @@ import { join } from "node:path";
 import { getAllExperiments } from "./db.mjs";
 
 const ROOT = fileURLToPath(new URL(".", import.meta.url));
-const OUTPUT_PATH = join(ROOT, "progress.svg");
+const DATA_DIR = process.env.DATA_DIR || null;
+const OUTPUT_PATH = DATA_DIR ? join(DATA_DIR, "progress.svg") : join(ROOT, "progress.svg");
 
 function escapeXml(s) {
   return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");

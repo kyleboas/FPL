@@ -8,8 +8,9 @@ import { migrate } from "./db.mjs";
 
 const ROOT = fileURLToPath(new URL(".", import.meta.url));
 const PORT = process.env.PORT || 3000;
-const REPORT_PATH = join(ROOT, "autoresearch-fpl", "latest-report.md");
-const PROGRESS_SVG_PATH = join(ROOT, "progress.svg");
+const DATA_DIR = process.env.DATA_DIR || null;
+const REPORT_PATH = DATA_DIR ? join(DATA_DIR, "latest-report.md") : join(ROOT, "autoresearch-fpl", "latest-report.md");
+const PROGRESS_SVG_PATH = DATA_DIR ? join(DATA_DIR, "progress.svg") : join(ROOT, "progress.svg");
 const CYCLE_INTERVAL_MINUTES = parseInt(process.env.CYCLE_INTERVAL_MINUTES ?? "30", 10);
 const CYCLE_INTERVAL_MS = CYCLE_INTERVAL_MINUTES * 60 * 1000;
 

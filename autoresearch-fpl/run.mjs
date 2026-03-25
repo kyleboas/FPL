@@ -3,7 +3,10 @@
 import { readFile, writeFile, mkdir, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { fileURLToPath } from "node:url";
 
+const DATA_DIR = process.env.DATA_DIR || null;
+const ROOT = fileURLToPath(new URL(".", import.meta.url));
 const CACHE_DIR = join(tmpdir(), "fpl-cache");
 const CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
 
@@ -23,9 +26,8 @@ async function writeCache(key, data) {
   await writeFile(join(CACHE_DIR, `${key}.json`), JSON.stringify(data), "utf8");
 }
 
-const ROOT = new URL(".", import.meta.url);
-const WEIGHTS_URL = new URL("./weights.json", ROOT);
-const REPORT_URL = new URL("./latest-report.md", ROOT);
+const WEIGHTS_URL = new URL("./weights.json", import.meta.url);
+const REPORT_PATH = DATA_DIR ? join(DATA_DIR, "latest-report.md") : fileURLToPath(new URL("./latest-report.md", import.meta.url));
 
 const FPL_BASE = "https://fantasy.premierleague.com/api";
 const FPL_BOOTSTRAP_URL = `${FPL_BASE}/bootstrap-static/`;
@@ -874,9 +876,8 @@ function evaluateChips({
   for (let gw = fromGw; gw <= toGw; gw += 1) {
     let total = 0;
     for (const id of currentSquadIds) {
-      const data = seasonScores.get(id);
-      const gwEntry = data?.gwScores?.find((g) => g.gw === gw);
-      total += gwEntry ? gwEntry.score : 0;
+      const data = seasonScores.get(id)?.gwScores?.find((g) => g.gw === gw);
+      total += data ? data.score : 0;
     }
     currentGwTotals.set(gw, total);
   }
@@ -1489,9 +1490,9 @@ async function runReport(weights) {
     seasonScores,
   });
 
-  await writeFile(REPORT_URL, report, "utf8");
+  await writeFile(REPORT_PATH, report, "utf8");
   console.log(report);
-  console.log(`Saved report to ${REPORT_URL.pathname}`);
+  console.log(`Saved report to ${REPORT_PATH}`);
 }
 
 async function main() {
