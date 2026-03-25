@@ -2,13 +2,17 @@
 
 /**
  * One-shot cron entry point for Railway.
- * Runs a single optimization cycle, regenerates the chart, then exits.
+ * Runs N optimization cycles (EXPERIMENTS_PER_CRON, default 1), regenerates the chart, then exits.
  * Schedule via a Railway Cron service: node cron.mjs
  */
 
 import { runOptimizationCycle } from "./optimizer.mjs";
 import { generateChart } from "./chart.mjs";
 
-await runOptimizationCycle();
+const N = parseInt(process.env.EXPERIMENTS_PER_CRON ?? "1", 10) || 1;
+console.log(`[cron] running ${N} experiment(s)`);
+for (let i = 0; i < N; i++) {
+  await runOptimizationCycle();
+}
 await generateChart().catch((err) => console.error("[cron] chart failed:", err.message));
 process.exit(0);
