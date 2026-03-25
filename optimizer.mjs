@@ -3,7 +3,7 @@
 /**
  * LLM-driven optimizer for FPL autoresearch.
  *
- * Instead of random weight perturbation, this uses an LLM (via OpenRouter)
+ * Instead of random weight perturbation, this uses an LLM (via OpenRouter or Cloudflare AI Gateway)
  * to propose code changes to strategy.mjs — the same approach as
  * Karpathy's autoresearch.
  *
@@ -17,8 +17,12 @@
  *  7. Record experiment in DB
  *
  * Environment variables:
- *  - OPENROUTER_API_KEY — required
- *  - OPENROUTER_MODEL — model to use (default: google/gemma-3-27b-it:free)
+ *  - OPENROUTER_API_KEY — for OpenRouter provider
+ *  - OPENROUTER_MODEL — model to use (default: qwen/qwen3-4b:free)
+ *  - CF_ACCOUNT_ID — Cloudflare account ID for AI Gateway
+ *  - CF_GATEWAY_ID — Cloudflare gateway ID (default: "default")
+ *  - CF_AIG_TOKEN — Cloudflare AI Gateway token
+ *  - LLM_PROVIDER — "openrouter" (default) or "cloudflare"
  */
 
 import { readFile, writeFile } from "node:fs/promises";
@@ -33,16 +37,27 @@ const PROGRAM_PATH = join(ROOT, "autoresearch-fpl", "program.md");
 const WEIGHTS_PATH = join(ROOT, "autoresearch-fpl", "weights.json");
 const RUN_SCRIPT = join(ROOT, "autoresearch-fpl", "run.mjs");
 
+// Provider configuration
 const OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions";
+const CLOUDFLARE_GATEWAY_BASE = "https://gateway.ai.cloudflare.com/v1";
+
 const DEFAULT_MODEL = "qwen/qwen3-4b:free";  // Free model for <$2/month budget
+const DEFAULT_PROVIDER = "openrouter";
 
 // Fallback models if primary is rate-limited or fails
 // Priority: free > ultra-cheap for budget constraint
-const FALLBACK_MODELS = [
+const FALLBACK_MODELS_OPENROUTER = [
   "google/gemma-3-27b-it:free",  // Free, good at code
   "qwen/qwen3-coder:free",  // Free, code-focused
   "meta-llama/llama-3.3-8b-instruct:free",  // Free, fast
   "google/gemini-2.0-flash-001",  // Cheap fallback ($0.10/$0.40 per M)
+];
+
+// Cloudflare Workers AI models (free tier: 10,000+ requests/day)
+const FALLBACK_MODELS_CLOUDFLARE = [
+  "workers-ai/@cf/meta/llama-3.3-70b-instruct-fp8-fast",  // 70B, fast, code-capable
+  "workers-ai/@cf/meta/llama-3.1-8b-instruct",  // 8B, fast
+  "workers-ai/@cf/qwen/qwen2.5-14b-instruct",  // 14B, good at code
 ];
 
 // Rate limit handling
@@ -57,23 +72,42 @@ function delay(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-function getModel() {
-  return process.env.OPENROUTER_MODEL || DEFAULT_MODEL;
+function getProvider() {
+  return process.env.LLM_PROVIDER || DEFAULT_PROVIDER;
 }
 
-function getApiKey() {
+function getModel() {
+  return process.env.OPENROUTER_MODEL || process.env.CF_MODEL || DEFAULT_MODEL;
+}
+
+// OpenRouter configuration
+function getOpenRouterApiKey() {
   const key = process.env.OPENROUTER_API_KEY;
   if (!key) throw new Error("OPENROUTER_API_KEY environment variable is required");
   return key;
 }
 
-async function callLLMWithModel(messages, model, maxRetries = 3) {
+// Cloudflare AI Gateway configuration
+function getCloudflareConfig() {
+  const accountId = process.env.CF_ACCOUNT_ID;
+  const gatewayId = process.env.CF_GATEWAY_ID || "default";
+  const token = process.env.CF_AIG_TOKEN;
+  
+  if (!accountId || !token) {
+    throw new Error("CF_ACCOUNT_ID and CF_AIG_TOKEN are required for Cloudflare provider");
+  }
+  
+  return { accountId, gatewayId, token };
+}
+
+// Call OpenRouter API
+async function callOpenRouterWithModel(messages, model, maxRetries = 3) {
   for (let attempt = 0; attempt < maxRetries; attempt++) {
     const response = await fetch(OPENROUTER_API_URL, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "Authorization": `Bearer ${getApiKey()}`,
+        "Authorization": `Bearer ${getOpenRouterApiKey()}`,
         "HTTP-Referer": "https://github.com/kyleboas/fpl",
         "X-Title": "FPL Autoresearch",
       },
@@ -115,14 +149,75 @@ async function callLLMWithModel(messages, model, maxRetries = 3) {
   return null;
 }
 
+// Call Cloudflare AI Gateway API
+async function callCloudflareWithModel(messages, model, maxRetries = 3) {
+  const { accountId, gatewayId, token } = getCloudflareConfig();
+  const url = `${CLOUDFLARE_GATEWAY_BASE}/${accountId}/${gatewayId}/compat/chat/completions`;
+  
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "cf-aig-authorization": `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        model,
+        messages,
+        max_tokens: 4096,
+        temperature: 0.8,
+      }),
+    });
+
+    if (response.ok) {
+      const data = await response.json();
+      return { content: data.choices?.[0]?.message?.content ?? "", model };
+    }
+
+    const errorText = await response.text();
+    
+    // Rate limit handling
+    if (response.status === 429) {
+      console.log(`[optimizer] Cloudflare rate limited for model ${model}, trying fallback...`);
+      return null; // Signal to try next model
+    }
+
+    // Retry on server errors
+    if (response.status >= 500 && attempt < maxRetries - 1) {
+      const waitMs = BASE_DELAY_MS * Math.pow(2, attempt);
+      console.log(`[optimizer] server error, retrying in ${waitMs/1000}s...`);
+      await delay(waitMs);
+      continue;
+    }
+
+    throw new Error(`Cloudflare API error (${response.status}): ${errorText}`);
+  }
+  return null;
+}
+
+// Main LLM call function - routes to appropriate provider
 async function callLLM(messages) {
+  const provider = getProvider();
   const requestedModel = getModel();
-  const modelsToTry = [requestedModel, ...FALLBACK_MODELS.filter(m => m !== requestedModel)];
+  
+  // Select models and caller based on provider
+  let modelsToTry;
+  let callWithModel;
+  
+  if (provider === "cloudflare") {
+    modelsToTry = [requestedModel, ...FALLBACK_MODELS_CLOUDFLARE.filter(m => m !== requestedModel)];
+    callWithModel = (msgs, model) => callCloudflareWithModel(msgs, model, MAX_RETRIES);
+    console.log(`[optimizer] using Cloudflare AI Gateway provider`);
+  } else {
+    modelsToTry = [requestedModel, ...FALLBACK_MODELS_OPENROUTER.filter(m => m !== requestedModel)];
+    callWithModel = (msgs, model) => callOpenRouterWithModel(msgs, model, MAX_RETRIES);
+    console.log(`[optimizer] using OpenRouter provider`);
+  }
   
   for (let i = 0; i < modelsToTry.length; i++) {
     const model = modelsToTry[i];
     console.log(`[optimizer] trying model: ${model}`);
-    const result = await callLLMWithModel(messages, model, MAX_RETRIES);
+    const result = await callWithModel(messages, model);
     if (result) {
       if (model !== requestedModel) {
         console.log(`[optimizer] using fallback model: ${model}`);
