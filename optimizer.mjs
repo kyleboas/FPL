@@ -119,7 +119,8 @@ async function callLLM(messages) {
   const requestedModel = getModel();
   const modelsToTry = [requestedModel, ...FALLBACK_MODELS.filter(m => m !== requestedModel)];
   
-  for (const model of modelsToTry) {
+  for (let i = 0; i < modelsToTry.length; i++) {
+    const model = modelsToTry[i];
     console.log(`[optimizer] trying model: ${model}`);
     const result = await callLLMWithModel(messages, model, MAX_RETRIES);
     if (result) {
@@ -127,6 +128,12 @@ async function callLLM(messages) {
         console.log(`[optimizer] using fallback model: ${model}`);
       }
       return result.content;
+    }
+    
+    // Small delay before trying next fallback model to avoid rate limits
+    if (i < modelsToTry.length - 1) {
+      console.log(`[optimizer] waiting 2s before trying next model...`);
+      await delay(2000);
     }
   }
   
