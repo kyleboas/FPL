@@ -1354,6 +1354,37 @@ function renderReport({
         }
       }
       lines.push("");
+
+      // Starting 11 from final squad
+      const finalSquadPlayers = transferPlan.finalSquadIds
+        .map((id) => seasonScores.get(id))
+        .filter((p) => p?.scored)
+        .map((p) => ({
+          player: p.scored.player,
+          positionName: p.scored.positionName,
+          teamName: p.scored.teamName,
+          score: p.seasonScore,
+        }));
+      
+      const { starting: finalStarting, bench: finalBench } = selectStartingEleven(finalSquadPlayers);
+      
+      lines.push("## Starting 11 (final squad)");
+      lines.push("");
+      for (const player of finalStarting) {
+        lines.push(
+          `- ${player.player.web_name ?? player.player.second_name} (${player.positionName}, ${formatMoney(player.player.now_cost)}, ${player.teamName}) — season score ${player.score.toFixed(1)}`,
+        );
+      }
+      lines.push("");
+
+      lines.push("## Bench (final squad)");
+      lines.push("");
+      for (const player of finalBench) {
+        lines.push(
+          `- ${player.player.web_name ?? player.player.second_name} (${player.positionName}, ${formatMoney(player.player.now_cost)}, ${player.teamName}) — season score ${player.score.toFixed(1)}`,
+        );
+      }
+      lines.push("");
     } else {
       lines.push("## Transfer plan");
       lines.push("");
