@@ -96,6 +96,19 @@ async function serveStatic(req, res) {
 const server = createServer(async (req, res) => {
   const url = new URL(req.url, `http://localhost`);
 
+  // Progress SVG endpoint - serve from DATA_DIR
+  if (url.pathname === "/progress.svg") {
+    try {
+      const svg = await readFile(PROGRESS_SVG_PATH, "utf8");
+      res.writeHead(200, { "Content-Type": "image/svg+xml" });
+      res.end(svg);
+    } catch {
+      res.writeHead(404, { "Content-Type": "text/plain" });
+      res.end("Not found");
+    }
+    return;
+  }
+
   // Health check
   if (url.pathname === "/health") {
     res.writeHead(200, { "Content-Type": "application/json" });
