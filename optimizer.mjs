@@ -18,7 +18,7 @@
  *
  * Environment variables:
  *  - OPENROUTER_API_KEY — required
- *  - OPENROUTER_MODEL — model to use (default: google/gemma-3-27b-it:free)
+ *  - OPENROUTER_MODEL — model to use (default: qwen/qwen3-coder:free)
  */
 
 import { readFile, writeFile } from "node:fs/promises";
@@ -36,12 +36,13 @@ const RUN_SCRIPT = join(ROOT, "autoresearch-fpl", "run.mjs");
 const OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions";
 const DEFAULT_MODEL = "qwen/qwen3-coder:free";
 
-// ── Train/test split ────────────────────────────────────────────────────────
+// Rate limit handling: OpenRouter free tier = 8 req/min
+const MAX_RETRIES = 3;
+const BASE_DELAY_MS = 8000; // 8 seconds
 
-const TEST_FRACTION = 0.25;
-const TEST_DEGRADATION_LIMIT = 0.5;
-
-// ── Helpers ─────────────────────────────────────────────────────────────────
+function delay(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
 
 function getModel() {
   return process.env.OPENROUTER_MODEL || DEFAULT_MODEL;
@@ -54,29 +55,42 @@ function getApiKey() {
 }
 
 async function callLLM(messages) {
-  const response = await fetch(OPENROUTER_API_URL, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Authorization": `Bearer ${getApiKey()}`,
-      "HTTP-Referer": "https://github.com/kyleboas/fpl",
-      "X-Title": "FPL Autoresearch",
-    },
-    body: JSON.stringify({
-      model: getModel(),
-      messages,
-      max_tokens: 4096,
-      temperature: 0.8,
-    }),
-  });
+  for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+    const response = await fetch(OPENROUTER_API_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${getApiKey()}`,
+        "HTTP-Referer": "https://github.com/kyleboas/fpl",
+        "X-Title": "FPL Autoresearch",
+      },
+      body: JSON.stringify({
+        model: getModel(),
+        messages,
+        max_tokens: 4096,
+        temperature: 0.8,
+      }),
+    });
 
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`OpenRouter API error (${response.status}): ${errorText}`);
+    if (!response.ok) {
+      const errorText = await response.text();
+      
+      // Retry on rate limit (429) with exponential backoff
+      if (response.status === 429 && attempt < MAX_RETRIES - 1) {
+        const waitMs = BASE_DELAY_MS * Math.pow(2, attempt);
+        console.log(`[optimizer] rate limited (429), waiting ${waitMs/1000}s before retry ${attempt + 2}/${MAX_RETRIES}...`);
+        await delay(waitMs);
+        continue;
+      }
+      
+      throw new Error(`OpenRouter API error (${response.status}): ${errorText}`);
+    }
+
+    const data = await response.json();
+    return data.choices?.[0]?.message?.content ?? "";
   }
-
-  const data = await response.json();
-  return data.choices?.[0]?.message?.content ?? "";
+  
+  throw new Error(`OpenRouter API rate limit exceeded after ${MAX_RETRIES} retries`);
 }
 
 function runBacktest(splitGw) {
@@ -130,7 +144,7 @@ function parseBacktestOutput(output) {
 function computeSplitGw(startGw, endGw) {
   const totalGws = endGw - startGw + 1;
   if (totalGws < 6) return null;
-  const testSize = Math.max(2, Math.round(totalGws * TEST_FRACTION));
+  const testSize = Math.max(2, Math.round(totalGws * 0.25));
   return endGw - testSize;
 }
 
@@ -360,9 +374,9 @@ First, briefly explain your idea (2-3 sentences), then output the COMPLETE modif
 
   // Overfitting guard
   if (accepted && trialResult.testAvgPoints !== null && best?.test_avg_points) {
-    if (trialResult.testAvgPoints < best.test_avg_points - TEST_DEGRADATION_LIMIT) {
+    if (trialResult.testAvgPoints < best.test_avg_points - 0.5) {
       accepted = false;
-      rejectReason = `test degraded: ${trialResult.testAvgPoints.toFixed(2)} < ${best.test_avg_points.toFixed(2)} - ${TEST_DEGRADATION_LIMIT}`;
+      rejectReason = `test degraded: ${trialResult.testAvgPoints.toFixed(2)} < ${best.test_avg_points.toFixed(2)} - 0.5`;
     }
   }
 
