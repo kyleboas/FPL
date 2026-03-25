@@ -1,9 +1,6 @@
 [build]
 command = "npm install"
 
-[deploy]
-startCommand = "node cron.mjs"
-
 [env]
 NODE_ENV = "production"
 CYCLE_INTERVAL_MINUTES = "0"
