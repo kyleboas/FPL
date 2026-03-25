@@ -5,17 +5,20 @@
  *
  * Expects DATABASE_URL in the environment (standard Railway Postgres).
  * Falls back to a local JSON file when DATABASE_URL is not set.
+ *
+ * For Railway volume persistence, set DATA_DIR=/app/data
  */
 
 import pg from "pg";
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 
 const { Pool } = pg;
 
 const ROOT = fileURLToPath(new URL(".", import.meta.url));
-const LOCAL_FILE = join(ROOT, "experiments.json");
+const DATA_DIR = process.env.DATA_DIR || ROOT;
+const LOCAL_FILE = join(DATA_DIR, "experiments.json");
 
 let pool = null;
 
@@ -41,13 +44,17 @@ async function query(sql, values = []) {
 
 export async function migrate() {
   if (!getDatabaseUrl()) {
+    // Ensure data directory exists
+    try {
+      await mkdir(DATA_DIR, { recursive: true });
+    } catch {}
     // Ensure local file exists
     try {
       await readFile(LOCAL_FILE, "utf8");
     } catch {
       await writeFile(LOCAL_FILE, "[]", "utf8");
     }
-    console.log("[db] using local experiments.json (no DATABASE_URL)");
+    console.log("[db] using", LOCAL_FILE, "(no DATABASE_URL)");
     return;
   }
 
