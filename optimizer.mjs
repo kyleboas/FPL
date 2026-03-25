@@ -53,30 +53,57 @@ function getApiKey() {
   return key;
 }
 
+// ── Rate limiting ──────────────────────────────────────────────────────────
+
+const MIN_DELAY_BETWEEN_CALLS_MS = 8000; // 8 seconds for 8 RPM limit
+const MAX_RETRIES = 3;
+const RETRY_BASE_DELAY_MS = 2000;
+let lastCallTime = 0;
+
+async function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
 async function callLLM(messages) {
-  const response = await fetch(OPENROUTER_API_URL, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Authorization": `Bearer ${getApiKey()}`,
-      "HTTP-Referer": "https://github.com/kyleboas/fpl",
-      "X-Title": "FPL Autoresearch",
-    },
-    body: JSON.stringify({
-      model: getModel(),
-      messages,
-      max_tokens: 4096,
-      temperature: 0.8,
-    }),
-  });
+  const maxRetries = 3;
+  const baseDelay = 10000; // 10 seconds
+  
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    const response = await fetch(OPENROUTER_API_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${getApiKey()}`,
+        "HTTP-Referer": "https://github.com/kyleboas/fpl",
+        "X-Title": "FPL Autoresearch",
+      },
+      body: JSON.stringify({
+        model: getModel(),
+        messages,
+        max_tokens: 4096,
+        temperature: 0.8,
+      }),
+    });
 
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`OpenRouter API error (${response.status}): ${errorText}`);
+    if (!response.ok) {
+      const errorText = await response.text();
+      
+      // Retry on rate limit (429)
+      if (response.status === 429 && attempt < maxRetries - 1) {
+        const delay = baseDelay * Math.pow(2, attempt);
+        console.log(`[optimizer] rate limited, retrying in ${delay/1000}s...`);
+        await new Promise(r => setTimeout(r, delay));
+        continue;
+      }
+      
+      throw new Error(`OpenRouter API error (${response.status}): ${errorText}`);
+    }
+
+    const data = await response.json();
+    return data.choices?.[0]?.message?.content ?? "";
   }
-
-  const data = await response.json();
-  return data.choices?.[0]?.message?.content ?? "";
+  
+  throw new Error("Max retries exceeded");
 }
 
 function runBacktest(splitGw) {
