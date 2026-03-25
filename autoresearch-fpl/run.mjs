@@ -1413,6 +1413,51 @@ function renderReport({
         );
       }
       lines.push("");
+      
+      // Starting 11 per GW
+      if (transferPlan.squadPerGw && transferPlan.squadPerGw.length > 0) {
+        lines.push("## Starting 11 per GW");
+        lines.push("");
+        
+        for (const { gw, squadIds } of transferPlan.squadPerGw) {
+          // Get GW-specific scores for each player
+          const gwPlayers = squadIds
+            .map((id) => {
+              const data = seasonScores.get(id);
+              if (!data?.scored) return null;
+              const gwEntry = data.gwScores.find((g) => g.gw === gw);
+              return {
+                player: data.scored.player,
+                positionName: data.scored.positionName,
+                teamName: data.scored.teamName,
+                gwScore: gwEntry ? gwEntry.score : 0,
+              };
+            })
+            .filter((p) => p !== null);
+          
+          const { starting: gwStarting, bench: gwBench } = selectStartingEleven(gwPlayers);
+          
+          const chipForGw = transferPlan.chipPlan?.find((c) => c.gw === gw);
+          const chipTag = chipForGw ? ` [${chipForGw.chip}]` : "";
+          
+          lines.push(`### GW${gw}${chipTag}`);
+          lines.push("");
+          lines.push("**Starting:**");
+          for (const player of gwStarting) {
+            lines.push(
+              `- ${player.player.web_name ?? player.player.second_name} (${player.positionName}, ${formatMoney(player.player.now_cost)}, ${player.teamName}) — GW score ${player.gwScore.toFixed(2)}`,
+            );
+          }
+          lines.push("");
+          lines.push("**Bench:**");
+          for (const player of gwBench) {
+            lines.push(
+              `- ${player.player.web_name ?? player.player.second_name} (${player.positionName}, ${formatMoney(player.player.now_cost)}, ${player.teamName}) — GW score ${player.gwScore.toFixed(2)}`,
+            );
+          }
+          lines.push("");
+        }
+      }
     } else {
       lines.push("## Transfer plan");
       lines.push("");
