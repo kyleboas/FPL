@@ -133,7 +133,8 @@ export async function getAllExperiments() {
   }
 
   return query(`
-    SELECT id, created_at, overall_avg_points, hit_rate, description, status
+    SELECT id, created_at, overall_avg_points, hit_rate, description, status,
+           train_avg_points, test_avg_points, parent_score, temperature
     FROM experiments ORDER BY id ASC
   `);
 }
