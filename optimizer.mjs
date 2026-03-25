@@ -35,41 +35,19 @@ const RUN_SCRIPT = join(ROOT, "autoresearch-fpl", "run.mjs");
 
 const OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions";
 const DEFAULT_MODEL = "qwen/qwen3-coder:free";
+
+// Rate limit handling
 const MAX_RETRIES = 3;
-const RETRY_DELAYS = [2000, 4000, 8000]; // 2s, 4s, 8s
+const BASE_DELAY_MS = 8000; // OpenRouter free tier = 8 req/min
 
-// ── Train/test split ────────────────────────────────────────────────────────
-
-const TEST_FRACTION = 0.25;
-const TEST_DEGRADATION_LIMIT = 0.5;
-
-// ── Helpers ─────────────────────────────────────────────────────────────────
-
-function getModel() {
-  return process.env.OPENROUTER_MODEL || DEFAULT_MODEL;
-}
-
-function getApiKey() {
-  const key = process.env.OPENROUTER_API_KEY;
-  if (!key) throw new Error("OPENROUTER_API_KEY environment variable is required");
-  return key;
-}
-
-// ── Rate limiting ──────────────────────────────────────────────────────────
-
-const MIN_DELAY_BETWEEN_CALLS_MS = 8000; // 8 seconds for 8 RPM limit
-const RETRY_BASE_DELAY_MS = 2000;
-let lastCallTime = 0;
-
-async function sleep(ms) {
+function delay(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
 async function callLLM(messages) {
-  const maxRetries = 3;
-  const baseDelayMs = 60_000; // 1 minute base delay for rate limits
+  let lastError;
   
-  for (let attempt = 0; attempt < maxRetries; attempt++) {
+  for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
     const response = await fetch(OPENROUTER_API_URL, {
       method: "POST",
       headers: {
@@ -86,29 +64,26 @@ async function callLLM(messages) {
       }),
     });
 
-    if (!response.ok) {
-      // Handle rate limit (429) with exponential backoff
-      if (response.status === 429) {
-        const retryAfter = response.headers.get("X-RateLimit-Reset");
-        const resetTime = retryAfter ? parseInt(retryAfter) - Date.now() : baseDelayMs;
-        const delay = Math.min(resetTime, baseDelayMs * Math.pow(2, attempt));
-        
-        if (attempt < maxRetries - 1) {
-          console.log(`[optimizer] rate limited, waiting ${Math.round(delay/1000)}s before retry ${attempt + 1}/${maxRetries}`);
-          await new Promise(resolve => setTimeout(resolve, delay));
-          continue;
-        }
-      }
-      
-      const errorText = await response.text();
-      throw new Error(`OpenRouter API error (${response.status}): ${errorText}`);
+    if (response.ok) {
+      const data = await response.json();
+      return data.choices?.[0]?.message?.content ?? "";
     }
 
-    const data = await response.json();
-    return data.choices?.[0]?.message?.content ?? "";
+    const errorText = await response.text();
+    lastError = new Error(`OpenRouter API error (${response.status}): ${errorText}`);
+    
+    // Retry on rate limit (429)
+    if (response.status === 429 && attempt < MAX_RETRIES - 1) {
+      const waitMs = BASE_DELAY_MS * Math.pow(2, attempt);
+      console.log(`[optimizer] rate limited, waiting ${waitMs}ms (attempt ${attempt + 1}/${MAX_RETRIES})...`);
+      await delay(waitMs);
+      continue;
+    }
+    
+    throw lastError;
   }
   
-  throw new Error("Max retries exceeded");
+  throw lastError;
 }
 
 function runBacktest(splitGw) {
@@ -216,6 +191,15 @@ export async function runOptimizationCycle() {
 
   const cycleNumber = await getExperimentCount();
   const model = getModel();
+
+  // Rate limit: wait before making LLM call (8 RPM = 7.5s minimum between calls)
+  const timeSinceLastCall = Date.now() - lastCallTime;
+  if (timeSinceLastCall < MIN_DELAY_BETWEEN_CALLS_MS) {
+    const waitMs = MIN_DELAY_BETWEEN_CALLS_MS - timeSinceLastCall;
+    console.log(`[optimizer] rate limit: waiting ${waitMs}ms before LLM call`);
+    await sleep(waitMs);
+  }
+  lastCallTime = Date.now();
 
   // 1. Read current state
   const [strategyCode, programMd, weightsJson] = await Promise.all([
