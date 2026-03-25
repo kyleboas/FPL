@@ -134,9 +134,11 @@ function perturbWeights(weights) {
   let delta;
   
   if (pick.key === "historyWindow") {
-    // History window: integer 1-8, step by 1
+    // History window: integer 1 to currentGW, step by 1
+    // Max is all completed GWs (currentGW from bootstrap)
+    // We'll use 38 as absolute max for safety
     delta = Math.random() < 0.5 ? -1 : 1;
-    newValue = Math.max(1, Math.min(8, oldValue + delta));
+    newValue = Math.max(1, Math.min(38, oldValue + delta));
   } else if (pick.key === "minimumRecentMinutes") {
     // Min recent minutes: integer, step by 30
     delta = (Math.random() < 0.5 ? -1 : 1) * 30;
