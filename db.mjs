@@ -1,41 +1,40 @@
 #!/usr/bin/env node
 
 /**
- * Minimal Postgres helper using psql CLI.
+ * Minimal Postgres helper using node-postgres (pg).
  *
  * Expects DATABASE_URL in the environment (standard Railway Postgres).
  * Falls back to a local JSON file when DATABASE_URL is not set.
  */
 
-import { execFile } from "node:child_process";
+import pg from "pg";
 import { readFile, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 
+const { Pool } = pg;
+
 const ROOT = fileURLToPath(new URL(".", import.meta.url));
 const LOCAL_FILE = join(ROOT, "experiments.json");
+
+let pool = null;
 
 function getDatabaseUrl() {
   return process.env.DATABASE_URL || "";
 }
 
-// ── psql runner ─────────────────────────────────────────────────────────────
+function getPool() {
+  if (!pool && getDatabaseUrl()) {
+    pool = new Pool({ connectionString: getDatabaseUrl() });
+  }
+  return pool;
+}
 
-function psql(sql) {
-  const url = getDatabaseUrl();
-  if (!url) return Promise.reject(new Error("DATABASE_URL not set"));
-
-  return new Promise((resolve, reject) => {
-    execFile(
-      "psql",
-      [url, "-t", "-A", "-F", "\t", "-c", sql],
-      { timeout: 15_000 },
-      (err, stdout, stderr) => {
-        if (err) return reject(new Error(`psql error: ${stderr || err.message}`));
-        resolve(stdout.trim());
-      },
-    );
-  });
+async function query(sql, values = []) {
+  const p = getPool();
+  if (!p) return null;
+  const result = await p.query(sql, values);
+  return result.rows;
 }
 
 // ── Migrations ──────────────────────────────────────────────────────────────
@@ -52,7 +51,7 @@ export async function migrate() {
     return;
   }
 
-  await psql(`
+  await query(`
     CREATE TABLE IF NOT EXISTS experiments (
       id SERIAL PRIMARY KEY,
       created_at TIMESTAMPTZ DEFAULT NOW(),
@@ -99,11 +98,11 @@ export async function insertExperiment({ overallAvgPoints, hitRate, weights, des
     return;
   }
 
-  const escaped = (s) => s.replace(/'/g, "''");
-  await psql(`
-    INSERT INTO experiments (overall_avg_points, hit_rate, weights_json, description, status)
-    VALUES (${overallAvgPoints}, ${hitRate}, '${escaped(weightsJson)}', '${escaped(description)}', '${escaped(status)}')
-  `);
+  await query(
+    `INSERT INTO experiments (overall_avg_points, hit_rate, weights_json, description, status)
+     VALUES ($1, $2, $3, $4, $5)`,
+    [overallAvgPoints, hitRate, weightsJson, description, status]
+  );
 }
 
 export async function getAllExperiments() {
@@ -111,24 +110,10 @@ export async function getAllExperiments() {
     return readLocal();
   }
 
-  const raw = await psql(`
+  return query(`
     SELECT id, created_at, overall_avg_points, hit_rate, description, status
     FROM experiments ORDER BY id ASC
   `);
-
-  if (!raw) return [];
-
-  return raw.split("\n").map((line) => {
-    const [id, created_at, overall_avg_points, hit_rate, description, status] = line.split("\t");
-    return {
-      id: Number(id),
-      created_at,
-      overall_avg_points: Number(overall_avg_points),
-      hit_rate: Number(hit_rate),
-      description,
-      status,
-    };
-  });
 }
 
 export async function getBestExperiment() {
@@ -145,16 +130,23 @@ export async function getBestExperiment() {
 export async function loadActiveWeights() {
   if (!getDatabaseUrl()) return null;
 
-  const raw = await psql(`
+  const rows = await query(`
     SELECT weights_json FROM experiments
     WHERE status = 'keep'
     ORDER BY overall_avg_points DESC LIMIT 1
   `);
 
-  if (!raw) return null;
+  if (!rows || !rows.length) return null;
   try {
-    return JSON.parse(raw);
+    return JSON.parse(rows[0].weights_json);
   } catch {
     return null;
+  }
+}
+
+export async function closePool() {
+  if (pool) {
+    await pool.end();
+    pool = null;
   }
 }
