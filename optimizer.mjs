@@ -44,10 +44,8 @@ function delay(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-async function callLLM(messages) {
-  let lastError;
-  
-  for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+async function callLLM(messages, retries = 3) {
+  for (let attempt = 0; attempt < retries; attempt++) {
     const response = await fetch(OPENROUTER_API_URL, {
       method: "POST",
       headers: {
@@ -64,26 +62,28 @@ async function callLLM(messages) {
       }),
     });
 
-    if (response.ok) {
-      const data = await response.json();
-      return data.choices?.[0]?.message?.content ?? "";
+    if (!response.ok) {
+      const errorText = await response.text();
+      
+      // Rate limit - wait and retry
+      if (response.status === 429) {
+        const retryAfter = parseInt(response.headers.get("X-RateLimit-Reset") || "0", 10);
+        const waitMs = retryAfter > 0 ? Math.max(0, retryAfter - Date.now()) : 60000;
+        if (attempt < retries - 1) {
+          console.log(`[optimizer] rate limited, waiting ${Math.round(waitMs/1000)}s before retry ${attempt + 1}/${retries}...`);
+          await new Promise(r => setTimeout(r, Math.min(waitMs, 60000)));
+          continue;
+        }
+      }
+      
+      throw new Error(`OpenRouter API error (${response.status}): ${errorText}`);
     }
 
-    const errorText = await response.text();
-    lastError = new Error(`OpenRouter API error (${response.status}): ${errorText}`);
-    
-    // Retry on rate limit (429)
-    if (response.status === 429 && attempt < MAX_RETRIES - 1) {
-      const waitMs = BASE_DELAY_MS * Math.pow(2, attempt);
-      console.log(`[optimizer] rate limited, waiting ${waitMs}ms (attempt ${attempt + 1}/${MAX_RETRIES})...`);
-      await delay(waitMs);
-      continue;
-    }
-    
-    throw lastError;
+    const data = await response.json();
+    return data.choices?.[0]?.message?.content ?? "";
   }
   
-  throw lastError;
+  throw new Error("Max retries exceeded");
 }
 
 function runBacktest(splitGw) {
