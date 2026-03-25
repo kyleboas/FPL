@@ -34,15 +34,15 @@ const WEIGHTS_PATH = join(ROOT, "autoresearch-fpl", "weights.json");
 const RUN_SCRIPT = join(ROOT, "autoresearch-fpl", "run.mjs");
 
 const OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions";
-const DEFAULT_MODEL = "qwen/qwen3-coder:free";
+const DEFAULT_MODEL = "liquid/lfm-2-24b-a2b";  // Ultra cheap ($0.03/$0.12 per M tokens), reliable for code
 
-// Fallback models if primary is rate-limited
-// Note: Most "free" models have been discontinued. Use cheap models as fallbacks.
+// Fallback models if primary is rate-limited or fails
+// Priority: cheap + reliable for code generation
 const FALLBACK_MODELS = [
-  "nvidia/nemotron-3-super-120b-a12b:free",  // Only remaining free model
-  "qwen/qwen3.5-9b",  // Very cheap ($0.05/$0.15 per M tokens)
-  "liquid/lfm-2-24b-a2b",  // Ultra cheap ($0.03/$0.12 per M tokens)
-  "mistralai/mistral-small-2603",  // Cheap ($0.15/$0.60 per M tokens)
+  "qwen/qwen3.5-9b",  // Very cheap ($0.05/$0.15 per M tokens), good at code
+  "mistralai/mistral-small-2603",  // Cheap ($0.15/$0.60 per M tokens), reliable
+  "google/gemini-2.0-flash-001",  // Cheap ($0.10/$0.40 per M tokens), good at following instructions
+  "qwen/qwen3-coder:free",  // Free fallback (may be rate-limited)
 ];
 
 // Rate limit handling
