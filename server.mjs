@@ -91,14 +91,16 @@ async function runCycle() {
   }
 }
 
-// Initialize DB, run first cycle, then schedule
+// Initialize DB, then schedule (no startup cycle to avoid rate limit spam)
 migrate()
-  .then(() => runCycle())
+  .then(() => {
+    console.log("[db] ready");
+    console.log(`[cycle] scheduled every ${CYCLE_INTERVAL_MINUTES} minutes`);
+  })
   .catch((err) => console.error("[startup] migration failed:", err.message));
 
 if (CYCLE_INTERVAL_MS > 0) {
   setInterval(runCycle, CYCLE_INTERVAL_MS);
-  console.log(`[cycle] scheduled every ${CYCLE_INTERVAL_MINUTES} minutes`);
 } else {
   console.log("[cycle] interval disabled (CYCLE_INTERVAL_MINUTES=0), using external cron");
 }
