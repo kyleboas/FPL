@@ -35,6 +35,8 @@ const RUN_SCRIPT = join(ROOT, "autoresearch-fpl", "run.mjs");
 
 const OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions";
 const DEFAULT_MODEL = "qwen/qwen3-coder:free";
+const MAX_RETRIES = 3;
+const RETRY_DELAYS = [2000, 4000, 8000]; // 2s, 4s, 8s
 
 // ── Train/test split ────────────────────────────────────────────────────────
 
@@ -56,7 +58,6 @@ function getApiKey() {
 // ── Rate limiting ──────────────────────────────────────────────────────────
 
 const MIN_DELAY_BETWEEN_CALLS_MS = 8000; // 8 seconds for 8 RPM limit
-const MAX_RETRIES = 3;
 const RETRY_BASE_DELAY_MS = 2000;
 let lastCallTime = 0;
 
@@ -66,7 +67,7 @@ async function sleep(ms) {
 
 async function callLLM(messages) {
   const maxRetries = 3;
-  const baseDelay = 10000; // 10 seconds
+  const baseDelayMs = 60_000; // 1 minute base delay for rate limits
   
   for (let attempt = 0; attempt < maxRetries; attempt++) {
     const response = await fetch(OPENROUTER_API_URL, {
@@ -86,16 +87,20 @@ async function callLLM(messages) {
     });
 
     if (!response.ok) {
-      const errorText = await response.text();
-      
-      // Retry on rate limit (429)
-      if (response.status === 429 && attempt < maxRetries - 1) {
-        const delay = baseDelay * Math.pow(2, attempt);
-        console.log(`[optimizer] rate limited, retrying in ${delay/1000}s...`);
-        await new Promise(r => setTimeout(r, delay));
-        continue;
+      // Handle rate limit (429) with exponential backoff
+      if (response.status === 429) {
+        const retryAfter = response.headers.get("X-RateLimit-Reset");
+        const resetTime = retryAfter ? parseInt(retryAfter) - Date.now() : baseDelayMs;
+        const delay = Math.min(resetTime, baseDelayMs * Math.pow(2, attempt));
+        
+        if (attempt < maxRetries - 1) {
+          console.log(`[optimizer] rate limited, waiting ${Math.round(delay/1000)}s before retry ${attempt + 1}/${maxRetries}`);
+          await new Promise(resolve => setTimeout(resolve, delay));
+          continue;
+        }
       }
       
+      const errorText = await response.text();
       throw new Error(`OpenRouter API error (${response.status}): ${errorText}`);
     }
 
