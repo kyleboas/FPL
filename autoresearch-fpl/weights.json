@@ -1,8 +1,23 @@
 {
+  "teamId": 0,
+  "freeTransfers": 1,
+  "hitCost": 4,
+  "chips": {
+    "wildcard": true,
+    "freeHit": true,
+    "benchBoost": true
+  },
   "historyWindow": 4,
   "minimumRecentMinutes": 180,
   "minimumChanceOfPlaying": 50,
   "minimumSeasonMinutes": 600,
+  "budget": 1000,
+  "squadSize": {
+    "GK": 2,
+    "DEF": 5,
+    "MID": 5,
+    "FWD": 3
+  },
   "picksPerPosition": {
     "GK": 2,
     "DEF": 8,

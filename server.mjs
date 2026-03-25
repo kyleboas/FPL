@@ -1,14 +1,17 @@
 import { createServer } from "node:http";
 import { readFile, access } from "node:fs/promises";
-import { spawn } from "node:child_process";
 import { extname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { runOptimizationCycle } from "./optimizer.mjs";
+import { generateChart } from "./chart.mjs";
+import { migrate } from "./db.mjs";
 
 const ROOT = fileURLToPath(new URL(".", import.meta.url));
 const PORT = process.env.PORT || 3000;
 const REPORT_PATH = join(ROOT, "autoresearch-fpl", "latest-report.md");
-const REPORT_INTERVAL_MS =
-  (parseInt(process.env.REPORT_INTERVAL_HOURS ?? "6", 10) || 6) * 60 * 60 * 1000;
+const PROGRESS_SVG_PATH = join(ROOT, "progress.svg");
+const CYCLE_INTERVAL_MS =
+  (parseInt(process.env.CYCLE_INTERVAL_MINUTES ?? "30", 10) || 30) * 60 * 1000;
 
 const MIME = {
   ".html": "text/html; charset=utf-8",
@@ -24,45 +27,38 @@ const MIME = {
   ".md": "text/markdown; charset=utf-8",
 };
 
-// ── Autoresearch runner ──────────────────────────────────────────────────────
+// ── Optimization cycle ──────────────────────────────────────────────────────
 
-let reportRunning = false;
+let cycleRunning = false;
+let cycleCount = 0;
 
-function runReport() {
-  if (reportRunning) {
-    console.log("[report] already running, skipping");
+async function runCycle() {
+  if (cycleRunning) {
+    console.log("[cycle] already running, skipping");
     return;
   }
-  reportRunning = true;
-  console.log("[report] starting autoresearch run...");
+  cycleRunning = true;
+  cycleCount += 1;
+  console.log(`[cycle] #${cycleCount} starting...`);
 
-  const child = spawn(
-    process.execPath,
-    ["autoresearch-fpl/run.mjs", "report"],
-    { cwd: ROOT, stdio: "inherit" }
-  );
-
-  child.on("close", (code) => {
-    reportRunning = false;
-    if (code === 0) {
-      console.log("[report] finished successfully");
-    } else {
-      console.error(`[report] exited with code ${code}`);
-    }
-  });
-
-  child.on("error", (err) => {
-    reportRunning = false;
-    console.error("[report] failed to start:", err.message);
-  });
+  try {
+    await runOptimizationCycle();
+    await generateChart();
+    console.log(`[cycle] #${cycleCount} complete`);
+  } catch (err) {
+    console.error(`[cycle] #${cycleCount} failed:`, err.message);
+  } finally {
+    cycleRunning = false;
+  }
 }
 
-// Run on startup, then on schedule
-runReport();
-setInterval(runReport, REPORT_INTERVAL_MS);
-console.log(
-  `[report] scheduled every ${REPORT_INTERVAL_MS / 3600000}h`
-);
+// Initialize DB, run first cycle, then schedule
+migrate()
+  .then(() => runCycle())
+  .catch((err) => console.error("[startup] migration failed:", err.message));
+
+setInterval(runCycle, CYCLE_INTERVAL_MS);
+console.log(`[cycle] scheduled every ${CYCLE_INTERVAL_MS / 60000} minutes`);
 
 // ── HTTP server ──────────────────────────────────────────────────────────────
 
@@ -98,11 +94,11 @@ const server = createServer(async (req, res) => {
   // Health check
   if (url.pathname === "/health") {
     res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ status: "ok", reportRunning }));
+    res.end(JSON.stringify({ status: "ok", cycleRunning, cycleCount }));
     return;
   }
 
-  // Report endpoint — renders latest-report.md as HTML
+  // Report endpoint — renders latest-report.md as HTML with progress chart
   if (url.pathname === "/report") {
     let md;
     try {
@@ -118,6 +114,13 @@ const server = createServer(async (req, res) => {
       .replace(/</g, "&lt;")
       .replace(/>/g, "&gt;");
 
+    // Check if progress.svg exists
+    let progressChart = "";
+    try {
+      await access(PROGRESS_SVG_PATH);
+      progressChart = `<img src="/progress.svg" alt="Autoresearch Progress" style="max-width:100%; margin: 1rem 0; border-radius: 8px;">`;
+    } catch {}
+
     res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
     res.end(`<!DOCTYPE html>
 <html lang="en">
@@ -126,12 +129,15 @@ const server = createServer(async (req, res) => {
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>FPL Autoresearch Report</title>
   <style>
-    body { font-family: monospace; max-width: 900px; margin: 2rem auto; padding: 0 1rem; background: #0f1117; color: #e8eaf0; line-height: 1.6; }
+    body { font-family: monospace; max-width: 960px; margin: 2rem auto; padding: 0 1rem; background: #0f1117; color: #e8eaf0; line-height: 1.6; }
     pre { white-space: pre-wrap; word-break: break-word; }
     a { color: #7cb9e8; }
+    .status { color: #888; font-size: 0.85em; margin-bottom: 1rem; }
   </style>
 </head>
 <body>
+<div class="status">Optimization cycle #${cycleCount} | ${cycleRunning ? "Running..." : "Idle"} | Every ${CYCLE_INTERVAL_MS / 60000}m</div>
+${progressChart}
 <pre>${escaped}</pre>
 </body>
 </html>`);

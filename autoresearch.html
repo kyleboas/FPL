@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Autoresearch Transfer Planner | FPL</title>
+    <link rel="stylesheet" href="style.css">
+    <style>
+        .report-section {
+            background: var(--panel-bg);
+            border-radius: 10px;
+            padding: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.08);
+            margin-bottom: 20px;
+        }
+        .report-section h2 {
+            margin: 0 0 12px 0;
+            font-size: 1.3rem;
+            border-bottom: 2px solid #e2e8f0;
+            padding-bottom: 10px;
+        }
+        .report-section h3 {
+            margin: 16px 0 8px 0;
+            font-size: 1.05rem;
+            color: #475569;
+        }
+        .player-row {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 8px 12px;
+            border-bottom: 1px solid #e2e8f0;
+            font-size: 0.9rem;
+        }
+        .player-row:last-child { border-bottom: none; }
+        .player-name { font-weight: 600; min-width: 140px; }
+        .player-meta { color: #64748b; font-size: 0.85em; }
+        .player-score { font-weight: 700; color: var(--accent-color); min-width: 60px; text-align: right; }
+        .player-reasons { color: #64748b; font-size: 0.8em; flex: 1; }
+
+        .transfer-row {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 10px 12px;
+            border-bottom: 1px solid #e2e8f0;
+            font-size: 0.9rem;
+        }
+        .transfer-row:last-child { border-bottom: none; }
+        .transfer-out { color: #dc2626; font-weight: 600; }
+        .transfer-in { color: #10b981; font-weight: 600; }
+        .transfer-arrow { color: #64748b; font-size: 1.2em; }
+        .transfer-gain { font-weight: 700; color: var(--accent-color); margin-left: auto; }
+        .transfer-tag {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 0.75em;
+            font-weight: 700;
+        }
+        .tag-free { background: #d1fae5; color: #065f46; }
+        .tag-hit { background: #fee2e2; color: #991b1b; }
+        .tag-wildcard { background: #dbeafe; color: #1e40af; }
+        .tag-freehit { background: #fef3c7; color: #92400e; }
+        .tag-benchboost { background: #ede9fe; color: #5b21b6; }
+
+        .chip-card {
+            display: inline-flex;
+            align-items: center;
+            gap: 10px;
+            padding: 12px 16px;
+            border-radius: 8px;
+            margin: 4px 8px 4px 0;
+            font-weight: 600;
+        }
+        .chip-card.wildcard { background: #dbeafe; color: #1e40af; }
+        .chip-card.freehit { background: #fef3c7; color: #92400e; }
+        .chip-card.benchboost { background: #ede9fe; color: #5b21b6; }
+        .chip-gain { font-size: 0.85em; font-weight: 400; }
+
+        .progress-chart {
+            width: 100%;
+            border-radius: 8px;
+            margin: 8px 0;
+        }
+
+        .meta-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 12px;
+            margin-bottom: 12px;
+        }
+        .meta-item {
+            background: #f1f5f9;
+            padding: 10px 14px;
+            border-radius: 6px;
+        }
+        .meta-label { font-size: 0.8em; color: #64748b; }
+        .meta-value { font-size: 1.1em; font-weight: 700; color: #334155; }
+
+        .gw-header-tag {
+            display: block;
+            font-size: 0.85em;
+            font-weight: 700;
+            color: #1e40af;
+            margin-top: 8px;
+        }
+
+        .cycle-status {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 4px 10px;
+            border-radius: 12px;
+            font-size: 0.8rem;
+            font-weight: 600;
+        }
+        .cycle-status.idle { background: #d1fae5; color: #065f46; }
+        .cycle-status.running { background: #fef3c7; color: #92400e; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <header>
+        <h1>Autoresearch Transfer Planner</h1>
+        <p>AI-optimized transfers, chip strategy, and squad planning for the rest of the season</p>
+        <div class="nav-links">
+            <a href="index.html">Team DEFCON View</a>
+            <a href="player-defcon.html">Player DEFCON Stats</a>
+            <a href="goals.html">Goals Statistics</a>
+            <a href="combined.html">Combined DEFCON & Goals</a>
+            <a href="tracker.html">My Team Tracker</a>
+            <a href="chip-strategy.html">Chip Strategy</a>
+        </div>
+    </header>
+
+    <div id="error"></div>
+    <div id="loading">Loading autoresearch report...</div>
+
+    <div id="main-content" style="display: none;">
+
+        <div id="status-section" class="report-section">
+            <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px;">
+                <h2 style="border: none; padding: 0; margin: 0;">Optimizer Status</h2>
+                <span id="cycle-status" class="cycle-status idle">Idle</span>
+            </div>
+            <div id="progress-container" style="margin-top: 12px; display: none;">
+                <img id="progress-chart" class="progress-chart" src="/progress.svg" alt="Optimization Progress">
+            </div>
+        </div>
+
+        <div id="meta-section" class="report-section">
+            <h2>Report Summary</h2>
+            <div id="meta-grid" class="meta-grid"></div>
+        </div>
+
+        <div id="chips-section" class="report-section" style="display: none;">
+            <h2>Chip Strategy</h2>
+            <div id="chip-cards"></div>
+        </div>
+
+        <div id="squad-section" class="report-section" style="display: none;">
+            <h2>Current Squad</h2>
+            <div id="squad-list"></div>
+        </div>
+
+        <div id="transfers-section" class="report-section" style="display: none;">
+            <h2 id="transfers-heading">Transfer Plan</h2>
+            <div id="transfer-list"></div>
+        </div>
+
+        <div id="final-section" class="report-section" style="display: none;">
+            <h2>Final Squad (After All Transfers)</h2>
+            <div id="final-list"></div>
+        </div>
+
+        <div id="top-section" class="report-section" style="display: none;">
+            <h2>Top Players by Season Score</h2>
+            <div id="top-list"></div>
+        </div>
+
+        <div class="status-bar" id="status-bar"></div>
+    </div>
+</div>
+
+<script type="module" src="js/autoresearch.js"></script>
+</body>
+</html>
