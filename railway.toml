@@ -8,3 +8,4 @@ healthcheckPath = "/health"
 [env]
 NODE_ENV = "production"
 CYCLE_INTERVAL_MINUTES = "0"
+EXPERIMENTS_PER_CRON = "100"
