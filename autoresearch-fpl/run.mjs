@@ -1159,11 +1159,7 @@ function planTransfers({
     freeTransfers = Math.min(5, 1 + unusedFree);
   }
 
-  return { transfers, finalSquadIds: [...squadIds], finalBank: currentBank, chipPlan };
-}
-
-/**
- * Track squad state per GW
+  // Track squad state per GW
   const squadStateById = new Map();
   const squadPerGw = [];
 
@@ -1173,9 +1169,7 @@ function planTransfers({
   }
 
   // Build squad for each GW, apply transfers
-  const gws = [];
   for (let gw = fromGw; gw <= toGw; gw++) {
-    gws.push(gw);
     // Apply transfers scheduled for this GW
     const transfersForGw = transfers.filter(t => t.gw === gw);
     for (const t of transfersForGw) {
@@ -1183,11 +1177,11 @@ function planTransfers({
       if (t.in) squadStateById.set(getPlayerId(t.in.player), true);
     }
     // Snapshot squad at this GW
-    const squadIds = [...squadStateById.keys()];
-    squadPerGw.push({ gw, squadIds });
+    const gwSquadIds = [...squadStateById.keys()];
+    squadPerGw.push({ gw, squadIds: gwSquadIds });
   }
 
-  return { transfers, finalSquadIds: [...squadStateById.keys()], chipPlan, squadPerGw };
+  return { transfers, finalSquadIds: [...squadStateById.keys()], finalBank: currentBank, chipPlan, squadPerGw };
 }
 
 /**

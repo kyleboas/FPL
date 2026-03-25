@@ -148,8 +148,8 @@ function perturbWeights(weights) {
     delta = (Math.random() < 0.5 ? -1 : 1) * 10;
     newValue = Math.max(0, Math.min(100, oldValue + delta));
   } else {
-    // Regular weights: float, scale perturbation
-    const scale = Math.max(Math.abs(oldValue) * 0.2, 0.05);
+    // Regular weights: float, scale perturbation (small steps for smoother hill-climbing)
+    const scale = Math.max(Math.abs(oldValue) * 0.06, 0.02);
     delta = (Math.random() * 2 - 1) * scale;
     newValue = Math.round((oldValue + delta) * 1000) / 1000;
   }
