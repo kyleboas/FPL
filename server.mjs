@@ -14,6 +14,13 @@ const PROGRESS_SVG_PATH = DATA_DIR ? join(DATA_DIR, "progress.svg") : join(ROOT,
 const CYCLE_INTERVAL_MINUTES = parseInt(process.env.CYCLE_INTERVAL_MINUTES ?? "30", 10);
 const CYCLE_INTERVAL_MS = CYCLE_INTERVAL_MINUTES * 60 * 1000;
 
+// Rate limit delay: OpenRouter free tier = 8 req/min = 7.5 sec between requests
+const RATE_LIMIT_DELAY_MS = 8000;
+
+function delay(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
 const MIME = {
   ".html": "text/html; charset=utf-8",
   ".css": "text/css; charset=utf-8",
@@ -40,11 +47,21 @@ async function runCycle() {
   }
   cycleRunning = true;
   cycleCount += 1;
-  const nExperiments = parseInt(process.env.EXPERIMENTS_PER_CRON ?? "1", 10);
-  console.log(`[cycle] #${cycleCount} starting (${nExperiments} experiments)...`);
+  
+  // Read from config.json for default, allow env override
+  let config = { experimentsPerCron: 1 };
+  try {
+    config = JSON.parse(await readFile(join(ROOT, "autoresearch-fpl", "config.json"), "utf8"));
+  } catch {}
+  const nExperiments = parseInt(process.env.EXPERIMENTS_PER_CRON ?? config.experimentsPerCron ?? 1, 10);
+  console.log(`[cycle] #${cycleCount} starting (${nExperiments} experiments, ${RATE_LIMIT_DELAY_MS}ms delay)...`);
 
   try {
     for (let i = 0; i < nExperiments; i++) {
+      if (i > 0) {
+        console.log(`[cycle] waiting ${RATE_LIMIT_DELAY_MS}ms before experiment #${i + 1}...`);
+        await delay(RATE_LIMIT_DELAY_MS);
+      }
       await runOptimizationCycle();
     }
     await generateChart();
