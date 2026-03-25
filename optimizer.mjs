@@ -36,27 +36,22 @@ const RUN_SCRIPT = join(ROOT, "autoresearch-fpl", "run.mjs");
 const OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions";
 const DEFAULT_MODEL = "qwen/qwen3-coder:free";
 
-// ── Train/test split ────────────────────────────────────────────────────────
+// Fallback models if primary is rate-limited
+const FALLBACK_MODELS = [
+  "meta-llama/llama-3.3-8b-instruct:free",
+  "google/gemma-3-27b-it:free",
+  "deepseek/deepseek-r1:free",
+];
 
-const TEST_FRACTION = 0.25;
-const TEST_DEGRADATION_LIMIT = 0.5;
+// Rate limit handling
+const MAX_RETRIES = 3;
+const BASE_DELAY_MS = 8000;
 
-// ── Helpers ─────────────────────────────────────────────────────────────────
-
-function getModel() {
-  return process.env.OPENROUTER_MODEL || DEFAULT_MODEL;
+function delay(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-function getApiKey() {
-  const key = process.env.OPENROUTER_API_KEY;
-  if (!key) throw new Error("OPENROUTER_API_KEY environment variable is required");
-  return key;
-}
-
-async function callLLM(messages) {
-  const maxRetries = 3;
-  const baseDelay = 8000; // 8 seconds for 8 RPM limit
-  
+async function callLLMWithModel(messages, model, maxRetries = 3) {
   for (let attempt = 0; attempt < maxRetries; attempt++) {
     const response = await fetch(OPENROUTER_API_URL, {
       method: "POST",
@@ -67,32 +62,59 @@ async function callLLM(messages) {
         "X-Title": "FPL Autoresearch",
       },
       body: JSON.stringify({
-        model: getModel(),
+        model,
         messages,
         max_tokens: 4096,
         temperature: 0.8,
       }),
     });
 
-    if (!response.ok) {
-      const errorText = await response.text();
-      
-      // Retry on rate limit (429)
-      if (response.status === 429 && attempt < maxRetries - 1) {
-        const delay = baseDelay * Math.pow(2, attempt);
-        console.log(`[optimizer] rate limited, retrying in ${delay/1000}s...`);
-        await new Promise(resolve => setTimeout(resolve, delay));
-        continue;
-      }
-      
-      throw new Error(`OpenRouter API error (${response.status}): ${errorText}`);
+    if (response.ok) {
+      const data = await response.json();
+      return { content: data.choices?.[0]?.message?.content ?? "", model };
     }
 
-    const data = await response.json();
-    return data.choices?.[0]?.message?.content ?? "";
+    const errorText = await response.text();
+    
+    // Rate limit (429) - check if we should try fallback
+    if (response.status === 429) {
+      const isUpstreamRateLimit = errorText.includes("rate-limited upstream") || errorText.includes("Provider returned error");
+      
+      if (isUpstreamRateLimit) {
+        console.log(`[optimizer] model ${model} rate-limited by provider, trying fallback...`);
+        return null; // Signal to try next model
+      }
+      
+      // Standard rate limit - wait and retry
+      if (attempt < maxRetries - 1) {
+        const waitMs = BASE_DELAY_MS * Math.pow(2, attempt);
+        console.log(`[optimizer] rate limited, retrying in ${waitMs/1000}s...`);
+        await delay(waitMs);
+        continue;
+      }
+    }
+
+    throw new Error(`OpenRouter API error (${response.status}): ${errorText}`);
+  }
+  return null;
+}
+
+async function callLLM(messages) {
+  const requestedModel = getModel();
+  const modelsToTry = [requestedModel, ...FALLBACK_MODELS.filter(m => m !== requestedModel)];
+  
+  for (const model of modelsToTry) {
+    console.log(`[optimizer] trying model: ${model}`);
+    const result = await callLLMWithModel(messages, model, MAX_RETRIES);
+    if (result) {
+      if (model !== requestedModel) {
+        console.log(`[optimizer] using fallback model: ${model}`);
+      }
+      return result.content;
+    }
   }
   
-  throw new Error("Max retries exceeded");
+  throw new Error("All models failed - all rate limited or unavailable");
 }
 
 function runBacktest(splitGw) {
