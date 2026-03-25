@@ -156,6 +156,20 @@ const server = createServer(async (req, res) => {
     return;
   }
 
+  // Manual trigger endpoint
+  if (url.pathname === "/trigger") {
+    if (cycleRunning) {
+      res.writeHead(409, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "Cycle already running" }));
+      return;
+    }
+    // Run cycle in background
+    runCycle();
+    res.writeHead(202, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ status: "triggered", cycleCount: cycleCount + 1 }));
+    return;
+  }
+
   // Report endpoint — renders latest-report.md as HTML with progress chart
   if (url.pathname === "/report") {
     let md;
