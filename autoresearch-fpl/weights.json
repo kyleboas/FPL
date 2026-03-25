@@ -1,11 +1,11 @@
 {
-  "teamId": 0,
-  "freeTransfers": 1,
+  "teamId": 387838,
+  "freeTransfers": 3,
   "hitCost": 4,
   "chips": {
-    "wildcard": true,
+    "wildcard": false,
     "freeHit": true,
-    "benchBoost": true
+    "benchBoost": false
   },
   "historyWindow": 4,
   "minimumRecentMinutes": 180,
