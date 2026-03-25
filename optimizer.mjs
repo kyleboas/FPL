@@ -49,6 +49,10 @@ const FALLBACK_MODELS = [
 const MAX_RETRIES = 3;
 const BASE_DELAY_MS = 8000;
 
+// Train/test split configuration
+const TEST_FRACTION = 0.2;  // 20% of gameweeks for testing
+const TEST_DEGRADATION_LIMIT = 2.0;  // Max allowed test set degradation (points per GW)
+
 function delay(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
