@@ -1193,9 +1193,10 @@ function planTransfers({
 /**
  * Select starting 11 from a squad of 15 players.
  * Constraints: 1 GK, 3-5 DEF, 2-5 MID, 1-3 FWD = 11 total.
- * Returns { starting, bench } where starting is array of 11 players.
+ * Returns { starting, bench, captain, viceCaptain } where starting is array of 11 players.
+ * Captain = highest scoring player (2x points), Vice-Captain = 2nd highest (backup).
  */
-function selectStartingEleven(squad) {
+function selectStartingEleven(squad, scoreKey = "score") {
   // Group by position
   const byPosition = { GK: [], DEF: [], MID: [], FWD: [] };
   for (const player of squad) {
@@ -1205,7 +1206,7 @@ function selectStartingEleven(squad) {
 
   // Sort each position by score descending
   for (const pos of Object.keys(byPosition)) {
-    byPosition[pos].sort((a, b) => b.score - a.score);
+    byPosition[pos].sort((a, b) => b[scoreKey] - a[scoreKey]);
   }
 
   const starting = [];
@@ -1230,7 +1231,7 @@ function selectStartingEleven(squad) {
   // Remaining spots: fill with highest scoring remaining players
   // 11 - 7 = 4 spots left to fill
   const remaining = [...byPosition.DEF, ...byPosition.MID, ...byPosition.FWD]
-    .sort((a, b) => b.score - a.score);
+    .sort((a, b) => b[scoreKey] - a[scoreKey]);
 
   // Count how many we can add at each position (max limits)
   const counts = { DEF: 0, MID: 0, FWD: 0 };
@@ -1261,7 +1262,12 @@ function selectStartingEleven(squad) {
     }
   }
 
-  return { starting: starting.slice(0, 11), bench };
+  // Sort starting 11 by score to pick captain and vice-captain
+  const sortedStarting = [...starting].sort((a, b) => b[scoreKey] - a[scoreKey]);
+  const captain = sortedStarting[0] || null;
+  const viceCaptain = sortedStarting[1] || null;
+
+  return { starting: starting.slice(0, 11), bench, captain, viceCaptain };
 }
 
 function selectBudgetSquad(ranked, weights) {
@@ -1435,17 +1441,23 @@ function renderReport({
             })
             .filter((p) => p !== null);
           
-          const { starting: gwStarting, bench: gwBench } = selectStartingEleven(gwPlayers);
+          const { starting: gwStarting, bench: gwBench, captain, viceCaptain } = selectStartingEleven(gwPlayers, "gwScore");
           
           const chipForGw = transferPlan.chipPlan?.find((c) => c.gw === gw);
           const chipTag = chipForGw ? ` [${chipForGw.chip}]` : "";
           
           lines.push(`### GW${gw}${chipTag}`);
           lines.push("");
+          lines.push(`**Captain:** ${captain?.player?.web_name ?? "?"} (${captain?.gwScore?.toFixed(2) ?? 0})`);
+          lines.push(`**Vice-Captain:** ${viceCaptain?.player?.web_name ?? "?"} (${viceCaptain?.gwScore?.toFixed(2) ?? 0})`);
+          lines.push("");
           lines.push("**Starting:**");
           for (const player of gwStarting) {
+            const isCaptain = player === captain;
+            const isViceCaptain = player === viceCaptain;
+            const tag = isCaptain ? " (C)" : isViceCaptain ? " (VC)" : "";
             lines.push(
-              `- ${player.player.web_name ?? player.player.second_name} (${player.positionName}, ${formatMoney(player.player.now_cost)}, ${player.teamName}) — GW score ${player.gwScore.toFixed(2)}`,
+              `- ${player.player.web_name ?? player.player.second_name}${tag} (${player.positionName}, ${formatMoney(player.player.now_cost)}, ${player.teamName}) — GW score ${player.gwScore.toFixed(2)}`,
             );
           }
           lines.push("");
