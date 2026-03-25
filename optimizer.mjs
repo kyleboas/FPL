@@ -79,6 +79,18 @@ function parseBacktestOutput(output) {
  */
 function getWeightKeys(weights) {
   const keys = [];
+  
+  // Add top-level numeric params that should be optimized
+  if (typeof weights.historyWindow === "number") {
+    keys.push({ section: "top", key: "historyWindow", value: weights.historyWindow });
+  }
+  if (typeof weights.minimumRecentMinutes === "number") {
+    keys.push({ section: "top", key: "minimumRecentMinutes", value: weights.minimumRecentMinutes });
+  }
+  if (typeof weights.minimumChanceOfPlaying === "number") {
+    keys.push({ section: "top", key: "minimumChanceOfPlaying", value: weights.minimumChanceOfPlaying });
+  }
+  
   for (const [key, value] of Object.entries(weights.common ?? {})) {
     keys.push({ section: "common", key, value });
   }
@@ -91,7 +103,9 @@ function getWeightKeys(weights) {
 }
 
 function setWeight(weights, section, key, newValue) {
-  if (section === "common") {
+  if (section === "top") {
+    weights[key] = newValue;
+  } else if (section === "common") {
     weights.common[key] = newValue;
   } else {
     const pos = section.replace("byPosition.", "");
@@ -100,6 +114,7 @@ function setWeight(weights, section, key, newValue) {
 }
 
 function getWeight(weights, section, key) {
+  if (section === "top") return weights[key];
   if (section === "common") return weights.common[key];
   const pos = section.replace("byPosition.", "");
   return weights.byPosition[pos][key];
@@ -114,15 +129,35 @@ function perturbWeights(weights) {
   const pick = keys[Math.floor(Math.random() * keys.length)];
   const oldValue = getWeight(weights, pick.section, pick.key);
 
-  // Scale perturbation to the magnitude of the weight
-  const scale = Math.max(Math.abs(oldValue) * 0.2, 0.05);
-  const delta = (Math.random() * 2 - 1) * scale;
-  const newValue = Math.round((oldValue + delta) * 1000) / 1000;
+  // Different perturbation strategies for different params
+  let newValue;
+  let delta;
+  
+  if (pick.key === "historyWindow") {
+    // History window: integer 1-8, step by 1
+    delta = Math.random() < 0.5 ? -1 : 1;
+    newValue = Math.max(1, Math.min(8, oldValue + delta));
+  } else if (pick.key === "minimumRecentMinutes") {
+    // Min recent minutes: integer, step by 30
+    delta = (Math.random() < 0.5 ? -1 : 1) * 30;
+    newValue = Math.max(0, Math.min(360, oldValue + delta));
+  } else if (pick.key === "minimumChanceOfPlaying") {
+    // Min chance of playing: integer 0-100, step by 10
+    delta = (Math.random() < 0.5 ? -1 : 1) * 10;
+    newValue = Math.max(0, Math.min(100, oldValue + delta));
+  } else {
+    // Regular weights: float, scale perturbation
+    const scale = Math.max(Math.abs(oldValue) * 0.2, 0.05);
+    delta = (Math.random() * 2 - 1) * scale;
+    newValue = Math.round((oldValue + delta) * 1000) / 1000;
+  }
 
   setWeight(weights, pick.section, pick.key, newValue);
 
-  const label = pick.section === "common" ? pick.key : `${pick.section}.${pick.key}`;
-  return `${label} ${oldValue.toFixed(3)} → ${newValue.toFixed(3)}`;
+  const label = pick.section === "common" ? pick.key : 
+                pick.section === "top" ? pick.key :
+                `${pick.section}.${pick.key}`;
+  return `${label} ${oldValue.toFixed(pick.key.includes("minimum") || pick.key.includes("Window") ? 0 : 3)} → ${newValue.toFixed(pick.key.includes("minimum") || pick.key.includes("Window") ? 0 : 3)}`;
 }
 
 export async function runOptimizationCycle() {
