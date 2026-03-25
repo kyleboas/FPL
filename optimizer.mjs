@@ -60,11 +60,14 @@ function runReport() {
 }
 
 function parseBacktestOutput(output) {
-  const avgMatch = output.match(/overall_avg_points:\s*([\d.]+)/);
-  const hitMatch = output.match(/overall_hit_rate:\s*([\d.]+)%/);
+  // Season simulator output format
+  const totalMatch = output.match(/total_points:\s*([\d.-]+)/);
+  const avgMatch = output.match(/avg_points_per_gw:\s*([\d.]+)/);
+  const hitMatch = output.match(/total_hit_cost:\s*([\d.]+)/);
   return {
     overallAvgPoints: avgMatch ? parseFloat(avgMatch[1]) : 0,
-    hitRate: hitMatch ? parseFloat(hitMatch[1]) / 100 : 0,
+    totalPoints: totalMatch ? parseFloat(totalMatch[1]) : 0,
+    hitRate: hitMatch ? parseFloat(hitMatch[1]) : 0,
   };
 }
 

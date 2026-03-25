@@ -460,63 +460,224 @@ function actualPoints(actualRowsById, playerId) {
   return toNumber(actualRowsById.get(playerId)?.event_points, 0);
 }
 
-function summarizeBacktest(gwSummaries) {
-  const positionBuckets = new Map();
-  let allPoints = [];
-  let allHits = [];
+/**
+ * Build a starting squad using greedy budget selection at a given GW.
+ * Uses point-in-time snapshot data (no future knowledge).
+ */
+function buildStartingSquad({
+  snapshotRows,
+  playerMetaById,
+  historyRowsByPlayer,
+  weights,
+  targetGw,
+  fixturesByTeamAndGw,
+  teamsById,
+}) {
+  const ranked = rankPlayers({
+    snapshotRows,
+    playerMetaById,
+    historyRowsByPlayer,
+    weights,
+    targetGw,
+    fixturesByTeamAndGw,
+    teamsById,
+  });
 
-  for (const gwSummary of gwSummaries) {
-    allPoints = allPoints.concat(gwSummary.points);
-    allHits = allHits.concat(gwSummary.hits);
+  const { squad } = selectBudgetSquad(ranked, weights);
+  return squad.map((p) => p.id);
+}
 
-    for (const [positionName, data] of Object.entries(gwSummary.byPosition)) {
-      if (!positionBuckets.has(positionName)) {
-        positionBuckets.set(positionName, { points: [], hits: [] });
-      }
-      positionBuckets.get(positionName).points.push(...data.points);
-      positionBuckets.get(positionName).hits.push(...data.hits);
+/**
+ * Season simulator backtest.
+ *
+ * 1. Build a starting squad at an early GW using budget selection
+ * 2. Each subsequent GW:
+ *    a. Re-score all players using point-in-time data up to previous GW
+ *    b. Use planTransfers to decide transfers (driven by weights)
+ *    c. Score the squad using ACTUAL points from historical data
+ *    d. Deduct hit costs
+ * 3. Return total points as the metric
+ */
+function simulateSeason({
+  rowsByGw,
+  playerMetaById,
+  weights,
+  fixturesByTeamAndGw,
+  teamsById,
+  startGw,
+  endGw,
+}) {
+  const hitCost = toNumber(weights.hitCost, 4);
+  const squadSize = weights.squadSize ?? { GK: 2, DEF: 5, MID: 5, FWD: 3 };
+
+  // Build starting squad using data available at startGw-1
+  const historyForStart = buildHistoryWindow(rowsByGw, startGw - 1, weights.historyWindow);
+  const startSnapshot = rowsByGw.get(startGw - 1) ?? [];
+
+  let squadIds = buildStartingSquad({
+    snapshotRows: startSnapshot,
+    playerMetaById,
+    historyRowsByPlayer: historyForStart,
+    weights,
+    targetGw: startGw,
+    fixturesByTeamAndGw,
+    teamsById,
+  });
+
+  let totalPoints = 0;
+  let totalHitCost = 0;
+  let freeTransfers = 1;
+  let bank = toNumber(weights.budget, 1000) - sum(squadIds.map((id) => toNumber(playerMetaById.get(id)?.now_cost, 0)));
+  const gwResults = [];
+
+  for (let gw = startGw; gw <= endGw; gw += 1) {
+    // Re-score players using data available up to gw-1 (no future knowledge)
+    const historyRows = buildHistoryWindow(rowsByGw, gw - 1, weights.historyWindow);
+    const snapshot = rowsByGw.get(gw - 1) ?? [];
+
+    // Build season scores from this GW forward using point-in-time knowledge
+    const seasonScores = buildSeasonScores({
+      players: snapshot.length > 0 ? snapshot : [...playerMetaById.values()],
+      playerMetaById,
+      historyRowsByPlayer: historyRows,
+      weights,
+      fromGw: gw,
+      toGw: endGw,
+      fixturesByTeamAndGw,
+      teamsById,
+    });
+
+    // Plan transfers for this GW
+    const plan = planTransfersForGw({
+      squadIds,
+      seasonScores,
+      weights,
+      gw,
+      endGw,
+      freeTransfers,
+      bank,
+    });
+
+    squadIds = plan.newSquadIds;
+    bank = plan.newBank;
+    totalHitCost += plan.hitsTaken * hitCost;
+
+    // Bank unused free transfers
+    const unusedFree = Math.max(0, freeTransfers - plan.transfersMade);
+    freeTransfers = Math.min(5, 1 + unusedFree);
+
+    // Score the squad using ACTUAL points from this GW
+    const actualRows = rowsByGw.get(gw) ?? [];
+    const actualById = new Map(actualRows.map((row) => [getPlayerId(row), row]));
+
+    // Pick best 11 from squad of 15 (highest actual points — simulates optimal captain/bench)
+    // Simplified: just sum all 15 players' points (bench included for evaluation)
+    let gwPoints = 0;
+    for (const id of squadIds) {
+      gwPoints += actualPoints(actualById, id);
+    }
+
+    const netPoints = gwPoints - plan.hitsTaken * hitCost;
+    totalPoints += netPoints;
+
+    gwResults.push({
+      gw,
+      gwPoints,
+      hitsTaken: plan.hitsTaken,
+      netPoints,
+      transfersMade: plan.transfersMade,
+      squadSize: squadIds.length,
+    });
+  }
+
+  return { totalPoints, totalHitCost, gwResults };
+}
+
+/**
+ * Single-GW transfer step used by the season simulator.
+ * Similar to planTransfers but operates on one GW at a time.
+ */
+function planTransfersForGw({ squadIds, seasonScores, weights, gw, endGw, freeTransfers, bank }) {
+  const hitCost = toNumber(weights.hitCost, 4);
+  const remainingGws = endGw - gw + 1;
+  const currentSquad = new Set(squadIds);
+  let currentBank = bank;
+  const candidates = [];
+
+  for (const outId of currentSquad) {
+    const outData = seasonScores.get(outId);
+    if (!outData) continue;
+
+    const outPlayer = outData.scored;
+    const outRemaining = outData.gwScores
+      .filter((g) => g.gw >= gw)
+      .reduce((s, g) => s + g.score, 0);
+    const outCost = toNumber(outPlayer.player.now_cost, 0);
+
+    for (const [inId, inData] of seasonScores) {
+      if (currentSquad.has(inId)) continue;
+      if (!inData.scored) continue;
+      if (inData.scored.positionName !== outPlayer.positionName) continue;
+
+      const inCost = toNumber(inData.scored.player.now_cost, 0);
+      if (inCost > outCost + currentBank) continue;
+
+      const inRemaining = inData.gwScores
+        .filter((g) => g.gw >= gw)
+        .reduce((s, g) => s + g.score, 0);
+
+      const gain = inRemaining - outRemaining;
+      if (gain <= 0) continue;
+
+      candidates.push({ outId, inId, gain, costDelta: inCost - outCost, outPlayer, inPlayer: inData.scored });
     }
   }
 
+  candidates.sort((a, b) => b.gain - a.gain);
+
+  let transfersMade = 0;
+  let hitsTaken = 0;
+  const usedOut = new Set();
+  const usedIn = new Set();
+
+  for (const c of candidates) {
+    if (usedOut.has(c.outId) || usedIn.has(c.inId)) continue;
+
+    const isHit = transfersMade >= freeTransfers;
+    if (isHit && c.gain < hitCost * 1.5) continue;
+
+    currentSquad.delete(c.outId);
+    currentSquad.add(c.inId);
+    currentBank -= c.costDelta;
+    usedOut.add(c.outId);
+    usedIn.add(c.inId);
+    transfersMade += 1;
+    if (isHit) hitsTaken += 1;
+
+    if (transfersMade >= Math.min(freeTransfers + 2, 3)) break;
+  }
+
   return {
-    overallAvgPoints: mean(allPoints),
-    overallHitRate: mean(allHits),
-    byPosition: Object.fromEntries(
-      Array.from(positionBuckets.entries()).map(([positionName, data]) => [
-        positionName,
-        {
-          avgPoints: mean(data.points),
-          hitRate: mean(data.hits),
-          picks: data.points.length,
-        },
-      ]),
-    ),
+    newSquadIds: [...currentSquad],
+    newBank: currentBank,
+    transfersMade,
+    hitsTaken,
   };
 }
 
-function renderBacktestSummary(summary, gwSummaries) {
+function renderBacktestSummary(simResult, startGw, endGw) {
   const lines = [];
-  lines.push("Backtest summary");
-  lines.push(`Gameweeks tested: ${gwSummaries[0]?.targetGw ?? "-"}-${gwSummaries.at(-1)?.targetGw ?? "-"}`);
-  lines.push(`overall_avg_points: ${summary.overallAvgPoints.toFixed(2)}`);
-  lines.push(`overall_hit_rate: ${(summary.overallHitRate * 100).toFixed(1)}%`);
+  lines.push("Season simulation backtest");
+  lines.push(`Gameweeks simulated: GW${startGw} → GW${endGw} (${simResult.gwResults.length} GWs)`);
+  lines.push(`total_points: ${simResult.totalPoints.toFixed(1)}`);
+  lines.push(`total_hit_cost: ${simResult.totalHitCost.toFixed(0)}`);
+  lines.push(`avg_points_per_gw: ${(simResult.totalPoints / simResult.gwResults.length).toFixed(2)}`);
   lines.push("");
 
-  for (const positionName of ["GK", "DEF", "MID", "FWD"]) {
-    const row = summary.byPosition[positionName];
-    if (!row) continue;
+  lines.push("Per-GW breakdown (last 5):");
+  for (const gw of simResult.gwResults.slice(-5)) {
     lines.push(
-      `${positionName}: avg_points=${row.avgPoints.toFixed(2)} hit_rate=${(row.hitRate * 100).toFixed(1)}% picks=${row.picks}`,
-    );
-  }
-
-  lines.push("");
-  lines.push("Recent gameweeks");
-  for (const gwSummary of gwSummaries.slice(-5)) {
-    lines.push(
-      `GW${gwSummary.targetGw}: avg_points=${mean(gwSummary.points).toFixed(2)} hit_rate=${(
-        mean(gwSummary.hits) * 100
-      ).toFixed(1)}%`,
+      `  GW${gw.gw}: ${gw.gwPoints} pts, ${gw.transfersMade} transfers, ${gw.hitsTaken} hits → net ${gw.netPoints}`,
     );
   }
 
@@ -883,6 +1044,7 @@ async function runBacktest(weights) {
   const playerMetaById = new Map(bootstrap.elements.map((player) => [player.id, player]));
   const fixturesByTeamAndGw = buildFixturesByTeamAndGw(fixtures);
 
+  // Load all historical snapshots
   const rowsByGw = new Map();
   const snapshotPromises = [];
   for (let gw = 1; gw <= currentGw; gw += 1) {
@@ -894,43 +1056,28 @@ async function runBacktest(weights) {
   }
   await Promise.all(snapshotPromises);
 
-  const gwSummaries = [];
-  const firstTestGw = Math.max(2, weights.historyWindow + 1);
+  // Simulate a full season: build squad at startGw, then transfer through endGw
+  // Start after enough history is available for features
+  const startGw = Math.max(2, weights.historyWindow + 2);
+  const endGw = currentGw;
 
-  for (let targetGw = firstTestGw; targetGw <= currentGw; targetGw += 1) {
-    const snapshotRows = rowsByGw.get(targetGw - 1) ?? [];
-    const actualRows = rowsByGw.get(targetGw) ?? [];
-    const actualRowsById = new Map(actualRows.map((row) => [getPlayerId(row), row]));
-    const historyRowsByPlayer = buildHistoryWindow(rowsByGw, targetGw - 1, weights.historyWindow);
-    const ranked = rankPlayers({
-      snapshotRows,
-      playerMetaById,
-      historyRowsByPlayer,
-      weights,
-      targetGw,
-      fixturesByTeamAndGw,
-      teamsById,
-    });
-
-    const byPosition = {};
-    const points = [];
-    const hits = [];
-
-    for (const positionName of ["GK", "DEF", "MID", "FWD"]) {
-      const pickCount = positionPickCount(weights, positionName);
-      const picks = ranked.filter((player) => player.positionName === positionName).slice(0, pickCount);
-      const pickPoints = picks.map((player) => actualPoints(actualRowsById, player.id));
-      const pickHits = pickPoints.map((value) => (value >= 6 ? 1 : 0));
-      byPosition[positionName] = { points: pickPoints, hits: pickHits };
-      points.push(...pickPoints);
-      hits.push(...pickHits);
-    }
-
-    gwSummaries.push({ targetGw, byPosition, points, hits });
+  if (startGw >= endGw) {
+    console.log("Not enough completed gameweeks to simulate. Need at least " + (weights.historyWindow + 3));
+    return;
   }
 
-  const summary = summarizeBacktest(gwSummaries);
-  console.log(renderBacktestSummary(summary, gwSummaries));
+  const simResult = simulateSeason({
+    rowsByGw,
+    playerMetaById,
+    weights,
+    fixturesByTeamAndGw,
+    teamsById,
+    startGw,
+    endGw,
+  });
+
+  const output = renderBacktestSummary(simResult, startGw, endGw);
+  console.log(output);
 }
 
 async function runReport(weights) {
