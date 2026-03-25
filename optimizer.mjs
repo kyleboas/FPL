@@ -36,64 +36,47 @@ const RUN_SCRIPT = join(ROOT, "autoresearch-fpl", "run.mjs");
 const OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions";
 const DEFAULT_MODEL = "qwen/qwen3-coder:free";
 
-// Rate limit handling
-const MAX_RETRIES = 3;
-const BASE_DELAY_MS = 8000; // OpenRouter free tier = 8 req/min
+// ── Train/test split ────────────────────────────────────────────────────────
 
-function delay(ms) {
-  return new Promise(resolve => setTimeout(resolve, ms));
+const TEST_FRACTION = 0.25;
+const TEST_DEGRADATION_LIMIT = 0.5;
+
+// ── Helpers ─────────────────────────────────────────────────────────────────
+
+function getModel() {
+  return process.env.OPENROUTER_MODEL || DEFAULT_MODEL;
+}
+
+function getApiKey() {
+  const key = process.env.OPENROUTER_API_KEY;
+  if (!key) throw new Error("OPENROUTER_API_KEY environment variable is required");
+  return key;
 }
 
 async function callLLM(messages) {
-  // Rate limit: ensure minimum delay between calls (8 RPM limit)
-  const now = Date.now();
-  const timeSinceLastCall = now - lastCallTime;
-  if (timeSinceLastCall < MIN_DELAY_BETWEEN_CALLS_MS) {
-    const waitMs = MIN_DELAY_BETWEEN_CALLS_MS - timeSinceLastCall;
-    await sleep(waitMs);
-  }
-  lastCallTime = Date.now();
-  
-  const maxRetries = 3;
-  const baseDelay = 10000; // 10 seconds
-  
-  for (let attempt = 0; attempt < maxRetries; attempt++) {
-    const response = await fetch(OPENROUTER_API_URL, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${getApiKey()}`,
-        "HTTP-Referer": "https://github.com/kyleboas/fpl",
-        "X-Title": "FPL Autoresearch",
-      },
-      body: JSON.stringify({
-        model: getModel(),
-        messages,
-        max_tokens: 4096,
-        temperature: 0.8,
-      }),
-    });
+  const response = await fetch(OPENROUTER_API_URL, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${getApiKey()}`,
+      "HTTP-Referer": "https://github.com/kyleboas/fpl",
+      "X-Title": "FPL Autoresearch",
+    },
+    body: JSON.stringify({
+      model: getModel(),
+      messages,
+      max_tokens: 4096,
+      temperature: 0.8,
+    }),
+  });
 
-    if (!response.ok) {
-      const errorText = await response.text();
-      
-      // Retry on rate limit (429)
-      if (response.status === 429 && attempt < maxRetries - 1) {
-        const delay = baseDelay * Math.pow(2, attempt);
-        console.log(`[optimizer] rate limited, retrying in ${delay/1000}s...`);
-        await sleep(delay);
-        lastCallTime = Date.now(); // Reset timer after retry
-        continue;
-      }
-      
-      throw new Error(`OpenRouter API error (${response.status}): ${errorText}`);
-    }
-
-    const data = await response.json();
-    return data.choices?.[0]?.message?.content ?? "";
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`OpenRouter API error (${response.status}): ${errorText}`);
   }
-  
-  throw new Error("Max retries exceeded");
+
+  const data = await response.json();
+  return data.choices?.[0]?.message?.content ?? "";
 }
 
 function runBacktest(splitGw) {
@@ -201,15 +184,6 @@ export async function runOptimizationCycle() {
 
   const cycleNumber = await getExperimentCount();
   const model = getModel();
-
-  // Rate limit: wait before making LLM call (8 RPM = 7.5s minimum between calls)
-  const timeSinceLastCall = Date.now() - lastCallTime;
-  if (timeSinceLastCall < MIN_DELAY_BETWEEN_CALLS_MS) {
-    const waitMs = MIN_DELAY_BETWEEN_CALLS_MS - timeSinceLastCall;
-    console.log(`[optimizer] rate limit: waiting ${waitMs}ms before LLM call`);
-    await sleep(waitMs);
-  }
-  lastCallTime = Date.now();
 
   // 1. Read current state
   const [strategyCode, programMd, weightsJson] = await Promise.all([
