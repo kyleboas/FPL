@@ -19,8 +19,7 @@
  * Environment variables:
  *  - OPENROUTER_API_KEY — for OpenRouter provider
  *  - OPENROUTER_MODEL — model to use (default: qwen/qwen3-4b:free)
- *  - CF_ACCOUNT_ID — Cloudflare account ID for AI Gateway
- *  - CF_GATEWAY_ID — Cloudflare gateway ID (default: "default")
+ *  - CF_GATEWAY_URL — Cloudflare AI Gateway endpoint URL (e.g., https://gateway.ai.cloudflare.com/v1/{account_id}/{gateway_id})
  *  - CF_AIG_TOKEN — Cloudflare AI Gateway token
  *  - LLM_PROVIDER — "openrouter" (default) or "cloudflare"
  */
@@ -89,15 +88,20 @@ function getOpenRouterApiKey() {
 
 // Cloudflare AI Gateway configuration
 function getCloudflareConfig() {
-  const accountId = process.env.CF_ACCOUNT_ID;
-  const gatewayId = process.env.CF_GATEWAY_ID || "default";
+  const gatewayUrl = process.env.CF_GATEWAY_URL;
   const token = process.env.CF_AIG_TOKEN;
   
-  if (!accountId || !token) {
-    throw new Error("CF_ACCOUNT_ID and CF_AIG_TOKEN are required for Cloudflare provider");
+  if (!gatewayUrl || !token) {
+    throw new Error("CF_GATEWAY_URL and CF_AIG_TOKEN are required for Cloudflare provider");
   }
   
-  return { accountId, gatewayId, token };
+  // Ensure URL ends with /compat/chat/completions for OpenAI-compatible endpoint
+  const baseUrl = gatewayUrl.replace(/\/$/, '');
+  const url = baseUrl.includes('/compat/chat/completions') 
+    ? baseUrl 
+    : `${baseUrl}/compat/chat/completions`;
+  
+  return { url, token };
 }
 
 // Call OpenRouter API
@@ -151,8 +155,7 @@ async function callOpenRouterWithModel(messages, model, maxRetries = 3) {
 
 // Call Cloudflare AI Gateway API
 async function callCloudflareWithModel(messages, model, maxRetries = 3) {
-  const { accountId, gatewayId, token } = getCloudflareConfig();
-  const url = `${CLOUDFLARE_GATEWAY_BASE}/${accountId}/${gatewayId}/compat/chat/completions`;
+  const { url, token } = getCloudflareConfig();
   
   for (let attempt = 0; attempt < maxRetries; attempt++) {
     const response = await fetch(url, {
