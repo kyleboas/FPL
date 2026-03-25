@@ -513,7 +513,39 @@ function renderBacktestSummary(summary, gwSummaries) {
   return lines.join("\n");
 }
 
+function selectBudgetSquad(ranked, weights) {
+  const budget = toNumber(weights.budget, 1000);
+  const squadSize = weights.squadSize ?? { GK: 2, DEF: 5, MID: 5, FWD: 3 };
+
+  // Greedy selection: pick highest-scored players per position within budget
+  const squad = [];
+  const remaining = { ...squadSize };
+  let spent = 0;
+
+  // Sort by score descending (already sorted)
+  for (const player of ranked) {
+    const pos = player.positionName;
+    if (!remaining[pos] || remaining[pos] <= 0) continue;
+
+    const cost = toNumber(player.player.now_cost, 0);
+    if (spent + cost > budget) continue;
+
+    squad.push(player);
+    remaining[pos] -= 1;
+    spent += cost;
+
+    const totalPicked = Object.values(squadSize).reduce((a, b) => a + b, 0);
+    if (squad.length >= totalPicked) break;
+  }
+
+  return { squad, spent, budget };
+}
+
 function renderReport({ ranked, targetGw, currentGw, weights, teamsById }) {
+  const { squad, spent, budget } = selectBudgetSquad(ranked, weights);
+  const squadSize = weights.squadSize ?? { GK: 2, DEF: 5, MID: 5, FWD: 3 };
+  const totalSlots = Object.values(squadSize).reduce((a, b) => a + b, 0);
+
   const lines = [];
   lines.push(`# FPL autoresearch report`);
   lines.push("");
@@ -521,12 +553,13 @@ function renderReport({ ranked, targetGw, currentGw, weights, teamsById }) {
   lines.push(`- Completed GW: ${currentGw}`);
   lines.push(`- History window: last ${weights.historyWindow} completed GWs`);
   lines.push(`- Filters: min ${weights.minimumRecentMinutes} recent minutes, min ${weights.minimumChanceOfPlaying}% availability`);
+  lines.push(`- Budget: ${formatMoney(budget)} | Spent: ${formatMoney(spent)} | Remaining: ${formatMoney(budget - spent)}`);
+  lines.push(`- Squad: ${squad.length}/${totalSlots} players (${squadSize.GK} GK, ${squadSize.DEF} DEF, ${squadSize.MID} MID, ${squadSize.FWD} FWD)`);
   lines.push("");
 
-  const topOverall = ranked.slice(0, 12);
-  lines.push("## Overall shortlist");
+  lines.push(`## Best ${totalSlots} (within budget)`);
   lines.push("");
-  for (const player of topOverall) {
+  for (const player of squad) {
     lines.push(
       `- ${player.player.web_name ?? player.player.second_name} (${player.positionName}, ${formatMoney(
         player.player.now_cost,
@@ -538,7 +571,7 @@ function renderReport({ ranked, targetGw, currentGw, weights, teamsById }) {
   for (const positionName of ["GK", "DEF", "MID", "FWD"]) {
     lines.push(`## ${positionName}`);
     lines.push("");
-    const picks = ranked.filter((player) => player.positionName === positionName).slice(0, 8);
+    const picks = squad.filter((player) => player.positionName === positionName);
     for (const player of picks) {
       lines.push(
         `- ${player.player.web_name ?? player.player.second_name} (${formatMoney(player.player.now_cost)}, ${player.teamName}) — score ${player.score.toFixed(2)} — ${formatFixtures(player.fixtures, teamsById)} — ${player.topReasons.join("; ")}`,

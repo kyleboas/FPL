@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 const ROOT = fileURLToPath(new URL(".", import.meta.url));
 const PORT = process.env.PORT || 3000;
 const REPORT_PATH = join(ROOT, "autoresearch-fpl", "latest-report.md");
+const PROGRESS_IMG_PATH = join(ROOT, "progress.png");
 const REPORT_INTERVAL_MS =
   (parseInt(process.env.REPORT_INTERVAL_HOURS ?? "6", 10) || 6) * 60 * 60 * 1000;
 
@@ -118,6 +119,13 @@ const server = createServer(async (req, res) => {
       .replace(/</g, "&lt;")
       .replace(/>/g, "&gt;");
 
+    // Check if progress.png exists
+    let progressImgTag = "";
+    try {
+      await access(PROGRESS_IMG_PATH);
+      progressImgTag = `<img src="/progress.png" alt="Autoresearch Progress" style="max-width:100%; margin: 1rem 0; border-radius: 8px;">`;
+    } catch {}
+
     res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
     res.end(`<!DOCTYPE html>
 <html lang="en">
@@ -132,6 +140,7 @@ const server = createServer(async (req, res) => {
   </style>
 </head>
 <body>
+${progressImgTag}
 <pre>${escaped}</pre>
 </body>
 </html>`);
