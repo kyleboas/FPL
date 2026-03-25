@@ -40,10 +40,13 @@ async function runCycle() {
   }
   cycleRunning = true;
   cycleCount += 1;
-  console.log(`[cycle] #${cycleCount} starting...`);
+  const nExperiments = parseInt(process.env.EXPERIMENTS_PER_CRON ?? "1", 10);
+  console.log(`[cycle] #${cycleCount} starting (${nExperiments} experiments)...`);
 
   try {
-    await runOptimizationCycle();
+    for (let i = 0; i < nExperiments; i++) {
+      await runOptimizationCycle();
+    }
     await generateChart();
     console.log(`[cycle] #${cycleCount} complete`);
   } catch (err) {
