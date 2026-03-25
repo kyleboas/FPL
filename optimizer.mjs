@@ -41,7 +41,7 @@ const DEFAULT_MODEL = "qwen/qwen3-4b:free";  // Free model for <$2/month budget
 const FALLBACK_MODELS = [
   "google/gemma-3-27b-it:free",  // Free, good at code
   "qwen/qwen3-coder:free",  // Free, code-focused
-  "meta-llama/llama-3.3-8b:free",  // Free, fast
+  "meta-llama/llama-3.3-8b-instruct:free",  // Free, fast
   "google/gemini-2.0-flash-001",  // Cheap fallback ($0.10/$0.40 per M)
 ];
 
