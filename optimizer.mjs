@@ -1,52 +1,82 @@
 #!/usr/bin/env node
 
 /**
- * Weight optimizer for FPL autoresearch.
+ * LLM-driven optimizer for FPL autoresearch.
  *
- * Improvements over basic hill-climbing:
- *  1. Multi-weight perturbation — sometimes perturb 2-3 weights together
- *  2. Simulated annealing — accept worse moves early, refine later
- *  3. Train/test split — detect overfitting via held-out GWs
- *  4. Periodic baseline re-evaluation — refresh stale baseline every N cycles
- *  5. Parent-relative acceptance — compare against parent, not just all-time best
+ * Instead of random weight perturbation, this uses an LLM (via OpenRouter)
+ * to propose code changes to strategy.mjs — the same approach as
+ * Karpathy's autoresearch.
+ *
+ * Each cycle:
+ *  1. Read strategy.mjs and program.md
+ *  2. Gather recent experiment history
+ *  3. Ask the LLM to propose a code change
+ *  4. Apply the change to strategy.mjs
+ *  5. Run backtest
+ *  6. If improved → keep (commit); if worse → revert
+ *  7. Record experiment in DB
+ *
+ * Environment variables:
+ *  - OPENROUTER_API_KEY — required
+ *  - OPENROUTER_MODEL — model to use (default: google/gemma-3-27b-it:free)
  */
 
 import { readFile, writeFile } from "node:fs/promises";
 import { execFile } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
-import { migrate, insertExperiment, getBestExperiment, getExperimentCount, loadActiveWeights } from "./db.mjs";
+import { migrate, insertExperiment, getBestExperiment, getExperimentCount, getAllExperiments } from "./db.mjs";
 
 const ROOT = fileURLToPath(new URL(".", import.meta.url));
+const STRATEGY_PATH = join(ROOT, "autoresearch-fpl", "strategy.mjs");
+const PROGRAM_PATH = join(ROOT, "autoresearch-fpl", "program.md");
 const WEIGHTS_PATH = join(ROOT, "autoresearch-fpl", "weights.json");
 const RUN_SCRIPT = join(ROOT, "autoresearch-fpl", "run.mjs");
 
-// ── Annealing schedule ──────────────────────────────────────────────────────
-
-const INITIAL_TEMPERATURE = 1.0;   // Starting temperature
-const COOLING_RATE = 0.995;        // Multiplied each cycle: T *= COOLING_RATE
-const MIN_TEMPERATURE = 0.01;      // Floor — effectively greedy below this
-
-// ── Re-evaluation schedule ──────────────────────────────────────────────────
-
-const REEVAL_EVERY_N_CYCLES = 20;  // Re-run baseline every N cycles
+const OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions";
+const DEFAULT_MODEL = "google/gemma-3-27b-it:free";
 
 // ── Train/test split ────────────────────────────────────────────────────────
 
-const TEST_FRACTION = 0.25;        // Hold out last 25% of GWs for validation
-const TEST_DEGRADATION_LIMIT = 0.5; // Reject if test score drops more than this
+const TEST_FRACTION = 0.25;
+const TEST_DEGRADATION_LIMIT = 0.5;
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
-async function loadWeights() {
-  const dbWeights = await loadActiveWeights();
-  if (dbWeights) return dbWeights;
-  const raw = await readFile(WEIGHTS_PATH, "utf8");
-  return JSON.parse(raw);
+function getModel() {
+  return process.env.OPENROUTER_MODEL || DEFAULT_MODEL;
 }
 
-async function saveWeights(weights) {
-  await writeFile(WEIGHTS_PATH, JSON.stringify(weights, null, 2) + "\n", "utf8");
+function getApiKey() {
+  const key = process.env.OPENROUTER_API_KEY;
+  if (!key) throw new Error("OPENROUTER_API_KEY environment variable is required");
+  return key;
+}
+
+async function callLLM(messages) {
+  const response = await fetch(OPENROUTER_API_URL, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${getApiKey()}`,
+      "HTTP-Referer": "https://github.com/kyleboas/fpl",
+      "X-Title": "FPL Autoresearch",
+    },
+    body: JSON.stringify({
+      model: getModel(),
+      messages,
+      max_tokens: 4096,
+      temperature: 0.8,
+    }),
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`OpenRouter API error (${response.status}): ${errorText}`);
+  }
+
+  const data = await response.json();
+  return data.choices?.[0]?.message?.content ?? "";
 }
 
 function runBacktest(splitGw) {
@@ -97,132 +127,54 @@ function parseBacktestOutput(output) {
   };
 }
 
-/**
- * Compute the split GW for train/test from backtest range.
- * Returns the last GW of the training set, or null if not enough GWs.
- */
 function computeSplitGw(startGw, endGw) {
   const totalGws = endGw - startGw + 1;
-  if (totalGws < 6) return null; // Need at least 6 GWs to split meaningfully
+  if (totalGws < 6) return null;
   const testSize = Math.max(2, Math.round(totalGws * TEST_FRACTION));
   return endGw - testSize;
 }
 
-// ── Weight perturbation ─────────────────────────────────────────────────────
+/**
+ * Extract the new strategy.mjs code from the LLM response.
+ * Expects a fenced code block with the full file contents.
+ */
+function extractCode(llmResponse) {
+  // Try to find a fenced code block
+  const fenceMatch = llmResponse.match(/```(?:javascript|js|mjs)?\s*\n([\s\S]*?)```/);
+  if (fenceMatch) return fenceMatch[1].trim();
 
-function getWeightKeys(weights) {
-  const keys = [];
-  if (typeof weights.historyWindow === "number") {
-    keys.push({ section: "top", key: "historyWindow", value: weights.historyWindow });
-  }
-  if (typeof weights.minimumRecentMinutes === "number") {
-    keys.push({ section: "top", key: "minimumRecentMinutes", value: weights.minimumRecentMinutes });
-  }
-  if (typeof weights.minimumChanceOfPlaying === "number") {
-    keys.push({ section: "top", key: "minimumChanceOfPlaying", value: weights.minimumChanceOfPlaying });
-  }
-  for (const [key, value] of Object.entries(weights.common ?? {})) {
-    keys.push({ section: "common", key, value });
-  }
-  for (const [pos, posWeights] of Object.entries(weights.byPosition ?? {})) {
-    for (const [key, value] of Object.entries(posWeights)) {
-      keys.push({ section: `byPosition.${pos}`, key, value });
-    }
-  }
-  return keys;
-}
-
-function setWeight(weights, section, key, newValue) {
-  if (section === "top") {
-    weights[key] = newValue;
-  } else if (section === "common") {
-    weights.common[key] = newValue;
-  } else {
-    const pos = section.replace("byPosition.", "");
-    weights.byPosition[pos][key] = newValue;
-  }
-}
-
-function getWeight(weights, section, key) {
-  if (section === "top") return weights[key];
-  if (section === "common") return weights.common[key];
-  const pos = section.replace("byPosition.", "");
-  return weights.byPosition[pos][key];
-}
-
-function perturbSingleWeight(weights, pick) {
-  const oldValue = getWeight(weights, pick.section, pick.key);
-  let newValue;
-  let delta;
-
-  if (pick.key === "historyWindow") {
-    delta = Math.random() < 0.5 ? -1 : 1;
-    newValue = Math.max(1, Math.min(38, oldValue + delta));
-  } else if (pick.key === "minimumRecentMinutes") {
-    delta = (Math.random() < 0.5 ? -1 : 1) * 30;
-    newValue = Math.max(0, Math.min(360, oldValue + delta));
-  } else if (pick.key === "minimumChanceOfPlaying") {
-    delta = (Math.random() < 0.5 ? -1 : 1) * 10;
-    newValue = Math.max(0, Math.min(100, oldValue + delta));
-  } else {
-    const scale = Math.max(Math.abs(oldValue) * 0.06, 0.02);
-    delta = (Math.random() * 2 - 1) * scale;
-    newValue = Math.round((oldValue + delta) * 1000) / 1000;
+  // If no fence, check if the response looks like valid JS (starts with import/export/function/const/etc)
+  const trimmed = llmResponse.trim();
+  if (/^(?:\/\*[\s\S]*?\*\/\s*)?(?:import|export|function|const|let|var|\/\/)/.test(trimmed)) {
+    return trimmed;
   }
 
-  setWeight(weights, pick.section, pick.key, newValue);
-
-  const label = pick.section === "common" ? pick.key :
-                pick.section === "top" ? pick.key :
-                `${pick.section}.${pick.key}`;
-  const decimals = pick.key.includes("minimum") || pick.key.includes("Window") ? 0 : 3;
-  return `${label} ${oldValue.toFixed(decimals)} → ${newValue.toFixed(decimals)}`;
+  return null;
 }
 
 /**
- * Perturb 1-3 weights at once (multi-weight perturbation).
- * 60% chance of 1 weight, 30% chance of 2, 10% chance of 3.
+ * Summarize recent experiment history for the LLM prompt.
  */
-function perturbWeights(weights) {
-  const keys = getWeightKeys(weights);
-  const roll = Math.random();
-  const count = roll < 0.6 ? 1 : roll < 0.9 ? 2 : 3;
-  const n = Math.min(count, keys.length);
+async function getExperimentSummary(maxRecent = 10) {
+  const all = await getAllExperiments();
+  const recent = all.slice(-maxRecent);
+  if (!recent.length) return "No experiments run yet. This is the first attempt.";
 
-  // Pick n distinct random weights
-  const shuffled = keys.slice().sort(() => Math.random() - 0.5);
-  const picks = shuffled.slice(0, n);
+  const best = all.filter(e => e.status === "keep").reduce(
+    (best, e) => (!best || e.overall_avg_points > best.overall_avg_points ? e : best),
+    null,
+  );
 
-  const descriptions = [];
-  for (const pick of picks) {
-    descriptions.push(perturbSingleWeight(weights, pick));
+  const lines = [];
+  lines.push(`Total experiments: ${all.length}`);
+  lines.push(`Best score: ${best ? best.overall_avg_points.toFixed(2) : "N/A"} (${best?.description ?? "N/A"})`);
+  lines.push("");
+  lines.push("Recent experiments:");
+  for (const e of recent) {
+    const status = e.status === "keep" ? "KEPT" : "DISCARDED";
+    lines.push(`  #${e.id}: ${status} score=${e.overall_avg_points.toFixed(2)} — ${e.description}`);
   }
-
-  return descriptions.join(", ");
-}
-
-// ── Simulated annealing acceptance ──────────────────────────────────────────
-
-/**
- * Compute current temperature from cycle count.
- */
-function getTemperature(cycleNumber) {
-  return Math.max(MIN_TEMPERATURE, INITIAL_TEMPERATURE * Math.pow(COOLING_RATE, cycleNumber));
-}
-
-/**
- * Decide whether to accept a trial.
- * Always accepts improvements. Accepts worse results with probability
- * exp(-delta / temperature) where delta = parentScore - trialScore.
- */
-function shouldAccept(trialScore, parentScore, temperature) {
-  if (trialScore > parentScore) return true;
-  if (temperature <= MIN_TEMPERATURE) return false;
-
-  const delta = parentScore - trialScore;
-  const probability = Math.exp(-delta / (temperature * 0.5));
-  const accepted = Math.random() < probability;
-  return accepted;
+  return lines.join("\n");
 }
 
 // ── Main optimization cycle ─────────────────────────────────────────────────
@@ -231,168 +183,225 @@ export async function runOptimizationCycle() {
   await migrate();
 
   const cycleNumber = await getExperimentCount();
-  const temperature = getTemperature(cycleNumber);
+  const model = getModel();
 
-  // 1. Load current weights
-  const originalWeights = await loadWeights();
+  // 1. Read current state
+  const [strategyCode, programMd, weightsJson] = await Promise.all([
+    readFile(STRATEGY_PATH, "utf8"),
+    readFile(PROGRAM_PATH, "utf8"),
+    readFile(WEIGHTS_PATH, "utf8"),
+  ]);
+
   const best = await getBestExperiment();
+  const experimentSummary = await getExperimentSummary();
 
-  // 2. Determine the train/test split GW (need a preliminary backtest to know GW range)
-  let splitGw = null;
-
-  // 3. Establish baseline if first run
-  let parentScore; // Score of the weights we're perturbing FROM
-  let bestScore;   // All-time best score (for reference)
-
+  // 2. Establish baseline if first run
+  let parentScore;
   if (!best) {
     console.log("[optimizer] no baseline found, running initial backtest...");
-    // Estimate split GW for train/test from weights
-    const historyWindow = originalWeights.historyWindow ?? 4;
-    const estimatedStart = Math.max(2, historyWindow + 2);
-    splitGw = computeSplitGw(estimatedStart, 31);
-
-    const baselineOutput = await runBacktest(splitGw);
+    const baselineOutput = await runBacktest();
     const baselineResult = parseBacktestOutput(baselineOutput);
-
-    // Refine splitGw from actual GW range
-    if (baselineResult.startGw && baselineResult.endGw) {
-      splitGw = computeSplitGw(baselineResult.startGw, baselineResult.endGw);
-    }
-
     parentScore = baselineResult.overallAvgPoints;
-    bestScore = parentScore;
+
     await insertExperiment({
       overallAvgPoints: baselineResult.overallAvgPoints,
       hitRate: baselineResult.hitRate,
-      weights: originalWeights,
+      weights: JSON.parse(weightsJson),
       description: "baseline",
       status: "keep",
       trainAvgPoints: baselineResult.trainAvgPoints,
       testAvgPoints: baselineResult.testAvgPoints,
       parentScore: null,
-      temperature,
+      temperature: null,
     });
-    console.log(`[optimizer] baseline: avg=${parentScore.toFixed(2)}, train=${baselineResult.trainAvgPoints?.toFixed(2) ?? "N/A"}, test=${baselineResult.testAvgPoints?.toFixed(2) ?? "N/A"}`);
+    console.log(`[optimizer] baseline: avg=${parentScore.toFixed(2)}`);
   } else {
-    bestScore = best.overall_avg_points;
-    parentScore = bestScore; // Parent = current best weights
-    console.log(`[optimizer] current best: avg=${bestScore.toFixed(2)}, temp=${temperature.toFixed(4)}, cycle=${cycleNumber}`);
+    parentScore = best.overall_avg_points;
+    console.log(`[optimizer] current best: avg=${parentScore.toFixed(2)}, cycle=${cycleNumber}, model=${model}`);
   }
 
-  // 4. Periodic baseline re-evaluation — run fresh backtest with current best weights
-  if (cycleNumber > 0 && cycleNumber % REEVAL_EVERY_N_CYCLES === 0) {
-    console.log(`[optimizer] re-evaluating baseline (every ${REEVAL_EVERY_N_CYCLES} cycles)...`);
-    await saveWeights(originalWeights);
+  // 3. Ask the LLM to propose a change
+  console.log(`[optimizer] asking ${model} for a code change...`);
 
-    const historyWindow = originalWeights.historyWindow ?? 4;
-    const estimatedStart = Math.max(2, historyWindow + 2);
-    splitGw = computeSplitGw(estimatedStart, 31);
+  const systemPrompt = `You are an autonomous FPL (Fantasy Premier League) research agent. Your job is to improve the player scoring and selection strategy by modifying strategy.mjs.
 
-    const reevalOutput = await runBacktest(splitGw);
-    const reevalResult = parseBacktestOutput(reevalOutput);
+## Rules
+- You MUST output the COMPLETE modified strategy.mjs file inside a single \`\`\`javascript code fence
+- Make exactly ONE focused change per experiment (one new feature, one formula tweak, one logic change)
+- Keep all existing imports and exports — do not break the module interface
+- The file must be valid ES module JavaScript (import/export, no require)
+- Do not add external dependencies — only use built-in Node.js modules and imports from ./run.mjs
+- Available imports from ./run.mjs: toNumber, clamp, mean, sum, getPlayerId, getTeamId, getPosition, groupRowsByPlayer, POSITION_NAMES, AVAILABILITY_BY_STATUS
 
-    // Update splitGw from actual range if available
-    if (reevalResult.startGw && reevalResult.endGw) {
-      splitGw = computeSplitGw(reevalResult.startGw, reevalResult.endGw);
-    }
+## What you can change
+- Feature engineering: add new features, modify normalization divisors, change how features are computed
+- Scoring formula: change how features are weighted/combined (beyond just the weights.json numbers)
+- Transfer logic: improve how transfers are planned (thresholds, gain calculations, number of transfers)
+- Squad selection: improve budget squad building, starting 11 selection, captain picks
+- Player filtering: adjust eligibility criteria
+- Chip strategy: improve wildcard/free-hit/bench-boost timing
 
-    const freshScore = reevalResult.overallAvgPoints;
-    if (Math.abs(freshScore - parentScore) > 0.01) {
-      console.log(`[optimizer] baseline refreshed: ${parentScore.toFixed(2)} → ${freshScore.toFixed(2)}`);
-      parentScore = freshScore;
-    }
+## What NOT to change
+- Do not modify the function signatures or return types (other code depends on them)
+- Do not add console.log or debug output
+- Do not import external packages`;
+
+  const userPrompt = `## Program objectives
+${programMd}
+
+## Current weights.json
+${weightsJson}
+
+## Experiment history
+${experimentSummary}
+
+## Current strategy.mjs
+\`\`\`javascript
+${strategyCode}
+\`\`\`
+
+## Your task
+Propose ONE improvement to strategy.mjs to increase the backtest avg_points_per_gw metric (currently ${parentScore.toFixed(2)}).
+
+Look at the experiment history to avoid repeating failed ideas. Think about what could meaningfully improve player selection — new features, better normalization, smarter transfer logic, etc.
+
+First, briefly explain your idea (2-3 sentences), then output the COMPLETE modified strategy.mjs inside a \`\`\`javascript code fence.`;
+
+  let llmResponse;
+  try {
+    llmResponse = await callLLM([
+      { role: "system", content: systemPrompt },
+      { role: "user", content: userPrompt },
+    ]);
+  } catch (err) {
+    console.error(`[optimizer] LLM call failed: ${err.message}`);
+    await insertExperiment({
+      overallAvgPoints: 0,
+      hitRate: 0,
+      weights: JSON.parse(weightsJson),
+      description: `LLM error: ${err.message.slice(0, 100)}`,
+      status: "crash",
+      parentScore,
+      temperature: null,
+    });
+    return;
   }
 
-  // Estimate split GW from weights if we haven't discovered it yet.
-  // The backtest gracefully ignores splitGw if it's outside the actual range.
-  if (splitGw === null) {
-    const historyWindow = originalWeights.historyWindow ?? 4;
-    const estimatedStart = Math.max(2, historyWindow + 2);
-    // Use a generous estimate for endGw — if wrong, backtest just won't emit train/test lines
-    splitGw = computeSplitGw(estimatedStart, 31);
+  // 4. Extract the code from the response
+  const newCode = extractCode(llmResponse);
+  if (!newCode) {
+    console.error("[optimizer] LLM response did not contain a valid code block");
+    await insertExperiment({
+      overallAvgPoints: 0,
+      hitRate: 0,
+      weights: JSON.parse(weightsJson),
+      description: "LLM response had no code block",
+      status: "crash",
+      parentScore,
+      temperature: null,
+    });
+    return;
   }
 
-  // 5. Perturb weights (1-3 at once)
-  const trialWeights = JSON.parse(JSON.stringify(originalWeights));
-  const description = perturbWeights(trialWeights);
-  console.log(`[optimizer] trying: ${description}`);
+  // Extract description from the LLM's explanation (before the code fence)
+  const descriptionMatch = llmResponse.split("```")[0].trim();
+  const description = descriptionMatch.slice(0, 200) || "LLM-proposed change";
 
-  // 6. Save trial weights and backtest
-  await saveWeights(trialWeights);
+  console.log(`[optimizer] idea: ${description.slice(0, 100)}...`);
+
+  // 5. Save trial code and verify syntax
+  const originalCode = strategyCode;
+  await writeFile(STRATEGY_PATH, newCode, "utf8");
+
+  // Quick syntax check
+  try {
+    const { execFileSync } = await import("node:child_process");
+    execFileSync(process.execPath, ["--check", STRATEGY_PATH], { cwd: ROOT, timeout: 10_000 });
+  } catch (syntaxErr) {
+    console.error("[optimizer] syntax error in LLM output, reverting");
+    await writeFile(STRATEGY_PATH, originalCode, "utf8");
+    await insertExperiment({
+      overallAvgPoints: 0,
+      hitRate: 0,
+      weights: JSON.parse(weightsJson),
+      description: `syntax error: ${description.slice(0, 150)}`,
+      status: "crash",
+      parentScore,
+      temperature: null,
+    });
+    return;
+  }
+
+  // 6. Run backtest with trial code
   let trialResult;
+  const splitGw = computeSplitGw(6, 31);
   try {
     const output = await runBacktest(splitGw);
     trialResult = parseBacktestOutput(output);
   } catch (err) {
     console.error(`[optimizer] backtest crashed: ${err.message}`);
-    await saveWeights(originalWeights);
+    await writeFile(STRATEGY_PATH, originalCode, "utf8");
     await insertExperiment({
       overallAvgPoints: 0,
       hitRate: 0,
-      weights: trialWeights,
-      description,
+      weights: JSON.parse(weightsJson),
+      description: `backtest crash: ${description.slice(0, 150)}`,
       status: "crash",
       parentScore,
-      temperature,
+      temperature: null,
     });
     return;
   }
 
-  // 7. Acceptance decision (parent-relative + simulated annealing + overfitting check)
+  // 7. Acceptance decision — pure greedy (like Karpathy)
   const trialScore = trialResult.overallAvgPoints;
-  let accepted = shouldAccept(trialScore, parentScore, temperature);
-  let rejectReason = accepted ? null : "worse than parent";
+  let accepted = trialScore > parentScore;
+  let rejectReason = accepted ? null : `worse: ${trialScore.toFixed(2)} <= ${parentScore.toFixed(2)}`;
 
-  // Overfitting guard: if train improved but test degraded significantly, reject
-  if (accepted && trialResult.trainAvgPoints !== null && trialResult.testAvgPoints !== null) {
-    // Compare test score to see if it degraded
-    // We need the parent's test score for comparison — use best experiment's test score as proxy
-    if (best?.test_avg_points && trialResult.testAvgPoints < best.test_avg_points - TEST_DEGRADATION_LIMIT) {
+  // Overfitting guard
+  if (accepted && trialResult.testAvgPoints !== null && best?.test_avg_points) {
+    if (trialResult.testAvgPoints < best.test_avg_points - TEST_DEGRADATION_LIMIT) {
       accepted = false;
       rejectReason = `test degraded: ${trialResult.testAvgPoints.toFixed(2)} < ${best.test_avg_points.toFixed(2)} - ${TEST_DEGRADATION_LIMIT}`;
     }
   }
 
   if (accepted) {
-    const tag = trialScore > parentScore ? "IMPROVED" : "ANNEALING-ACCEPT";
     const delta = trialScore - parentScore;
     console.log(
-      `[optimizer] ${tag}: ${trialScore.toFixed(2)} (parent=${parentScore.toFixed(2)}, Δ=${delta >= 0 ? "+" : ""}${delta.toFixed(3)}, temp=${temperature.toFixed(4)})`,
+      `[optimizer] IMPROVED: ${trialScore.toFixed(2)} (Δ=+${delta.toFixed(3)})`,
     );
-    if (trialResult.trainAvgPoints !== null) {
-      console.log(`[optimizer]   train=${trialResult.trainAvgPoints.toFixed(2)}, test=${trialResult.testAvgPoints?.toFixed(2) ?? "N/A"}`);
-    }
     await insertExperiment({
       overallAvgPoints: trialResult.overallAvgPoints,
       hitRate: trialResult.hitRate,
-      weights: trialWeights,
+      weights: JSON.parse(weightsJson),
       description,
       status: "keep",
       trainAvgPoints: trialResult.trainAvgPoints,
       testAvgPoints: trialResult.testAvgPoints,
       parentScore,
-      temperature,
+      temperature: null,
     });
-    // weights.json already has the improved weights
+    // strategy.mjs already has the improved code
   } else {
     console.log(
-      `[optimizer] DISCARD: ${trialScore.toFixed(2)} (parent=${parentScore.toFixed(2)}, temp=${temperature.toFixed(4)}, reason=${rejectReason})`,
+      `[optimizer] DISCARD: ${trialScore.toFixed(2)} (reason=${rejectReason})`,
     );
-    await saveWeights(originalWeights);
+    await writeFile(STRATEGY_PATH, originalCode, "utf8");
     await insertExperiment({
       overallAvgPoints: trialResult.overallAvgPoints,
       hitRate: trialResult.hitRate,
-      weights: trialWeights,
+      weights: JSON.parse(weightsJson),
       description,
       status: "discard",
       trainAvgPoints: trialResult.trainAvgPoints,
       testAvgPoints: trialResult.testAvgPoints,
       parentScore,
-      temperature,
+      temperature: null,
     });
   }
 
-  // 8. Re-run report with best weights
+  // 8. Re-run report with current best code
   console.log("[optimizer] generating report...");
   try {
     await runReport();
