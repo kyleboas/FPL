@@ -32,12 +32,15 @@ function parseReport(md) {
         transfers: [],
         transferSummary: "",
         finalSquad: [],
+        lineups: [],   // per-GW lineups
         topPlayers: [],
         sections: [],
     };
 
     let currentSection = null;
     let currentGw = null;
+    let currentLineup = null;
+    let lineupSubSection = null; // "starting" or "bench"
 
     for (const line of lines) {
         const trimmed = line.trim();
@@ -56,11 +59,44 @@ function parseReport(md) {
         if (trimmed.startsWith("## ")) {
             currentSection = trimmed.slice(3).trim();
             currentGw = null;
+            currentLineup = null;
+            lineupSubSection = null;
             continue;
         }
 
         if (trimmed.startsWith("### ")) {
             currentGw = trimmed.slice(4).trim();
+            if (currentSection === "Starting 11 per GW") {
+                currentLineup = { gw: currentGw, captain: "", viceCaptain: "", starting: [], bench: [] };
+                data.lineups.push(currentLineup);
+                lineupSubSection = null;
+            }
+            continue;
+        }
+
+        // Per-GW lineup parsing
+        if (currentSection === "Starting 11 per GW" && currentLineup) {
+            if (trimmed.startsWith("**Captain:**")) {
+                currentLineup.captain = trimmed.replace("**Captain:**", "").trim();
+                continue;
+            }
+            if (trimmed.startsWith("**Vice-Captain:**")) {
+                currentLineup.viceCaptain = trimmed.replace("**Vice-Captain:**", "").trim();
+                continue;
+            }
+            if (trimmed === "**Starting:**") {
+                lineupSubSection = "starting";
+                continue;
+            }
+            if (trimmed === "**Bench:**") {
+                lineupSubSection = "bench";
+                continue;
+            }
+            if (trimmed.startsWith("- ") && lineupSubSection) {
+                const player = parsePlayerLine(trimmed.slice(2));
+                currentLineup[lineupSubSection].push(player);
+                continue;
+            }
             continue;
         }
 
@@ -88,10 +124,11 @@ function parseReport(md) {
 }
 
 function parsePlayerLine(line) {
+    // "Name (C) (POS, £X.Xm, Team) — GW score X.XX"
     // "Name (POS, £X.Xm, Team) — season score X.X — next: FIX"
-    // or "Name (POS, £X.Xm, Team) — score X.XX — FIX — reasons"
-    const nameMatch = line.match(/^(.+?)\s*\(([^)]+)\)/);
-    const scoreMatch = line.match(/(?:season )?score\s+([\d.]+)/);
+    // Match the position/cost/team parenthetical (contains a comma), not (C)/(VC) tags
+    const nameMatch = line.match(/^(.+?)\s*\(([^)]*,[^)]+)\)/);
+    const scoreMatch = line.match(/(?:season |GW )?score\s+([\d.]+)/);
     const reasonsMatch = line.match(/—\s*(?:next:\s*)?(.+)$/);
 
     const name = nameMatch ? nameMatch[1].trim() : line;
@@ -101,8 +138,7 @@ function parsePlayerLine(line) {
     let extra = "";
     if (reasonsMatch) {
         extra = reasonsMatch[1]
-            .replace(/score\s+[\d.]+\s*—?\s*/, "")
-            .replace(/season score\s+[\d.]+\s*—?\s*/, "")
+            .replace(/(?:GW |season )?score\s+[\d.]+\s*—?\s*/, "")
             .trim();
     }
 
@@ -237,6 +273,56 @@ function renderPlayerList(players, containerId, sectionId) {
         .join("");
 }
 
+function renderLineups(lineups) {
+    if (!lineups.length) return;
+    show("lineups-section");
+    const container = document.getElementById("lineups-list");
+    let html = "";
+
+    for (const lineup of lineups) {
+        const chipMatch = lineup.gw.match(/\[([A-Z\s]+)\]/);
+        const chipTag = chipMatch
+            ? ` <span class="transfer-tag ${getTagClass(chipMatch[1])}">${chipMatch[1]}</span>`
+            : "";
+
+        html += `<div style="padding: 12px 0; border-bottom: 2px solid #e2e8f0;">`;
+        html += `<h3 style="margin: 0 0 8px 0;">${escapeHtml(lineup.gw)}${chipTag}</h3>`;
+        html += `<div style="display: flex; gap: 16px; margin-bottom: 8px; font-size: 0.9rem;">`;
+        html += `<span><strong>Captain:</strong> ${escapeHtml(lineup.captain)}</span>`;
+        html += `<span><strong>Vice-Captain:</strong> ${escapeHtml(lineup.viceCaptain)}</span>`;
+        html += `</div>`;
+
+        html += `<div style="font-weight: 600; font-size: 0.85em; color: #475569; margin: 8px 0 4px;">Starting</div>`;
+        for (const p of lineup.starting) {
+            const isCaptain = p.name.includes("(C)");
+            const isVC = p.name.includes("(VC)");
+            const highlight = isCaptain
+                ? "background: #fef3c7; border-left: 3px solid #f59e0b;"
+                : isVC
+                  ? "background: #e0f2fe; border-left: 3px solid #0ea5e9;"
+                  : "";
+            html += `<div class="player-row" style="${highlight}">
+                <span class="player-name">${escapeHtml(p.name)}</span>
+                <span class="player-meta">${escapeHtml(p.meta)}</span>
+                <span class="player-score">${p.score.toFixed(2)}</span>
+            </div>`;
+        }
+
+        html += `<div style="font-weight: 600; font-size: 0.85em; color: #94a3b8; margin: 8px 0 4px;">Bench</div>`;
+        for (const p of lineup.bench) {
+            html += `<div class="player-row" style="opacity: 0.6;">
+                <span class="player-name">${escapeHtml(p.name)}</span>
+                <span class="player-meta">${escapeHtml(p.meta)}</span>
+                <span class="player-score">${p.score.toFixed(2)}</span>
+            </div>`;
+        }
+
+        html += `</div>`;
+    }
+
+    container.innerHTML = html;
+}
+
 function getTagClass(tag) {
     const t = tag.toLowerCase();
     if (t.includes("wildcard")) return "tag-wildcard";
@@ -330,6 +416,7 @@ async function init() {
         renderSquad(data.squad);
         renderTransfers(data.transfers, data.transferSummary);
         renderPlayerList(data.finalSquad, "final-list", "final-section");
+        renderLineups(data.lineups);
         renderPlayerList(data.topPlayers, "top-list", "top-section");
 
         statusBar.textContent = `Report loaded. Last updated: ${new Date().toLocaleString()}`;
