@@ -156,8 +156,18 @@ const server = createServer(async (req, res) => {
     return;
   }
 
-  // Manual trigger endpoint
+  // Manual trigger endpoint (requires auth)
   if (url.pathname === "/trigger") {
+    // Check for secret token
+    const triggerSecret = process.env.TRIGGER_SECRET;
+    const providedSecret = url.searchParams.get("secret") || req.headers["x-trigger-secret"];
+    
+    if (triggerSecret && providedSecret !== triggerSecret) {
+      res.writeHead(401, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "Unauthorized" }));
+      return;
+    }
+    
     if (cycleRunning) {
       res.writeHead(409, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ error: "Cycle already running" }));
