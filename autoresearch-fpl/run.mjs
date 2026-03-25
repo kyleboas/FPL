@@ -1162,6 +1162,80 @@ function planTransfers({
   return { transfers, finalSquadIds: [...squadIds], finalBank: currentBank, chipPlan };
 }
 
+/**
+ * Select starting 11 from a squad of 15 players.
+ * Constraints: 1 GK, 3-5 DEF, 2-5 MID, 1-3 FWD = 11 total.
+ * Returns { starting, bench } where starting is array of 11 players.
+ */
+function selectStartingEleven(squad) {
+  // Group by position
+  const byPosition = { GK: [], DEF: [], MID: [], FWD: [] };
+  for (const player of squad) {
+    const pos = player.positionName;
+    if (byPosition[pos]) byPosition[pos].push(player);
+  }
+
+  // Sort each position by score descending
+  for (const pos of Object.keys(byPosition)) {
+    byPosition[pos].sort((a, b) => b.score - a.score);
+  }
+
+  const starting = [];
+  const bench = [];
+
+  // Must start 1 GK
+  if (byPosition.GK.length > 0) {
+    starting.push(byPosition.GK.shift());
+  }
+
+  // Minimum requirements: 3 DEF, 2 MID, 1 FWD
+  for (let i = 0; i < 3 && byPosition.DEF.length > 0; i++) {
+    starting.push(byPosition.DEF.shift());
+  }
+  for (let i = 0; i < 2 && byPosition.MID.length > 0; i++) {
+    starting.push(byPosition.MID.shift());
+  }
+  if (byPosition.FWD.length > 0) {
+    starting.push(byPosition.FWD.shift());
+  }
+
+  // Remaining spots: fill with highest scoring remaining players
+  // 11 - 7 = 4 spots left to fill
+  const remaining = [...byPosition.DEF, ...byPosition.MID, ...byPosition.FWD]
+    .sort((a, b) => b.score - a.score);
+
+  // Count how many we can add at each position (max limits)
+  const counts = { DEF: 0, MID: 0, FWD: 0 };
+  for (const p of starting) {
+    if (counts[p.positionName] !== undefined) counts[p.positionName]++;
+  }
+
+  for (const player of remaining) {
+    if (starting.length >= 11) break;
+    const pos = player.positionName;
+    // Max limits: DEF 5, MID 5, FWD 3
+    const maxMap = { DEF: 5, MID: 5, FWD: 3 };
+    if (counts[pos] < maxMap[pos]) {
+      starting.push(player);
+      counts[pos]++;
+    }
+  }
+
+  // Any remaining players go to bench
+  for (const pos of Object.keys(byPosition)) {
+    bench.push(...byPosition[pos]);
+  }
+
+  // Also add any remaining from `remaining` that weren't added to starting
+  for (const player of remaining) {
+    if (!starting.includes(player) && !bench.includes(player)) {
+      bench.push(player);
+    }
+  }
+
+  return { starting: starting.slice(0, 11), bench };
+}
+
 function selectBudgetSquad(ranked, weights) {
   const budget = toNumber(weights.budget, 1000);
   const squadSize = weights.squadSize ?? { GK: 2, DEF: 5, MID: 5, FWD: 3 };
@@ -1303,6 +1377,30 @@ function renderReport({
         `- ${player.player.web_name ?? player.player.second_name} (${player.positionName}, ${formatMoney(
           player.player.now_cost,
         )}, ${player.teamName}) — score ${player.score.toFixed(2)} — ${formatFixtures(player.fixtures, teamsById)} — ${player.topReasons.join("; ")}`,
+      );
+    }
+    lines.push("");
+
+    // Starting 11 selection
+    const { starting, bench } = selectStartingEleven(squad);
+    lines.push("## Starting 11");
+    lines.push("");
+    for (const player of starting) {
+      lines.push(
+        `- ${player.player.web_name ?? player.player.second_name} (${player.positionName}, ${formatMoney(
+          player.player.now_cost,
+        )}, ${player.teamName}) — score ${player.score.toFixed(2)}`,
+      );
+    }
+    lines.push("");
+
+    lines.push("## Bench");
+    lines.push("");
+    for (const player of bench) {
+      lines.push(
+        `- ${player.player.web_name ?? player.player.second_name} (${player.positionName}, ${formatMoney(
+          player.player.now_cost,
+        )}, ${player.teamName}) — score ${player.score.toFixed(2)}`,
       );
     }
     lines.push("");
