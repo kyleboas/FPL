@@ -37,10 +37,12 @@ const OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions";
 const DEFAULT_MODEL = "qwen/qwen3-coder:free";
 
 // Fallback models if primary is rate-limited
+// Note: Most "free" models have been discontinued. Use cheap models as fallbacks.
 const FALLBACK_MODELS = [
-  "meta-llama/llama-3.3-8b-instruct:free",
-  "google/gemma-3-27b-it:free",
-  "deepseek/deepseek-r1:free",
+  "nvidia/nemotron-3-super-120b-a12b:free",  // Only remaining free model
+  "qwen/qwen3.5-9b",  // Very cheap ($0.05/$0.15 per M tokens)
+  "liquid/lfm-2-24b-a2b",  // Ultra cheap ($0.03/$0.12 per M tokens)
+  "mistralai/mistral-small-2603",  // Cheap ($0.15/$0.60 per M tokens)
 ];
 
 // Rate limit handling
