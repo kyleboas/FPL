@@ -34,7 +34,7 @@ const WEIGHTS_PATH = join(ROOT, "autoresearch-fpl", "weights.json");
 const RUN_SCRIPT = join(ROOT, "autoresearch-fpl", "run.mjs");
 
 const OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions";
-const DEFAULT_MODEL = "liquid/lfm-2-24b-a2b";  // Ultra cheap ($0.03/$0.12 per M tokens), reliable for code
+const DEFAULT_MODEL = "anthropic/claude-3-haiku";  // Reliable at following instructions ($0.25/$1.25 per M tokens)
 
 // Fallback models if primary is rate-limited or fails
 // Priority: cheap + reliable for code generation
