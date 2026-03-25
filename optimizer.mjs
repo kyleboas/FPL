@@ -16,12 +16,17 @@
  *  6. If improved → keep (commit); if worse → revert
  *  7. Record experiment in DB
  *
- * Environment variables:
+ * Environment variables (override config.json):
  *  - OPENROUTER_API_KEY — for OpenRouter provider
- *  - OPENROUTER_MODEL — model to use (default: qwen/qwen3-4b:free)
- *  - CF_GATEWAY_URL — Cloudflare AI Gateway endpoint URL (e.g., https://gateway.ai.cloudflare.com/v1/{account_id}/{gateway_id})
+ *  - OPENROUTER_MODEL — model to use
+ *  - CF_GATEWAY_URL — Cloudflare AI Gateway endpoint URL
  *  - CF_AIG_TOKEN — Cloudflare AI Gateway token
- *  - LLM_PROVIDER — "openrouter" (default) or "cloudflare"
+ *  - LLM_PROVIDER — "openrouter" or "cloudflare"
+ *
+ * config.json can specify:
+ *  - llm.provider — "openrouter" or "cloudflare"
+ *  - llm.model — primary model to use
+ *  - llm.fallbackModels — list of fallback models
  */
 
 import { readFile, writeFile } from "node:fs/promises";
@@ -35,6 +40,7 @@ const STRATEGY_PATH = join(ROOT, "autoresearch-fpl", "strategy.mjs");
 const PROGRAM_PATH = join(ROOT, "autoresearch-fpl", "program.md");
 const WEIGHTS_PATH = join(ROOT, "autoresearch-fpl", "weights.json");
 const RUN_SCRIPT = join(ROOT, "autoresearch-fpl", "run.mjs");
+const CONFIG_PATH = join(ROOT, "autoresearch-fpl", "config.json");
 
 // Provider configuration
 const OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions";
@@ -67,16 +73,44 @@ const BASE_DELAY_MS = 8000;
 const TEST_FRACTION = 0.2;  // 20% of gameweeks for testing
 const TEST_DEGRADATION_LIMIT = 2.0;  // Max allowed test set degradation (points per GW)
 
+// Cached config
+let _config = null;
+
+async function loadConfig() {
+  if (_config) return _config;
+  try {
+    const raw = await readFile(CONFIG_PATH, "utf8");
+    _config = JSON.parse(raw);
+  } catch {
+    _config = {};
+  }
+  return _config;
+}
+
 function delay(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-function getProvider() {
-  return process.env.LLM_PROVIDER || DEFAULT_PROVIDER;
+async function getProvider() {
+  if (process.env.LLM_PROVIDER) return process.env.LLM_PROVIDER;
+  const config = await loadConfig();
+  return config.llm?.provider || DEFAULT_PROVIDER;
 }
 
-function getModel() {
-  return process.env.OPENROUTER_MODEL || process.env.CF_MODEL || DEFAULT_MODEL;
+async function getModel() {
+  if (process.env.OPENROUTER_MODEL || process.env.CF_MODEL) {
+    return process.env.OPENROUTER_MODEL || process.env.CF_MODEL;
+  }
+  const config = await loadConfig();
+  return config.llm?.model || DEFAULT_MODEL;
+}
+
+async function getFallbackModels(provider) {
+  const config = await loadConfig();
+  if (config.llm?.fallbackModels?.length) {
+    return config.llm.fallbackModels;
+  }
+  return provider === "cloudflare" ? FALLBACK_MODELS_CLOUDFLARE : FALLBACK_MODELS_OPENROUTER;
 }
 
 // OpenRouter configuration
@@ -200,19 +234,20 @@ async function callCloudflareWithModel(messages, model, maxRetries = 3) {
 
 // Main LLM call function - routes to appropriate provider
 async function callLLM(messages) {
-  const provider = getProvider();
-  const requestedModel = getModel();
+  const provider = await getProvider();
+  const requestedModel = await getModel();
+  const fallbackModels = await getFallbackModels(provider);
   
   // Select models and caller based on provider
   let modelsToTry;
   let callWithModel;
   
   if (provider === "cloudflare") {
-    modelsToTry = [requestedModel, ...FALLBACK_MODELS_CLOUDFLARE.filter(m => m !== requestedModel)];
+    modelsToTry = [requestedModel, ...fallbackModels.filter(m => m !== requestedModel)];
     callWithModel = (msgs, model) => callCloudflareWithModel(msgs, model, MAX_RETRIES);
     console.log(`[optimizer] using Cloudflare AI Gateway provider`);
   } else {
-    modelsToTry = [requestedModel, ...FALLBACK_MODELS_OPENROUTER.filter(m => m !== requestedModel)];
+    modelsToTry = [requestedModel, ...fallbackModels.filter(m => m !== requestedModel)];
     callWithModel = (msgs, model) => callOpenRouterWithModel(msgs, model, MAX_RETRIES);
     console.log(`[optimizer] using OpenRouter provider`);
   }
@@ -342,7 +377,7 @@ export async function runOptimizationCycle() {
   await migrate();
 
   const cycleNumber = await getExperimentCount();
-  const model = getModel();
+  const model = await getModel();
 
   // 1. Read current state
   const [strategyCode, programMd, weightsJson] = await Promise.all([
