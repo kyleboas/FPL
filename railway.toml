@@ -2,8 +2,7 @@
 command = "npm install"
 
 [deploy]
-startCommand = "node server.mjs"
-healthcheckPath = "/health"
+startCommand = "node cron.mjs"
 
 [env]
 NODE_ENV = "production"
