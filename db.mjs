@@ -137,3 +137,24 @@ export async function getBestExperiment() {
   if (!kept.length) return null;
   return kept.reduce((best, e) => (e.overall_avg_points > best.overall_avg_points ? e : best));
 }
+
+/**
+ * Returns the weights object from the best kept experiment, or null if none.
+ * Used by optimizer to seed from Postgres rather than the on-disk weights.json.
+ */
+export async function loadActiveWeights() {
+  if (!getDatabaseUrl()) return null;
+
+  const raw = await psql(`
+    SELECT weights_json FROM experiments
+    WHERE status = 'keep'
+    ORDER BY overall_avg_points DESC LIMIT 1
+  `);
+
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}

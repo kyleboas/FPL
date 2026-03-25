@@ -16,13 +16,16 @@ import { readFile, writeFile } from "node:fs/promises";
 import { execFile } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
-import { migrate, insertExperiment, getBestExperiment } from "./db.mjs";
+import { migrate, insertExperiment, getBestExperiment, loadActiveWeights } from "./db.mjs";
 
 const ROOT = fileURLToPath(new URL(".", import.meta.url));
 const WEIGHTS_PATH = join(ROOT, "autoresearch-fpl", "weights.json");
 const RUN_SCRIPT = join(ROOT, "autoresearch-fpl", "run.mjs");
 
 async function loadWeights() {
+  // Prefer DB so ephemeral Railway deployments use the optimized weights
+  const dbWeights = await loadActiveWeights();
+  if (dbWeights) return dbWeights;
   const raw = await readFile(WEIGHTS_PATH, "utf8");
   return JSON.parse(raw);
 }
