@@ -6,10 +6,12 @@
  * Schedule via a Railway Cron service: node cron.mjs
  */
 
+import { readFile } from "node:fs/promises";
 import { runOptimizationCycle } from "./optimizer.mjs";
 import { generateChart } from "./chart.mjs";
 
-const N = parseInt(process.env.EXPERIMENTS_PER_CRON ?? "1", 10) || 1;
+const config = JSON.parse(await readFile("./autoresearch-fpl/config.json", "utf8"));
+const N = parseInt(process.env.EXPERIMENTS_PER_CRON ?? config.experimentsPerCron ?? 1, 10) || 1;
 console.log(`[cron] running ${N} experiment(s)`);
 for (let i = 0; i < N; i++) {
   await runOptimizationCycle();
