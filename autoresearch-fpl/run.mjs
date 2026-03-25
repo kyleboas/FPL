@@ -6,8 +6,10 @@ const ROOT = new URL(".", import.meta.url);
 const WEIGHTS_URL = new URL("./weights.json", ROOT);
 const REPORT_URL = new URL("./latest-report.md", ROOT);
 
-const FPL_BOOTSTRAP_URL = "https://fantasy.premierleague.com/api/bootstrap-static/";
-const FPL_FIXTURES_URL = "https://fantasy.premierleague.com/api/fixtures/";
+const FPL_BASE = "https://fantasy.premierleague.com/api";
+const FPL_BOOTSTRAP_URL = `${FPL_BASE}/bootstrap-static/`;
+const FPL_FIXTURES_URL = `${FPL_BASE}/fixtures/`;
+const FINAL_GW = 38;
 const SEASON_BASE =
   "https://raw.githubusercontent.com/olbauday/FPL-Elo-Insights/main/data/2025-2026/By%20Tournament/Premier%20League";
 
@@ -139,6 +141,14 @@ async function loadFixtures() {
 
 async function loadSnapshotRows(gw) {
   return fetchCsv(`${SEASON_BASE}/GW${gw}/player_gameweek_stats.csv`);
+}
+
+async function loadTeamPicks(teamId, gw) {
+  const data = await fetchJson(`${FPL_BASE}/entry/${teamId}/event/${gw}/picks/`);
+  const picks = (data.picks ?? []).map((p) => p.element);
+  const bank = toNumber(data.entry_history?.bank, 0);
+  const teamValue = toNumber(data.entry_history?.value, 0);
+  return { picks, bank, teamValue };
 }
 
 function getPlayerId(player) {
@@ -513,16 +523,213 @@ function renderBacktestSummary(summary, gwSummaries) {
   return lines.join("\n");
 }
 
+/**
+ * Score a player across multiple future GWs.
+ * Uses current form/stats but per-GW fixture difficulty.
+ */
+function scorePlayerSeason({
+  player,
+  playerMetaById,
+  historyRows,
+  weights,
+  fromGw,
+  toGw,
+  fixturesByTeamAndGw,
+  teamsById,
+}) {
+  let totalScore = 0;
+  const gwScores = [];
+
+  for (let gw = fromGw; gw <= toGw; gw += 1) {
+    const result = scorePlayer({
+      player,
+      playerMetaById,
+      historyRows,
+      weights,
+      targetGw: gw,
+      fixturesByTeamAndGw,
+      teamsById,
+    });
+    const gwScore = result ? result.score : 0;
+    totalScore += gwScore;
+    gwScores.push({ gw, score: gwScore });
+  }
+
+  return { totalScore, gwScores };
+}
+
+/**
+ * Build a map of playerId → { seasonScore, perGw, scored } for all eligible players.
+ */
+function buildSeasonScores({
+  players,
+  playerMetaById,
+  historyRowsByPlayer,
+  weights,
+  fromGw,
+  toGw,
+  fixturesByTeamAndGw,
+  teamsById,
+}) {
+  const scores = new Map();
+
+  for (const player of players) {
+    const playerId = getPlayerId(player);
+    const historyRows = historyRowsByPlayer.get(playerId) ?? [];
+
+    // First check eligibility with the fromGw
+    const eligible = scorePlayer({
+      player,
+      playerMetaById,
+      historyRows,
+      weights,
+      targetGw: fromGw,
+      fixturesByTeamAndGw,
+      teamsById,
+    });
+
+    if (!eligible) continue;
+
+    const season = scorePlayerSeason({
+      player,
+      playerMetaById,
+      historyRows,
+      weights,
+      fromGw,
+      toGw,
+      fixturesByTeamAndGw,
+      teamsById,
+    });
+
+    scores.set(playerId, {
+      seasonScore: season.totalScore,
+      gwScores: season.gwScores,
+      scored: eligible,
+    });
+  }
+
+  return scores;
+}
+
+/**
+ * Greedy transfer planner.
+ *
+ * For each GW from nextGw to 38:
+ *   - Use available free transfers to make the best upgrades
+ *   - Optionally take hits if the gain over remaining GWs justifies it
+ *   - Accumulate unused free transfers (max 5)
+ */
+function planTransfers({
+  currentSquadIds,
+  seasonScores,
+  playerMetaById,
+  weights,
+  fromGw,
+  toGw,
+  fixturesByTeamAndGw,
+  teamsById,
+  bank,
+}) {
+  const hitCost = toNumber(weights.hitCost, 4);
+  let freeTransfers = toNumber(weights.freeTransfers, 1);
+  let currentBank = bank;
+  const squadIds = new Set(currentSquadIds);
+  const transfers = []; // { gw, out, in, hit, gainPerGw }
+
+  for (let gw = fromGw; gw <= toGw; gw += 1) {
+    const remainingGws = toGw - gw + 1;
+    const candidates = [];
+
+    // Find the best swap for each squad member
+    for (const outId of squadIds) {
+      const outData = seasonScores.get(outId);
+      if (!outData) continue;
+
+      const outPlayer = outData.scored;
+      const outRemainingScore = outData.gwScores
+        .filter((g) => g.gw >= gw)
+        .reduce((s, g) => s + g.score, 0);
+      const outCost = toNumber(outPlayer.player.now_cost, 0);
+
+      // Find best replacement at same position within budget
+      for (const [inId, inData] of seasonScores) {
+        if (squadIds.has(inId)) continue;
+        if (!inData.scored) continue;
+        if (inData.scored.positionName !== outPlayer.positionName) continue;
+
+        const inCost = toNumber(inData.scored.player.now_cost, 0);
+        if (inCost > outCost + currentBank) continue;
+
+        const inRemainingScore = inData.gwScores
+          .filter((g) => g.gw >= gw)
+          .reduce((s, g) => s + g.score, 0);
+
+        const gain = inRemainingScore - outRemainingScore;
+        if (gain <= 0) continue;
+
+        candidates.push({
+          gw,
+          outId,
+          inId,
+          outPlayer,
+          inPlayer: inData.scored,
+          gain,
+          gainPerGw: gain / remainingGws,
+          costDelta: inCost - outCost,
+        });
+      }
+    }
+
+    // Sort by gain (best upgrades first)
+    candidates.sort((a, b) => b.gain - a.gain);
+
+    let transfersMade = 0;
+    const usedOut = new Set();
+    const usedIn = new Set();
+
+    for (const candidate of candidates) {
+      if (usedOut.has(candidate.outId) || usedIn.has(candidate.inId)) continue;
+
+      const isHit = transfersMade >= freeTransfers;
+      // Only take a hit if the gain justifies it (gain > hitCost equivalent in score)
+      if (isHit && candidate.gain < hitCost * 1.5) continue;
+
+      transfers.push({
+        gw: candidate.gw,
+        out: candidate.outPlayer,
+        in: candidate.inPlayer,
+        hit: isHit,
+        gain: candidate.gain,
+        gainPerGw: candidate.gainPerGw,
+      });
+
+      squadIds.delete(candidate.outId);
+      squadIds.add(candidate.inId);
+      currentBank -= candidate.costDelta;
+      usedOut.add(candidate.outId);
+      usedIn.add(candidate.inId);
+      transfersMade += 1;
+
+      // Max 3 transfers per GW (1 free + 2 hits max)
+      if (transfersMade >= Math.min(freeTransfers + 2, 3)) break;
+    }
+
+    // Bank unused free transfers (max 5)
+    const unusedFree = Math.max(0, freeTransfers - transfersMade);
+    freeTransfers = Math.min(5, 1 + unusedFree);
+  }
+
+  return { transfers, finalSquadIds: [...squadIds], finalBank: currentBank };
+}
+
 function selectBudgetSquad(ranked, weights) {
   const budget = toNumber(weights.budget, 1000);
   const squadSize = weights.squadSize ?? { GK: 2, DEF: 5, MID: 5, FWD: 3 };
 
-  // Greedy selection: pick highest-scored players per position within budget
   const squad = [];
   const remaining = { ...squadSize };
   let spent = 0;
 
-  // Sort by score descending (already sorted)
   for (const player of ranked) {
     const pos = player.positionName;
     if (!remaining[pos] || remaining[pos] <= 0) continue;
@@ -541,44 +748,125 @@ function selectBudgetSquad(ranked, weights) {
   return { squad, spent, budget };
 }
 
-function renderReport({ ranked, targetGw, currentGw, weights, teamsById }) {
-  const { squad, spent, budget } = selectBudgetSquad(ranked, weights);
-  const squadSize = weights.squadSize ?? { GK: 2, DEF: 5, MID: 5, FWD: 3 };
-  const totalSlots = Object.values(squadSize).reduce((a, b) => a + b, 0);
-
+function renderReport({
+  ranked,
+  targetGw,
+  currentGw,
+  weights,
+  teamsById,
+  currentSquadScored,
+  transferPlan,
+  bank,
+  seasonScores,
+}) {
   const lines = [];
   lines.push(`# FPL autoresearch report`);
   lines.push("");
-  lines.push(`- Target GW: ${targetGw}`);
+  lines.push(`- Target GW: ${targetGw} → ${FINAL_GW} (${FINAL_GW - targetGw + 1} GWs remaining)`);
   lines.push(`- Completed GW: ${currentGw}`);
   lines.push(`- History window: last ${weights.historyWindow} completed GWs`);
   lines.push(`- Filters: min ${weights.minimumRecentMinutes} recent minutes, min ${weights.minimumChanceOfPlaying}% availability`);
-  lines.push(`- Budget: ${formatMoney(budget)} | Spent: ${formatMoney(spent)} | Remaining: ${formatMoney(budget - spent)}`);
-  lines.push(`- Squad: ${squad.length}/${totalSlots} players (${squadSize.GK} GK, ${squadSize.DEF} DEF, ${squadSize.MID} MID, ${squadSize.FWD} FWD)`);
-  lines.push("");
 
-  lines.push(`## Best ${totalSlots} (within budget)`);
-  lines.push("");
-  for (const player of squad) {
-    lines.push(
-      `- ${player.player.web_name ?? player.player.second_name} (${player.positionName}, ${formatMoney(
-        player.player.now_cost,
-      )}, ${player.teamName}) — score ${player.score.toFixed(2)} — ${formatFixtures(player.fixtures, teamsById)} — ${player.topReasons.join("; ")}`,
-    );
-  }
-  lines.push("");
-
-  for (const positionName of ["GK", "DEF", "MID", "FWD"]) {
-    lines.push(`## ${positionName}`);
+  if (currentSquadScored) {
+    lines.push(`- Bank: ${formatMoney(bank)} | Free transfers: ${weights.freeTransfers}`);
     lines.push("");
-    const picks = squad.filter((player) => player.positionName === positionName);
-    for (const player of picks) {
+
+    // Current squad with season scores
+    lines.push("## Current squad");
+    lines.push("");
+    const sorted = [...currentSquadScored].sort((a, b) => b.seasonScore - a.seasonScore);
+    for (const p of sorted) {
+      const fixtures = formatFixtures(
+        p.scored?.fixtures ?? [],
+        teamsById,
+      );
       lines.push(
-        `- ${player.player.web_name ?? player.player.second_name} (${formatMoney(player.player.now_cost)}, ${player.teamName}) — score ${player.score.toFixed(2)} — ${formatFixtures(player.fixtures, teamsById)} — ${player.topReasons.join("; ")}`,
+        `- ${p.scored?.player?.web_name ?? "?"} (${p.scored?.positionName ?? "?"}, ${formatMoney(
+          p.scored?.player?.now_cost,
+        )}, ${p.scored?.teamName ?? "?"}) — season score ${p.seasonScore.toFixed(1)} — next: ${fixtures}`,
+      );
+    }
+    lines.push("");
+
+    // Transfer plan
+    if (transferPlan && transferPlan.transfers.length > 0) {
+      const totalHits = transferPlan.transfers.filter((t) => t.hit).length;
+      const totalHitCost = totalHits * toNumber(weights.hitCost, 4);
+      lines.push(`## Transfer plan (${transferPlan.transfers.length} transfers, ${totalHits} hits = -${totalHitCost} pts)`);
+      lines.push("");
+
+      let lastGw = 0;
+      for (const t of transferPlan.transfers) {
+        if (t.gw !== lastGw) {
+          lines.push(`### GW${t.gw}${t.hit ? "" : ""}`);
+          lastGw = t.gw;
+        }
+        const outName = t.out.player.web_name ?? t.out.player.second_name;
+        const inName = t.in.player.web_name ?? t.in.player.second_name;
+        const hitTag = t.hit ? " [HIT]" : " [FREE]";
+        lines.push(
+          `- OUT: ${outName} (${formatMoney(t.out.player.now_cost)}) → IN: ${inName} (${formatMoney(t.in.player.now_cost)}) — gain +${t.gain.toFixed(1)} over remaining GWs${hitTag}`,
+        );
+      }
+      lines.push("");
+
+      // Final squad after all transfers
+      lines.push("## Final squad (after all transfers)");
+      lines.push("");
+      for (const positionName of ["GK", "DEF", "MID", "FWD"]) {
+        const posPlayers = transferPlan.finalSquadIds
+          .map((id) => seasonScores.get(id))
+          .filter((p) => p?.scored?.positionName === positionName)
+          .sort((a, b) => b.seasonScore - a.seasonScore);
+        for (const p of posPlayers) {
+          lines.push(
+            `- ${p.scored.player.web_name ?? p.scored.player.second_name} (${positionName}, ${formatMoney(p.scored.player.now_cost)}, ${p.scored.teamName}) — season score ${p.seasonScore.toFixed(1)}`,
+          );
+        }
+      }
+      lines.push("");
+    } else {
+      lines.push("## Transfer plan");
+      lines.push("");
+      lines.push("No beneficial transfers found.");
+      lines.push("");
+    }
+  } else {
+    // No team ID — fall back to budget squad selection
+    const { squad, spent, budget } = selectBudgetSquad(ranked, weights);
+    const squadSize = weights.squadSize ?? { GK: 2, DEF: 5, MID: 5, FWD: 3 };
+    const totalSlots = Object.values(squadSize).reduce((a, b) => a + b, 0);
+
+    lines.push(`- Budget: ${formatMoney(budget)} | Spent: ${formatMoney(spent)} | Remaining: ${formatMoney(budget - spent)}`);
+    lines.push(`- Squad: ${squad.length}/${totalSlots} (no teamId set — showing best budget squad)`);
+    lines.push("");
+
+    lines.push(`## Best ${totalSlots} (within budget)`);
+    lines.push("");
+    for (const player of squad) {
+      lines.push(
+        `- ${player.player.web_name ?? player.player.second_name} (${player.positionName}, ${formatMoney(
+          player.player.now_cost,
+        )}, ${player.teamName}) — score ${player.score.toFixed(2)} — ${formatFixtures(player.fixtures, teamsById)} — ${player.topReasons.join("; ")}`,
       );
     }
     lines.push("");
   }
+
+  // Always show top overall picks for reference
+  lines.push("## Top players by season score");
+  lines.push("");
+  const topSeason = [...seasonScores.entries()]
+    .filter(([, v]) => v.scored)
+    .sort((a, b) => b[1].seasonScore - a[1].seasonScore)
+    .slice(0, 20);
+  for (const [, data] of topSeason) {
+    const p = data.scored;
+    lines.push(
+      `- ${p.player.web_name ?? p.player.second_name} (${p.positionName}, ${formatMoney(p.player.now_cost)}, ${p.teamName}) — season score ${data.seasonScore.toFixed(1)} — ${p.topReasons.join("; ")}`,
+    );
+  }
+  lines.push("");
 
   return lines.join("\n").trim() + "\n";
 }
@@ -674,6 +962,8 @@ async function runReport(weights) {
   await Promise.all(snapshotPromises);
 
   const historyRowsByPlayer = buildHistoryWindow(rowsByGw, currentGw, weights.historyWindow);
+
+  // Rank for next GW (used as fallback if no teamId)
   const ranked = rankPlayers({
     snapshotRows: bootstrap.elements,
     playerMetaById,
@@ -684,12 +974,79 @@ async function runReport(weights) {
     teamsById,
   });
 
+  // Build season scores for all players (nextGw through GW38)
+  const seasonScores = buildSeasonScores({
+    players: bootstrap.elements,
+    playerMetaById,
+    historyRowsByPlayer,
+    weights,
+    fromGw: nextGw,
+    toGw: FINAL_GW,
+    fixturesByTeamAndGw,
+    teamsById,
+  });
+
+  // If teamId is set, fetch current squad and plan transfers
+  let currentSquadScored = null;
+  let transferPlan = null;
+  let bank = 0;
+  const teamId = toNumber(weights.teamId, 0);
+
+  if (teamId > 0) {
+    try {
+      const teamData = await loadTeamPicks(teamId, currentGw);
+      bank = teamData.bank;
+
+      currentSquadScored = teamData.picks.map((id) => {
+        const data = seasonScores.get(id);
+        if (data) return data;
+        // Player not in season scores (filtered out) — score them minimally
+        const meta = playerMetaById.get(id);
+        return {
+          seasonScore: 0,
+          gwScores: [],
+          scored: meta
+            ? {
+                id,
+                player: meta,
+                positionName: POSITION_NAMES[getPosition(meta)] ?? "?",
+                teamName: teamsById.get(getTeamId(meta))?.name ?? "?",
+                fixtures: [],
+                topReasons: [],
+              }
+            : null,
+        };
+      }).filter((p) => p.scored);
+
+      transferPlan = planTransfers({
+        currentSquadIds: teamData.picks,
+        seasonScores,
+        playerMetaById,
+        weights,
+        fromGw: nextGw,
+        toGw: FINAL_GW,
+        fixturesByTeamAndGw,
+        teamsById,
+        bank,
+      });
+
+      console.log(`[report] team ${teamId}: ${teamData.picks.length} players, bank ${formatMoney(bank)}, ${transferPlan.transfers.length} transfers planned`);
+    } catch (err) {
+      console.error(`[report] failed to load team ${teamId}: ${err.message}`);
+      console.error("[report] falling back to budget squad mode");
+    }
+  }
+
   const report = renderReport({
     ranked,
     targetGw: nextGw,
     currentGw,
     weights,
     teamsById,
+    currentSquadScored,
+    transferPlan,
+    bank,
+    seasonScores,
   });
 
   await writeFile(REPORT_URL, report, "utf8");

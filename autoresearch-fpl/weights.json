@@ -1,4 +1,7 @@
 {
+  "teamId": 0,
+  "freeTransfers": 1,
+  "hitCost": 4,
   "historyWindow": 4,
   "minimumRecentMinutes": 180,
   "minimumChanceOfPlaying": 50,
