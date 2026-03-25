@@ -1,5 +1,5 @@
 import { createServer } from "node:http";
-import { readFile, access } from "node:fs/promises";
+import { readFile, access, writeFile } from "node:fs/promises";
 import { extname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { runOptimizationCycle } from "./optimizer.mjs";
@@ -40,11 +40,40 @@ const MIME = {
 let cycleRunning = false;
 let cycleCount = 0;
 
+// File-based lock for multi-instance safety
+const LOCK_FILE = DATA_DIR ? join(DATA_DIR, ".cycle.lock") : join(ROOT, ".cycle.lock");
+const LOCK_TTL_MS = 5 * 60 * 1000; // 5 minutes
+
+async function acquireLock() {
+  try {
+    const existing = await readFile(LOCK_FILE, "utf8");
+    const lockTime = parseInt(existing, 10);
+    if (Date.now() - lockTime < LOCK_TTL_MS) {
+      return false; // Lock is held by another process
+    }
+  } catch {}
+  await writeFile(LOCK_FILE, String(Date.now()), "utf8");
+  return true;
+}
+
+async function releaseLock() {
+  try {
+    await writeFile(LOCK_FILE, "", "utf8");
+  } catch {}
+}
+
 async function runCycle() {
   if (cycleRunning) {
-    console.log("[cycle] already running, skipping");
+    console.log("[cycle] already running in this process, skipping");
     return;
   }
+  
+  const gotLock = await acquireLock();
+  if (!gotLock) {
+    console.log("[cycle] lock held by another instance, skipping");
+    return;
+  }
+  
   cycleRunning = true;
   cycleCount += 1;
   
@@ -70,6 +99,7 @@ async function runCycle() {
     console.error(`[cycle] #${cycleCount} failed:`, err.message);
   } finally {
     cycleRunning = false;
+    await releaseLock();
   }
 }
 
