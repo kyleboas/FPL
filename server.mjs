@@ -156,10 +156,16 @@ const server = createServer(async (req, res) => {
     return;
   }
 
-  // Debug endpoint to show if API key is set
+  // Debug endpoint
   if (url.pathname === "/debug") {
     res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ apiKeySet: !!process.env.OPENROUTER_API_KEY }));
+    res.end(JSON.stringify({
+      apiKeySet: !!process.env.OPENROUTER_API_KEY,
+      model: process.env.OPENROUTER_MODEL || "qwen/qwen3-coder:free",
+      experimentsPerCron: process.env.EXPERIMENTS_PER_CRON || "1",
+      cycleIntervalMinutes: CYCLE_INTERVAL_MINUTES,
+      dataDir: DATA_DIR ? "set" : "not set"
+    }));
     return;
   }
 
