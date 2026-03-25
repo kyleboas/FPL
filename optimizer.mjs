@@ -51,6 +51,16 @@ function delay(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+function getModel() {
+  return process.env.OPENROUTER_MODEL || DEFAULT_MODEL;
+}
+
+function getApiKey() {
+  const key = process.env.OPENROUTER_API_KEY;
+  if (!key) throw new Error("OPENROUTER_API_KEY environment variable is required");
+  return key;
+}
+
 async function callLLMWithModel(messages, model, maxRetries = 3) {
   for (let attempt = 0; attempt < maxRetries; attempt++) {
     const response = await fetch(OPENROUTER_API_URL, {
