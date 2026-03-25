@@ -156,6 +156,13 @@ const server = createServer(async (req, res) => {
     return;
   }
 
+  // Debug endpoint to show if API key is set
+  if (url.pathname === "/debug") {
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ apiKeySet: !!process.env.OPENROUTER_API_KEY }));
+    return;
+  }
+
   // Manual trigger endpoint (requires auth)
   if (url.pathname === "/trigger") {
     // Check for secret token
