@@ -73,7 +73,7 @@ EXPERIMENTS_PER_CRON=10 node cron.mjs
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `OPENROUTER_API_KEY` | Yes | — | API key from openrouter.ai |
-| `OPENROUTER_MODEL` | No | `google/gemma-3-27b-it:free` | Model ID to use |
+| `OPENROUTER_MODEL` | No | `openrouter/free` | Model ID to use |
 | `EXPERIMENTS_PER_CRON` | No | from config.json | Experiments per cron run |
 | `DATABASE_URL` | No | local JSON | Postgres connection string |
 | `DATA_DIR` | No | repo root | Directory for persistent data |

@@ -34,7 +34,7 @@ const WEIGHTS_PATH = join(ROOT, "autoresearch-fpl", "weights.json");
 const RUN_SCRIPT = join(ROOT, "autoresearch-fpl", "run.mjs");
 
 const OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions";
-const DEFAULT_MODEL = "google/gemma-3-27b-it:free";
+const DEFAULT_MODEL = "openrouter/free";
 
 // ── Train/test split ────────────────────────────────────────────────────────
 
