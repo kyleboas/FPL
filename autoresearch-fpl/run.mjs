@@ -1163,6 +1163,34 @@ function planTransfers({
 }
 
 /**
+ * Track squad state per GW
+  const squadStateById = new Map();
+  const squadPerGw = [];
+
+  // Initialize with current squad
+  for (const id of currentSquadIds) {
+    squadStateById.set(id, true);
+  }
+
+  // Build squad for each GW, apply transfers
+  const gws = [];
+  for (let gw = fromGw; gw <= toGw; gw++) {
+    gws.push(gw);
+    // Apply transfers scheduled for this GW
+    const transfersForGw = transfers.filter(t => t.gw === gw);
+    for (const t of transfersForGw) {
+      if (t.out) squadStateById.delete(getPlayerId(t.out.player));
+      if (t.in) squadStateById.set(getPlayerId(t.in.player), true);
+    }
+    // Snapshot squad at this GW
+    const squadIds = [...squadStateById.keys()];
+    squadPerGw.push({ gw, squadIds });
+  }
+
+  return { transfers, finalSquadIds: [...squadStateById.keys()], chipPlan, squadPerGw };
+}
+
+/**
  * Select starting 11 from a squad of 15 players.
  * Constraints: 1 GK, 3-5 DEF, 2-5 MID, 1-3 FWD = 11 total.
  * Returns { starting, bench } where starting is array of 11 players.
