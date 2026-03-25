@@ -36,13 +36,9 @@ const RUN_SCRIPT = join(ROOT, "autoresearch-fpl", "run.mjs");
 const OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions";
 const DEFAULT_MODEL = "qwen/qwen3-coder:free";
 
-// Rate limit handling: OpenRouter free tier = 8 req/min
+// Rate limit handling for free tier (8 RPM)
 const MAX_RETRIES = 3;
-const BASE_DELAY_MS = 8000; // 8 seconds
-
-function delay(ms) {
-  return new Promise(resolve => setTimeout(resolve, ms));
-}
+const RETRY_BASE_DELAY_MS = 8000;
 
 function getModel() {
   return process.env.OPENROUTER_MODEL || DEFAULT_MODEL;
@@ -54,8 +50,14 @@ function getApiKey() {
   return key;
 }
 
+async function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
 async function callLLM(messages) {
-  for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+  const maxRetries = MAX_RETRIES;
+  
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
     const response = await fetch(OPENROUTER_API_URL, {
       method: "POST",
       headers: {
@@ -75,11 +77,11 @@ async function callLLM(messages) {
     if (!response.ok) {
       const errorText = await response.text();
       
-      // Retry on rate limit (429) with exponential backoff
-      if (response.status === 429 && attempt < MAX_RETRIES - 1) {
-        const waitMs = BASE_DELAY_MS * Math.pow(2, attempt);
-        console.log(`[optimizer] rate limited (429), waiting ${waitMs/1000}s before retry ${attempt + 2}/${MAX_RETRIES}...`);
-        await delay(waitMs);
+      // Retry on rate limit (429)
+      if (response.status === 429 && attempt < maxRetries - 1) {
+        const delay = RETRY_BASE_DELAY_MS * Math.pow(2, attempt);
+        console.log(`[optimizer] rate limited, retrying in ${delay/1000}s...`);
+        await sleep(delay);
         continue;
       }
       
@@ -90,7 +92,7 @@ async function callLLM(messages) {
     return data.choices?.[0]?.message?.content ?? "";
   }
   
-  throw new Error(`OpenRouter API rate limit exceeded after ${MAX_RETRIES} retries`);
+  throw new Error("Max retries exceeded");
 }
 
 function runBacktest(splitGw) {
