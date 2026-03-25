@@ -127,13 +127,13 @@ export async function generateChart() {
 
   const svg = `<?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">
-  <rect width="${W}" height="${H}" fill="#0f1117"/>
+  <rect width="${W}" height="${H}" fill="#fafafa"/>
 
   <!-- Grid -->
   ${ticks
     .map(
       (t) =>
-        `<line x1="${PAD.left}" y1="${t.y}" x2="${W - PAD.right}" y2="${t.y}" stroke="#222" stroke-width="1"/>`,
+        `<line x1="${PAD.left}" y1="${t.y}" x2="${W - PAD.right}" y2="${t.y}" stroke="#e5e7eb" stroke-width="1"/>`,
     )
     .join("\n  ")}
 
@@ -145,7 +145,7 @@ export async function generateChart() {
   ${ticks
     .map(
       (t) =>
-        `<text x="${PAD.left - 8}" y="${t.y + 4}" text-anchor="end" fill="#888" font-size="11" font-family="monospace">${t.val.toFixed(2)}</text>`,
+        `<text x="${PAD.left - 8}" y="${t.y + 4}" text-anchor="end" fill="#64748b" font-size="11" font-family="monospace">${t.val.toFixed(2)}</text>`,
     )
     .join("\n  ")}
 
@@ -186,27 +186,27 @@ export async function generateChart() {
     .join("\n  ")}
 
   <!-- Title -->
-  <text x="${W / 2}" y="28" text-anchor="middle" fill="#e8eaf0" font-size="15" font-family="monospace" font-weight="bold">Autoresearch Progress: ${nTotal} Experiments, ${nKept} Kept${nAnnealing > 0 ? ` (${nAnnealing} annealing)` : ""}</text>
+  <text x="${W / 2}" y="28" text-anchor="middle" fill="#334155" font-size="15" font-family="monospace" font-weight="bold">Autoresearch Progress: ${nTotal} Experiments, ${nKept} Kept${nAnnealing > 0 ? ` (${nAnnealing} annealing)` : ""}</text>
 
   <!-- Axis labels -->
-  <text x="${W / 2}" y="${H - 10}" text-anchor="middle" fill="#888" font-size="12" font-family="monospace">Experiment #</text>
-  <text x="16" y="${H / 2}" text-anchor="middle" fill="#888" font-size="12" font-family="monospace" transform="rotate(-90 16 ${H / 2})">Avg Points (higher is better)</text>
+  <text x="${W / 2}" y="${H - 10}" text-anchor="middle" fill="#64748b" font-size="12" font-family="monospace">Experiment #</text>
+  <text x="16" y="${H / 2}" text-anchor="middle" fill="#64748b" font-size="12" font-family="monospace" transform="rotate(-90 16 ${H / 2})">Avg Points (higher is better)</text>
 
   <!-- Legend -->
   <circle cx="${W - 150}" cy="20" r="4" fill="#666" opacity="0.5"/>
-  <text x="${W - 142}" y="24" fill="#888" font-size="10" font-family="monospace">Discarded</text>
+  <text x="${W - 142}" y="24" fill="#64748b" font-size="10" font-family="monospace">Discarded</text>
   <circle cx="${W - 150}" cy="36" r="5" fill="#2ecc71" stroke="white" stroke-width="0.8"/>
-  <text x="${W - 142}" y="40" fill="#888" font-size="10" font-family="monospace">Kept (improved)</text>
+  <text x="${W - 142}" y="40" fill="#64748b" font-size="10" font-family="monospace">Kept (improved)</text>
   ${nAnnealing > 0 ? `<circle cx="${W - 150}" cy="52" r="4" fill="#f59e0b" stroke="white" stroke-width="0.8"/>
-  <text x="${W - 142}" y="56" fill="#888" font-size="10" font-family="monospace">Annealing accept</text>
+  <text x="${W - 142}" y="56" fill="#64748b" font-size="10" font-family="monospace">Annealing accept</text>
   <line x1="${W - 158}" y1="68" x2="${W - 142}" y2="68" stroke="#2ecc71" stroke-width="2.5" opacity="0.7"/>
-  <text x="${W - 138}" y="72" fill="#888" font-size="10" font-family="monospace">Running best</text>` :
+  <text x="${W - 138}" y="72" fill="#64748b" font-size="10" font-family="monospace">Running best</text>` :
   `<line x1="${W - 158}" y1="52" x2="${W - 142}" y2="52" stroke="#2ecc71" stroke-width="2.5" opacity="0.7"/>
-  <text x="${W - 138}" y="56" fill="#888" font-size="10" font-family="monospace">Running best</text>`}
+  <text x="${W - 138}" y="56" fill="#64748b" font-size="10" font-family="monospace">Running best</text>`}
   ${hasTrainTest ? `<line x1="${W - 158}" y1="${nAnnealing > 0 ? 84 : 68}" x2="${W - 142}" y2="${nAnnealing > 0 ? 84 : 68}" stroke="#3b82f6" stroke-width="1.5" stroke-dasharray="4 2"/>
-  <text x="${W - 138}" y="${nAnnealing > 0 ? 88 : 72}" fill="#888" font-size="10" font-family="monospace">Train avg</text>
+  <text x="${W - 138}" y="${nAnnealing > 0 ? 88 : 72}" fill="#64748b" font-size="10" font-family="monospace">Train avg</text>
   <line x1="${W - 158}" y1="${nAnnealing > 0 ? 100 : 84}" x2="${W - 142}" y2="${nAnnealing > 0 ? 100 : 84}" stroke="#f59e0b" stroke-width="1.5" stroke-dasharray="4 2"/>
-  <text x="${W - 138}" y="${nAnnealing > 0 ? 104 : 88}" fill="#888" font-size="10" font-family="monospace">Test avg</text>` : ""}
+  <text x="${W - 138}" y="${nAnnealing > 0 ? 104 : 88}" fill="#64748b" font-size="10" font-family="monospace">Test avg</text>` : ""}
 </svg>`;
 
   await writeFile(OUTPUT_PATH, svg, "utf8");
