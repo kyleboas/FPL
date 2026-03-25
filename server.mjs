@@ -10,8 +10,8 @@ const ROOT = fileURLToPath(new URL(".", import.meta.url));
 const PORT = process.env.PORT || 3000;
 const REPORT_PATH = join(ROOT, "autoresearch-fpl", "latest-report.md");
 const PROGRESS_SVG_PATH = join(ROOT, "progress.svg");
-const CYCLE_INTERVAL_MS =
-  (parseInt(process.env.CYCLE_INTERVAL_MINUTES ?? "30", 10) || 30) * 60 * 1000;
+const CYCLE_INTERVAL_MINUTES = parseInt(process.env.CYCLE_INTERVAL_MINUTES ?? "30", 10);
+const CYCLE_INTERVAL_MS = CYCLE_INTERVAL_MINUTES * 60 * 1000;
 
 const MIME = {
   ".html": "text/html; charset=utf-8",
@@ -57,8 +57,12 @@ migrate()
   .then(() => runCycle())
   .catch((err) => console.error("[startup] migration failed:", err.message));
 
-setInterval(runCycle, CYCLE_INTERVAL_MS);
-console.log(`[cycle] scheduled every ${CYCLE_INTERVAL_MS / 60000} minutes`);
+if (CYCLE_INTERVAL_MS > 0) {
+  setInterval(runCycle, CYCLE_INTERVAL_MS);
+  console.log(`[cycle] scheduled every ${CYCLE_INTERVAL_MINUTES} minutes`);
+} else {
+  console.log("[cycle] interval disabled (CYCLE_INTERVAL_MINUTES=0), using external cron");
+}
 
 // ── HTTP server ──────────────────────────────────────────────────────────────
 

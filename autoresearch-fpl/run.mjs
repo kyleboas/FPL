@@ -1,6 +1,27 @@
 #!/usr/bin/env node
 
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile, writeFile, mkdir, stat } from "node:fs/promises";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+
+const CACHE_DIR = join(tmpdir(), "fpl-cache");
+const CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
+
+async function readCache(key) {
+  const file = join(CACHE_DIR, `${key}.json`);
+  try {
+    const s = await stat(file);
+    if (Date.now() - s.mtimeMs > CACHE_TTL_MS) return null;
+    return JSON.parse(await readFile(file, "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+async function writeCache(key, data) {
+  await mkdir(CACHE_DIR, { recursive: true });
+  await writeFile(join(CACHE_DIR, `${key}.json`), JSON.stringify(data), "utf8");
+}
 
 const ROOT = new URL(".", import.meta.url);
 const WEIGHTS_URL = new URL("./weights.json", ROOT);
@@ -132,15 +153,27 @@ async function loadWeights() {
 }
 
 async function loadBootstrap() {
-  return fetchJson(FPL_BOOTSTRAP_URL);
+  const cached = await readCache("bootstrap");
+  if (cached) return cached;
+  const data = await fetchJson(FPL_BOOTSTRAP_URL);
+  await writeCache("bootstrap", data);
+  return data;
 }
 
 async function loadFixtures() {
-  return fetchJson(FPL_FIXTURES_URL);
+  const cached = await readCache("fixtures");
+  if (cached) return cached;
+  const data = await fetchJson(FPL_FIXTURES_URL);
+  await writeCache("fixtures", data);
+  return data;
 }
 
 async function loadSnapshotRows(gw) {
-  return fetchCsv(`${SEASON_BASE}/GW${gw}/player_gameweek_stats.csv`);
+  const cached = await readCache(`gw-${gw}`);
+  if (cached) return cached;
+  const data = await fetchCsv(`${SEASON_BASE}/GW${gw}/player_gameweek_stats.csv`);
+  await writeCache(`gw-${gw}`, data);
+  return data;
 }
 
 async function loadTeamPicks(teamId, gw) {

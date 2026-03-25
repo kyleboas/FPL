@@ -7,3 +7,4 @@ healthcheckPath = "/health"
 
 [env]
 NODE_ENV = "production"
+CYCLE_INTERVAL_MINUTES = "0"
