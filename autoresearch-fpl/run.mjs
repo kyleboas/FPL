@@ -700,13 +700,28 @@ function planTransfersForGw({ squadIds, seasonScores, weights, gw, endGw, freeTr
   };
 }
 
-function renderBacktestSummary(simResult, startGw, endGw) {
+function renderBacktestSummary(simResult, startGw, endGw, splitGw) {
   const lines = [];
   lines.push("Season simulation backtest");
   lines.push(`Gameweeks simulated: GW${startGw} → GW${endGw} (${simResult.gwResults.length} GWs)`);
   lines.push(`total_points: ${simResult.totalPoints.toFixed(1)}`);
   lines.push(`total_hit_cost: ${simResult.totalHitCost.toFixed(0)}`);
   lines.push(`avg_points_per_gw: ${(simResult.totalPoints / simResult.gwResults.length).toFixed(2)}`);
+
+  // Train/test split reporting
+  if (splitGw && splitGw > startGw && splitGw < endGw) {
+    const trainGws = simResult.gwResults.filter((g) => g.gw <= splitGw);
+    const testGws = simResult.gwResults.filter((g) => g.gw > splitGw);
+    if (trainGws.length > 0) {
+      const trainPts = trainGws.reduce((s, g) => s + g.netPoints, 0);
+      lines.push(`train_avg_points: ${(trainPts / trainGws.length).toFixed(2)}`);
+    }
+    if (testGws.length > 0) {
+      const testPts = testGws.reduce((s, g) => s + g.netPoints, 0);
+      lines.push(`test_avg_points: ${(testPts / testGws.length).toFixed(2)}`);
+    }
+  }
+
   lines.push("");
 
   lines.push("Per-GW breakdown (last 5):");
@@ -1578,7 +1593,11 @@ async function runBacktest(weights) {
     endGw,
   });
 
-  const output = renderBacktestSummary(simResult, startGw, endGw);
+  // Support --split-gw=N for train/test reporting
+  const splitArg = process.argv.find((a) => a.startsWith("--split-gw="));
+  const splitGw = splitArg ? parseInt(splitArg.split("=")[1], 10) : null;
+
+  const output = renderBacktestSummary(simResult, startGw, endGw, splitGw);
   console.log(output);
 }
 

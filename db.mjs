@@ -69,6 +69,17 @@ export async function migrate() {
       status TEXT NOT NULL DEFAULT 'keep'
     )
   `);
+  // Add columns for train/test split and parent tracking (ignore if already exist)
+  for (const col of [
+    "train_avg_points REAL",
+    "test_avg_points REAL",
+    "parent_score REAL",
+    "temperature REAL",
+  ]) {
+    try {
+      await query(`ALTER TABLE experiments ADD COLUMN IF NOT EXISTS ${col}`);
+    } catch {}
+  }
   console.log("[db] experiments table ready");
 }
 
@@ -87,7 +98,7 @@ async function writeLocal(rows) {
   await writeFile(LOCAL_FILE, JSON.stringify(rows, null, 2), "utf8");
 }
 
-export async function insertExperiment({ overallAvgPoints, hitRate, weights, description, status }) {
+export async function insertExperiment({ overallAvgPoints, hitRate, weights, description, status, trainAvgPoints, testAvgPoints, parentScore, temperature }) {
   const weightsJson = JSON.stringify(weights);
 
   if (!getDatabaseUrl()) {
@@ -100,15 +111,19 @@ export async function insertExperiment({ overallAvgPoints, hitRate, weights, des
       weights_json: weightsJson,
       description,
       status,
+      train_avg_points: trainAvgPoints ?? null,
+      test_avg_points: testAvgPoints ?? null,
+      parent_score: parentScore ?? null,
+      temperature: temperature ?? null,
     });
     await writeLocal(rows);
     return;
   }
 
   await query(
-    `INSERT INTO experiments (overall_avg_points, hit_rate, weights_json, description, status)
-     VALUES ($1, $2, $3, $4, $5)`,
-    [overallAvgPoints, hitRate, weightsJson, description, status]
+    `INSERT INTO experiments (overall_avg_points, hit_rate, weights_json, description, status, train_avg_points, test_avg_points, parent_score, temperature)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+    [overallAvgPoints, hitRate, weightsJson, description, status, trainAvgPoints ?? null, testAvgPoints ?? null, parentScore ?? null, temperature ?? null]
   );
 }
 
@@ -149,6 +164,11 @@ export async function loadActiveWeights() {
   } catch {
     return null;
   }
+}
+
+export async function getExperimentCount() {
+  const all = await getAllExperiments();
+  return all.length;
 }
 
 export async function closePool() {
