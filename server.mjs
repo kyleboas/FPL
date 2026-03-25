@@ -64,34 +64,23 @@ async function releaseLock() {
 
 async function runCycle() {
   if (cycleRunning) {
-    console.log("[cycle] already running in this process, skipping");
+    console.log("[cycle] already running, skipping");
     return;
   }
-  
-  const gotLock = await acquireLock();
-  if (!gotLock) {
-    console.log("[cycle] lock held by another instance, skipping");
-    return;
-  }
-  
   cycleRunning = true;
   cycleCount += 1;
-  
-  // Read from config.json for default, allow env override
-  let config = { experimentsPerCron: 1 };
-  try {
-    config = JSON.parse(await readFile(join(ROOT, "autoresearch-fpl", "config.json"), "utf8"));
-  } catch {}
-  const nExperiments = parseInt(process.env.EXPERIMENTS_PER_CRON ?? config.experimentsPerCron ?? 1, 10);
-  console.log(`[cycle] #${cycleCount} starting (${nExperiments} experiments, ${RATE_LIMIT_DELAY_MS}ms delay)...`);
+  const nExperiments = parseInt(process.env.EXPERIMENTS_PER_CRON ?? "1", 10);
+  console.log(`[cycle] #${cycleCount} starting (${nExperiments} experiments)...`);
 
   try {
     for (let i = 0; i < nExperiments; i++) {
-      if (i > 0) {
-        console.log(`[cycle] waiting ${RATE_LIMIT_DELAY_MS}ms before experiment #${i + 1}...`);
-        await delay(RATE_LIMIT_DELAY_MS);
-      }
       await runOptimizationCycle();
+      // Wait between experiments to respect rate limits
+      // OpenRouter free tier = 8 RPM, so 8+ seconds between calls
+      if (i < nExperiments - 1) {
+        console.log("[cycle] waiting 10s before next experiment...");
+        await new Promise(resolve => setTimeout(resolve, 10000));
+      }
     }
     await generateChart();
     console.log(`[cycle] #${cycleCount} complete`);
@@ -99,7 +88,6 @@ async function runCycle() {
     console.error(`[cycle] #${cycleCount} failed:`, err.message);
   } finally {
     cycleRunning = false;
-    await releaseLock();
   }
 }
 
