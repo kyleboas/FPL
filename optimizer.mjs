@@ -99,9 +99,11 @@ async function getProvider() {
   return config.llm?.provider || DEFAULT_PROVIDER;
 }
 
-async function getModel() {
-  if (process.env.OPENROUTER_MODEL || process.env.CF_MODEL) {
-    return process.env.OPENROUTER_MODEL || process.env.CF_MODEL;
+async function getModel(provider) {
+  if (provider === "cloudflare" && process.env.CF_MODEL) return process.env.CF_MODEL;
+  if (provider !== "cloudflare" && process.env.OPENROUTER_MODEL) return process.env.OPENROUTER_MODEL;
+  if (process.env.CF_MODEL || process.env.OPENROUTER_MODEL) {
+    return process.env.CF_MODEL || process.env.OPENROUTER_MODEL;
   }
   const config = await loadConfig();
   return config.llm?.model || DEFAULT_MODEL;
@@ -110,9 +112,8 @@ async function getModel() {
 async function getFallbackModels(provider) {
   const config = await loadConfig();
   if (config.llm?.fallbackModels?.length) {
-    const filtered = config.llm.fallbackModels.filter((model) =>
-      provider === "cloudflare" ? model.startsWith("workers-ai/") : !model.startsWith("workers-ai/"),
-    );
+    if (provider === "cloudflare") return config.llm.fallbackModels;
+    const filtered = config.llm.fallbackModels.filter((model) => !model.startsWith("workers-ai/"));
     if (filtered.length) return filtered;
   }
   return provider === "cloudflare" ? FALLBACK_MODELS_CLOUDFLARE : FALLBACK_MODELS_OPENROUTER;
@@ -134,11 +135,12 @@ function getCloudflareConfig() {
     throw new Error("CF_GATEWAY_URL and CF_AIG_TOKEN are required for Cloudflare provider");
   }
   
-  // Ensure URL ends with /compat/chat/completions for OpenAI-compatible endpoint
   const baseUrl = gatewayUrl.replace(/\/$/, '');
-  const url = baseUrl.includes('/compat/chat/completions') 
-    ? baseUrl 
-    : `${baseUrl}/compat/chat/completions`;
+  const url = baseUrl.endsWith("/compat/chat/completions")
+    ? baseUrl
+    : baseUrl.endsWith("/compat")
+      ? `${baseUrl}/chat/completions`
+      : `${baseUrl}/compat/chat/completions`;
   
   return { url, token };
 }
@@ -240,7 +242,7 @@ async function callCloudflareWithModel(messages, model, maxRetries = 3) {
 // Main LLM call function - routes to appropriate provider
 async function callLLM(messages) {
   const provider = await getProvider();
-  const requestedModel = await getModel();
+  const requestedModel = await getModel(provider);
   const fallbackModels = await getFallbackModels(provider);
   
   // Select models and caller based on provider
