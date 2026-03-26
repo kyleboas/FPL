@@ -4,3 +4,4 @@ command = "npm install"
 [env]
 NODE_ENV = "production"
 CYCLE_INTERVAL_MINUTES = "0"
+CF_MODEL = "minimax/MiniMax-M2.7"
