@@ -1,0 +1,8 @@
+results.tsv
+run.log
+progress.svg
+data/latest-report.md
+data/progress.svg
+data/results.tsv
+data/run.log
+data/strategy.mjs

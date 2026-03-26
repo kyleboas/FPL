@@ -1,39 +1,19 @@
 #!/usr/bin/env node
 
-/**
- * LLM-driven optimizer for FPL autoresearch.
- *
- * Instead of random weight perturbation, this uses an LLM (via OpenRouter or Cloudflare AI Gateway)
- * to propose code changes to strategy.mjs — the same approach as
- * Karpathy's autoresearch.
- *
- * Each cycle:
- *  1. Read strategy.mjs and program.md
- *  2. Gather recent experiment history
- *  3. Ask the LLM to propose a code change
- *  4. Apply the change to strategy.mjs
- *  5. Run backtest
- *  6. If improved → keep (commit); if worse → revert
- *  7. Record experiment in DB
- *
- * Environment variables (override config.json):
- *  - OPENROUTER_API_KEY — for OpenRouter provider
- *  - OPENROUTER_MODEL — model to use
- *  - CF_GATEWAY_URL — Cloudflare AI Gateway endpoint URL
- *  - CF_AIG_TOKEN — Cloudflare AI Gateway token
- *  - LLM_PROVIDER — "openrouter" or "cloudflare"
- *
- * config.json can specify:
- *  - llm.provider — "openrouter" or "cloudflare"
- *  - llm.model — primary model to use
- *  - llm.fallbackModels — list of fallback models
- */
-
 import { readFile, writeFile } from "node:fs/promises";
 import { execFile } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
-import { migrate, insertExperiment, getBestExperiment, getExperimentCount, getAllExperiments } from "./db.mjs";
+import { generateChart } from "./chart.mjs";
+import {
+  appendResult,
+  ensureResultsFile,
+  getBestKeptResult,
+  persistAcceptedStrategy,
+  readResults,
+  RUN_LOG_PATH,
+  syncPersistedStrategy,
+} from "./results.mjs";
 
 const ROOT = fileURLToPath(new URL(".", import.meta.url));
 const STRATEGY_PATH = join(ROOT, "autoresearch-fpl", "strategy.mjs");
@@ -41,56 +21,58 @@ const PROGRAM_PATH = join(ROOT, "autoresearch-fpl", "program.md");
 const WEIGHTS_PATH = join(ROOT, "autoresearch-fpl", "weights.json");
 const RUN_SCRIPT = join(ROOT, "autoresearch-fpl", "run.mjs");
 const CONFIG_PATH = join(ROOT, "autoresearch-fpl", "config.json");
+const RELATIVE_STRATEGY_PATH = "autoresearch-fpl/strategy.mjs";
 
-// Provider configuration
 const OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions";
-const CLOUDFLARE_GATEWAY_BASE = "https://gateway.ai.cloudflare.com/v1";
-
-const DEFAULT_MODEL = "qwen/qwen3-4b:free";  // Free model for <$2/month budget
 const DEFAULT_PROVIDER = "openrouter";
-
-// Fallback models if primary is rate-limited or fails
-// Priority: free > ultra-cheap for budget constraint
+const DEFAULT_MODEL = "qwen/qwen3-4b:free";
 const FALLBACK_MODELS_OPENROUTER = [
-  "google/gemma-3-27b-it:free",  // Free, good at code
-  "qwen/qwen3-coder:free",  // Free, code-focused
-  "meta-llama/llama-3.3-8b-instruct:free",  // Free, fast
-  "google/gemini-2.0-flash-001",  // Cheap fallback ($0.10/$0.40 per M)
+  "google/gemma-3-27b-it:free",
+  "qwen/qwen3-coder:free",
+  "meta-llama/llama-3.3-8b-instruct:free",
+  "google/gemini-2.0-flash-001",
 ];
-
-// Cloudflare Workers AI models (free tier: 10,000+ requests/day)
 const FALLBACK_MODELS_CLOUDFLARE = [
-  "workers-ai/@cf/meta/llama-3.3-70b-instruct-fp8-fast",  // 70B, fast, code-capable
-  "workers-ai/@cf/meta/llama-3.1-8b-instruct",  // 8B, fast
-  "workers-ai/@cf/qwen/qwen2.5-14b-instruct",  // 14B, good at code
+  "openai/gpt-4.1-mini",
+  "workers-ai/@cf/meta/llama-3.1-8b-instruct-fp8-fast",
+  "workers-ai/@cf/qwen/qwen3-30b-a3b-fp8",
 ];
-
-// Rate limit handling
 const MAX_RETRIES = 3;
 const BASE_DELAY_MS = 8000;
 const GENERATION_TEMPERATURE = Number(process.env.LLM_TEMPERATURE ?? "0.2");
 const GENERATION_MAX_TOKENS = Number(process.env.LLM_MAX_TOKENS ?? "12000");
+const REPORT_ENABLED = process.env.DATA_DIR ? process.env.GENERATE_REPORT_AFTER_EXPERIMENTS !== "0" : false;
 
-// Train/test split configuration
-const TEST_FRACTION = 0.2;  // 20% of gameweeks for testing
-const TEST_DEGRADATION_LIMIT = 2.0;  // Max allowed test set degradation (points per GW)
-
-// Cached config
-let _config = null;
-
-async function loadConfig() {
-  if (_config) return _config;
-  try {
-    const raw = await readFile(CONFIG_PATH, "utf8");
-    _config = JSON.parse(raw);
-  } catch {
-    _config = {};
-  }
-  return _config;
-}
+let cachedConfig = null;
 
 function delay(ms) {
-  return new Promise(resolve => setTimeout(resolve, ms));
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function runCommand(command, args, options = {}) {
+  return new Promise((resolve, reject) => {
+    execFile(command, args, options, (error, stdout, stderr) => {
+      if (error) {
+        const err = new Error(stderr || stdout || error.message);
+        err.stdout = stdout;
+        err.stderr = stderr;
+        err.code = error.code;
+        reject(err);
+        return;
+      }
+      resolve({ stdout, stderr });
+    });
+  });
+}
+
+async function loadConfig() {
+  if (cachedConfig) return cachedConfig;
+  try {
+    cachedConfig = JSON.parse(await readFile(CONFIG_PATH, "utf8"));
+  } catch {
+    cachedConfig = {};
+  }
+  return cachedConfig;
 }
 
 async function getProvider() {
@@ -119,41 +101,37 @@ async function getFallbackModels(provider) {
   return provider === "cloudflare" ? FALLBACK_MODELS_CLOUDFLARE : FALLBACK_MODELS_OPENROUTER;
 }
 
-// OpenRouter configuration
 function getOpenRouterApiKey() {
   const key = process.env.OPENROUTER_API_KEY;
   if (!key) throw new Error("OPENROUTER_API_KEY environment variable is required");
   return key;
 }
 
-// Cloudflare AI Gateway configuration
 function getCloudflareConfig() {
   const gatewayUrl = process.env.CF_GATEWAY_URL;
   const token = process.env.CF_AIG_TOKEN;
-  
   if (!gatewayUrl || !token) {
     throw new Error("CF_GATEWAY_URL and CF_AIG_TOKEN are required for Cloudflare provider");
   }
-  
-  const baseUrl = gatewayUrl.replace(/\/$/, '');
+
+  const baseUrl = gatewayUrl.replace(/\/$/, "");
   const url = baseUrl.endsWith("/compat/chat/completions")
     ? baseUrl
     : baseUrl.endsWith("/compat")
       ? `${baseUrl}/chat/completions`
       : `${baseUrl}/compat/chat/completions`;
-  
+
   return { url, token };
 }
 
-// Call OpenRouter API
-async function callOpenRouterWithModel(messages, model, maxRetries = 3) {
-  for (let attempt = 0; attempt < maxRetries; attempt++) {
+async function callOpenRouterWithModel(messages, model) {
+  for (let attempt = 0; attempt < MAX_RETRIES; attempt += 1) {
     const response = await fetch(OPENROUTER_API_URL, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         "Authorization": `Bearer ${getOpenRouterApiKey()}`,
-        "HTTP-Referer": "https://github.com/kyleboas/fpl",
+        "HTTP-Referer": "https://github.com/kyleboas/FPL",
         "X-Title": "FPL Autoresearch",
       },
       body: JSON.stringify({
@@ -166,39 +144,29 @@ async function callOpenRouterWithModel(messages, model, maxRetries = 3) {
 
     if (response.ok) {
       const data = await response.json();
-      return { content: data.choices?.[0]?.message?.content ?? "", model };
+      return data.choices?.[0]?.message?.content ?? "";
     }
 
     const errorText = await response.text();
-    
-    // Rate limit (429) - check if we should try fallback
     if (response.status === 429) {
-      const isUpstreamRateLimit = errorText.includes("rate-limited upstream") || errorText.includes("Provider returned error");
-      
-      if (isUpstreamRateLimit) {
-        console.log(`[optimizer] model ${model} rate-limited by provider, trying fallback...`);
-        return null; // Signal to try next model
-      }
-      
-      // Standard rate limit - wait and retry
-      if (attempt < maxRetries - 1) {
-        const waitMs = BASE_DELAY_MS * Math.pow(2, attempt);
-        console.log(`[optimizer] rate limited, retrying in ${waitMs/1000}s...`);
-        await delay(waitMs);
+      const upstreamRateLimit = errorText.includes("rate-limited upstream") || errorText.includes("Provider returned error");
+      if (upstreamRateLimit) return null;
+      if (attempt < MAX_RETRIES - 1) {
+        await delay(BASE_DELAY_MS * (2 ** attempt));
         continue;
       }
     }
 
     throw new Error(`OpenRouter API error (${response.status}): ${errorText}`);
   }
+
   return null;
 }
 
-// Call Cloudflare AI Gateway API
-async function callCloudflareWithModel(messages, model, maxRetries = 3) {
+async function callCloudflareWithModel(messages, model) {
   const { url, token } = getCloudflareConfig();
-  
-  for (let attempt = 0; attempt < maxRetries; attempt++) {
+
+  for (let attempt = 0; attempt < MAX_RETRIES; attempt += 1) {
     const response = await fetch(url, {
       method: "POST",
       headers: {
@@ -215,154 +183,62 @@ async function callCloudflareWithModel(messages, model, maxRetries = 3) {
 
     if (response.ok) {
       const data = await response.json();
-      return { content: data.choices?.[0]?.message?.content ?? "", model };
+      return data.choices?.[0]?.message?.content ?? "";
     }
 
     const errorText = await response.text();
-    
-    // Rate limit handling
-    if (response.status === 429) {
-      console.log(`[optimizer] Cloudflare rate limited for model ${model}, trying fallback...`);
-      return null; // Signal to try next model
-    }
-
-    // Retry on server errors
-    if (response.status >= 500 && attempt < maxRetries - 1) {
-      const waitMs = BASE_DELAY_MS * Math.pow(2, attempt);
-      console.log(`[optimizer] server error, retrying in ${waitMs/1000}s...`);
-      await delay(waitMs);
+    if (response.status === 429) return null;
+    if (response.status >= 500 && attempt < MAX_RETRIES - 1) {
+      await delay(BASE_DELAY_MS * (2 ** attempt));
       continue;
     }
 
     throw new Error(`Cloudflare API error (${response.status}): ${errorText}`);
   }
+
   return null;
 }
 
-// Main LLM call function - routes to appropriate provider
 async function callLLM(messages) {
   const provider = await getProvider();
   const requestedModel = await getModel(provider);
   const fallbackModels = await getFallbackModels(provider);
-  
-  // Select models and caller based on provider
-  let modelsToTry;
-  let callWithModel;
-  
-  if (provider === "cloudflare") {
-    modelsToTry = [requestedModel, ...fallbackModels.filter(m => m !== requestedModel)];
-    callWithModel = (msgs, model) => callCloudflareWithModel(msgs, model, MAX_RETRIES);
-    console.log(`[optimizer] using Cloudflare AI Gateway provider`);
-  } else {
-    modelsToTry = [requestedModel, ...fallbackModels.filter(m => m !== requestedModel)];
-    callWithModel = (msgs, model) => callOpenRouterWithModel(msgs, model, MAX_RETRIES);
-    console.log(`[optimizer] using OpenRouter provider`);
-  }
-  
-  for (let i = 0; i < modelsToTry.length; i++) {
-    const model = modelsToTry[i];
+  const modelsToTry = [requestedModel, ...fallbackModels.filter((model) => model !== requestedModel)];
+
+  console.log(`[optimizer] using ${provider} provider`);
+
+  for (let index = 0; index < modelsToTry.length; index += 1) {
+    const model = modelsToTry[index];
     console.log(`[optimizer] trying model: ${model}`);
-    const result = await callWithModel(messages, model);
-    if (result) {
-      if (model !== requestedModel) {
-        console.log(`[optimizer] using fallback model: ${model}`);
-      }
-      return result.content;
-    }
-    
-    // Small delay before trying next fallback model to avoid rate limits
-    if (i < modelsToTry.length - 1) {
-      console.log(`[optimizer] waiting 2s before trying next model...`);
+    const content = provider === "cloudflare"
+      ? await callCloudflareWithModel(messages, model)
+      : await callOpenRouterWithModel(messages, model);
+
+    if (content) return { content, model };
+    if (index < modelsToTry.length - 1) {
       await delay(2000);
     }
   }
-  
-  throw new Error("All models failed - all rate limited or unavailable");
-}
 
-function runBacktest(splitGw) {
-  const args = [RUN_SCRIPT, "backtest"];
-  if (splitGw) args.push(`--split-gw=${splitGw}`);
-  return new Promise((resolve, reject) => {
-    execFile(
-      process.execPath,
-      args,
-      { cwd: ROOT, timeout: 120_000 },
-      (err, stdout, stderr) => {
-        if (err) return reject(new Error(`backtest failed: ${stderr || err.message}`));
-        resolve(stdout);
-      },
-    );
-  });
-}
-
-function runReport() {
-  return new Promise((resolve, reject) => {
-    execFile(
-      process.execPath,
-      [RUN_SCRIPT, "report"],
-      { cwd: ROOT, timeout: 60_000 },
-      (err, stdout, stderr) => {
-        if (err) return reject(new Error(`report failed: ${stderr || err.message}`));
-        resolve(stdout);
-      },
-    );
-  });
+  throw new Error("All models failed");
 }
 
 function parseBacktestOutput(output) {
-  const totalMatch = output.match(/total_points:\s*([\d.-]+)/);
   const avgMatch = output.match(/avg_points_per_gw:\s*([\d.]+)/);
   const hitMatch = output.match(/total_hit_cost:\s*([\d.]+)/);
-  const trainMatch = output.match(/train_avg_points:\s*([\d.]+)/);
-  const testMatch = output.match(/test_avg_points:\s*([\d.]+)/);
-  const gwRangeMatch = output.match(/GW(\d+)\s*→\s*GW(\d+)/);
   return {
-    overallAvgPoints: avgMatch ? parseFloat(avgMatch[1]) : 0,
-    totalPoints: totalMatch ? parseFloat(totalMatch[1]) : 0,
-    hitRate: hitMatch ? parseFloat(hitMatch[1]) : 0,
-    trainAvgPoints: trainMatch ? parseFloat(trainMatch[1]) : null,
-    testAvgPoints: testMatch ? parseFloat(testMatch[1]) : null,
-    startGw: gwRangeMatch ? parseInt(gwRangeMatch[1]) : null,
-    endGw: gwRangeMatch ? parseInt(gwRangeMatch[2]) : null,
+    avgPointsPerGw: avgMatch ? Number.parseFloat(avgMatch[1]) : null,
+    totalHitCost: hitMatch ? Number.parseFloat(hitMatch[1]) : 0,
   };
 }
 
-function computeSplitGw(startGw, endGw) {
-  const totalGws = endGw - startGw + 1;
-  if (totalGws < 6) return null;
-  const testSize = Math.max(2, Math.round(totalGws * TEST_FRACTION));
-  return endGw - testSize;
-}
+function extractCode(response) {
+  const fenced = response.match(/```(?:javascript|js|mjs)?\s*\n([\s\S]*?)```/);
+  if (fenced) return fenced[1].trim();
 
-/**
- * Extract the new strategy.mjs code from the LLM response.
- * Expects a fenced code block with the full file contents.
- */
-function extractCode(llmResponse) {
-  // Try to find a fenced code block
-  const fenceMatch = llmResponse.match(/```(?:javascript|js|mjs)?\s*\n([\s\S]*?)```/);
-  if (fenceMatch) return fenceMatch[1].trim();
-
-  // If no fence, check if the response looks like valid JS (starts with import/export/function/const/etc)
-  const trimmed = llmResponse.trim();
-  if (/^(?:\/\*[\s\S]*?\*\/\s*)?(?:import|export|function|const|let|var|\/\/)/.test(trimmed)) {
+  const trimmed = response.trim();
+  if (/^(?:\/\*[\s\S]*?\*\/\s*)?(?:import|export|function|const|let|var)/.test(trimmed)) {
     return trimmed;
-  }
-
-  const markers = [
-    "\n/**",
-    "\nimport {",
-    "\nexport function availabilityScore",
-    "\nexport function scorePlayer",
-  ];
-  const startIndexes = markers
-    .map((marker) => llmResponse.indexOf(marker))
-    .filter((index) => index >= 0)
-    .sort((a, b) => a - b);
-
-  if (startIndexes.length) {
-    return llmResponse.slice(startIndexes[0] + 1).trim();
   }
 
   return null;
@@ -374,110 +250,166 @@ function extractRequiredExports(strategyCode) {
 
 function findMissingExports(code, requiredExports) {
   return requiredExports.filter((name) => {
-    const exportPattern = new RegExp(
-      `export\\s+(?:async\\s+)?function\\s+${name}\\b|export\\s+(?:const|let|var)\\s+${name}\\b`,
-    );
-    return !exportPattern.test(code);
+    const pattern = new RegExp(`export\\s+(?:async\\s+)?function\\s+${name}\\b|export\\s+(?:const|let|var)\\s+${name}\\b`);
+    return !pattern.test(code);
   });
 }
 
-/**
- * Summarize recent experiment history for the LLM prompt.
- */
-async function getExperimentSummary(maxRecent = 10) {
-  const all = await getAllExperiments();
-  const recent = all.slice(-maxRecent);
-  if (!recent.length) return "No experiments run yet. This is the first attempt.";
+function summarizeIdea(response) {
+  return response.split("```")[0].replace(/\s+/g, " ").trim().slice(0, 180) || "LLM-proposed strategy change";
+}
 
-  const best = all.filter(e => e.status === "keep").reduce(
-    (best, e) => (!best || e.overall_avg_points > best.overall_avg_points ? e : best),
-    null,
-  );
-
-  const lines = [];
-  lines.push(`Total experiments: ${all.length}`);
-  lines.push(`Best score: ${best ? best.overall_avg_points.toFixed(2) : "N/A"} (${best?.description ?? "N/A"})`);
-  lines.push("");
-  lines.push("Recent experiments:");
-  for (const e of recent) {
-    const status = e.status === "keep" ? "KEPT" : "DISCARDED";
-    lines.push(`  #${e.id}: ${status} score=${e.overall_avg_points.toFixed(2)} — ${e.description}`);
+async function getExperimentSummary(limit = 10) {
+  const results = await readResults();
+  if (!results.length) {
+    return "No experiments run yet. The first run should establish the baseline.";
   }
+
+  const best = await getBestKeptResult();
+  const recent = results.slice(-limit);
+  const lines = [
+    `Total experiments: ${results.length}`,
+    `Best score: ${best ? best.avg_points_per_gw.toFixed(2) : "N/A"} (${best?.description ?? "N/A"})`,
+    "",
+    "Recent experiments:",
+  ];
+
+  for (const result of recent) {
+    lines.push(`  ${result.commit}: ${result.status.toUpperCase()} score=${result.avg_points_per_gw.toFixed(2)} — ${result.description}`);
+  }
+
   return lines.join("\n");
 }
 
-// ── Main optimization cycle ─────────────────────────────────────────────────
+async function git(args, { allowFailure = false, timeout = 15_000 } = {}) {
+  try {
+    return await runCommand("git", ["-C", ROOT, ...args], { cwd: ROOT, timeout });
+  } catch (error) {
+    if (allowFailure) return { stdout: "", stderr: error.message };
+    throw error;
+  }
+}
+
+async function getCurrentCommit({ short = false } = {}) {
+  const args = short ? ["rev-parse", "--short", "HEAD"] : ["rev-parse", "HEAD"];
+  const { stdout } = await git(args);
+  return stdout.trim();
+}
+
+async function getCurrentBranchName() {
+  const { stdout } = await git(["rev-parse", "--abbrev-ref", "HEAD"]);
+  return stdout.trim();
+}
+
+async function commitStrategy(description) {
+  await git(["add", RELATIVE_STRATEGY_PATH]);
+  await git(
+    [
+      "-c", "user.name=Autoresearch",
+      "-c", "user.email=autoresearch@local",
+      "commit",
+      "-m",
+      description.slice(0, 120),
+    ],
+    { timeout: 30_000 },
+  );
+  return getCurrentCommit({ short: true });
+}
+
+async function resetToCommit(commit) {
+  await git(["reset", "--hard", commit], { timeout: 30_000 });
+}
+
+async function runBacktestToLog() {
+  try {
+    const { stdout, stderr } = await runCommand(
+      process.execPath,
+      [RUN_SCRIPT, "backtest"],
+      { cwd: ROOT, timeout: 120_000 },
+    );
+    const combined = `${stdout}${stderr}`;
+    await writeFile(RUN_LOG_PATH, combined, "utf8");
+    return combined;
+  } catch (error) {
+    const combined = `${error.stdout ?? ""}${error.stderr ?? ""}`.trim() || error.message;
+    await writeFile(RUN_LOG_PATH, combined, "utf8");
+    throw error;
+  }
+}
+
+async function runReport() {
+  if (!REPORT_ENABLED) return;
+  await runCommand(
+    process.execPath,
+    [RUN_SCRIPT, "report"],
+    {
+      cwd: ROOT,
+      timeout: 60_000,
+      env: { ...process.env, DATA_DIR: process.env.DATA_DIR },
+    },
+  );
+}
+
+async function ensureBaseline() {
+  const results = await readResults();
+  if (results.length) return;
+
+  console.log("[optimizer] no baseline found, running initial backtest...");
+  const output = await runBacktestToLog();
+  const baseline = parseBacktestOutput(output);
+  if (baseline.avgPointsPerGw == null) {
+    throw new Error("baseline run did not produce avg_points_per_gw");
+  }
+
+  const baselineCommit = await getCurrentCommit({ short: true });
+  await appendResult({
+    commit: baselineCommit,
+    avgPointsPerGw: baseline.avgPointsPerGw,
+    totalHitCost: baseline.totalHitCost,
+    status: "keep",
+    description: "baseline",
+  });
+  await persistAcceptedStrategy(STRATEGY_PATH);
+  await runReport();
+  await generateChart();
+  console.log(`[optimizer] baseline: avg=${baseline.avgPointsPerGw.toFixed(2)}`);
+}
 
 export async function runOptimizationCycle() {
-  await migrate();
+  await ensureResultsFile();
+  await syncPersistedStrategy(STRATEGY_PATH);
+  await ensureBaseline();
 
-  const cycleNumber = await getExperimentCount();
-  const model = await getModel();
-
-  // 1. Read current state
+  const branchName = await getCurrentBranchName();
+  const parentCommit = await getCurrentCommit();
+  const parentCommitShort = await getCurrentCommit({ short: true });
+  const parentResult = await getBestKeptResult();
+  const parentScore = parentResult?.avg_points_per_gw ?? 0;
+  const experimentSummary = await getExperimentSummary();
   const [strategyCode, programMd, weightsJson] = await Promise.all([
     readFile(STRATEGY_PATH, "utf8"),
     readFile(PROGRAM_PATH, "utf8"),
     readFile(WEIGHTS_PATH, "utf8"),
   ]);
   const requiredExports = extractRequiredExports(strategyCode);
+  const provider = await getProvider();
+  const requestedModel = await getModel(provider);
 
-  const best = await getBestExperiment();
-  const experimentSummary = await getExperimentSummary();
+  console.log(`[optimizer] branch=${branchName} commit=${parentCommitShort} best=${parentScore.toFixed(2)} model=${requestedModel}`);
 
-  // 2. Establish baseline if first run
-  let parentScore;
-  if (!best) {
-    console.log("[optimizer] no baseline found, running initial backtest...");
-    const baselineOutput = await runBacktest();
-    const baselineResult = parseBacktestOutput(baselineOutput);
-    parentScore = baselineResult.overallAvgPoints;
+  const systemPrompt = `You are an autonomous FPL (Fantasy Premier League) research agent. Your job is to improve strategy.mjs.
 
-    await insertExperiment({
-      overallAvgPoints: baselineResult.overallAvgPoints,
-      hitRate: baselineResult.hitRate,
-      weights: JSON.parse(weightsJson),
-      description: "baseline",
-      status: "keep",
-      trainAvgPoints: baselineResult.trainAvgPoints,
-      testAvgPoints: baselineResult.testAvgPoints,
-      parentScore: null,
-      temperature: GENERATION_TEMPERATURE,
-    });
-    console.log(`[optimizer] baseline: avg=${parentScore.toFixed(2)}`);
-  } else {
-    parentScore = best.overall_avg_points;
-    console.log(`[optimizer] current best: avg=${parentScore.toFixed(2)}, cycle=${cycleNumber}, model=${model}`);
-  }
+Rules:
+- Output the COMPLETE modified strategy.mjs inside one javascript code fence
+- Make exactly ONE focused change per experiment
+- Keep all imports and exports intact
+- Preserve every existing export exactly once: ${requiredExports.join(", ")}
+- Do not add dependencies
+- Do not edit any file except strategy.mjs
 
-  // 3. Ask the LLM to propose a change
-  console.log(`[optimizer] asking ${model} for a code change...`);
+The fixed harness is run.mjs. The metric is avg_points_per_gw from node autoresearch-fpl/run.mjs backtest. Higher is better.`;
 
-  const systemPrompt = `You are an autonomous FPL (Fantasy Premier League) research agent. Your job is to improve the player scoring and selection strategy by modifying strategy.mjs.
-
-## Rules
-- You MUST output the COMPLETE modified strategy.mjs file inside a single \`\`\`javascript code fence
-- Make exactly ONE focused change per experiment (one new feature, one formula tweak, one logic change)
-- Keep all existing imports and exports — do not break the module interface
-- Preserve every existing export from strategy.mjs exactly once: ${requiredExports.join(", ")}
-- The file must be valid ES module JavaScript (import/export, no require)
-- Do not add external dependencies — only use built-in Node.js modules and imports from ./run.mjs
-- Available imports from ./run.mjs: toNumber, clamp, mean, sum, getPlayerId, getTeamId, getPosition, groupRowsByPlayer, POSITION_NAMES, AVAILABILITY_BY_STATUS
-
-## What you can change
-- Feature engineering: add new features, modify normalization divisors, change how features are computed
-- Scoring formula: change how features are weighted/combined (beyond just the weights.json numbers)
-- Transfer logic: improve how transfers are planned (thresholds, gain calculations, number of transfers)
-- Squad selection: improve budget squad building, starting 11 selection, captain picks
-- Player filtering: adjust eligibility criteria
-- Chip strategy: improve wildcard/free-hit/bench-boost timing
-
-## What NOT to change
-- Do not modify the function signatures or return types (other code depends on them)
-- Do not add console.log or debug output
-- Do not import external packages`;
-
-  const userPrompt = `## Program objectives
+  const userPrompt = `## Program
 ${programMd}
 
 ## Current weights.json
@@ -491,177 +423,131 @@ ${experimentSummary}
 ${strategyCode}
 \`\`\`
 
-## Your task
-Propose ONE improvement to strategy.mjs to increase the backtest avg_points_per_gw metric (currently ${parentScore.toFixed(2)}).
+## Task
+Propose one focused change to improve avg_points_per_gw over ${parentScore.toFixed(2)}.
 
-Look at the experiment history to avoid repeating failed ideas. Think about what could meaningfully improve player selection — new features, better normalization, smarter transfer logic, etc.
+Briefly explain the idea in 2-3 sentences, then output the COMPLETE strategy.mjs file in a javascript code fence.`;
 
-First, briefly explain your idea (2-3 sentences), then output the COMPLETE modified strategy.mjs inside a \`\`\`javascript code fence.`;
-
-  let llmResponse;
+  let llmOutput;
   try {
-    llmResponse = await callLLM([
+    llmOutput = await callLLM([
       { role: "system", content: systemPrompt },
       { role: "user", content: userPrompt },
     ]);
-  } catch (err) {
-    console.error(`[optimizer] LLM call failed: ${err.message}`);
-    await insertExperiment({
-      overallAvgPoints: 0,
-      hitRate: 0,
-      weights: JSON.parse(weightsJson),
-      description: `LLM error: ${err.message.slice(0, 100)}`,
+  } catch (error) {
+    console.error(`[optimizer] LLM call failed: ${error.message}`);
+    await appendResult({
+      commit: parentCommitShort,
+      avgPointsPerGw: 0,
+      totalHitCost: 0,
       status: "crash",
-      parentScore,
-      temperature: GENERATION_TEMPERATURE,
+      description: `llm error: ${error.message.slice(0, 120)}`,
     });
+    await generateChart();
     return;
   }
 
-  // 4. Extract the code from the response
-  const newCode = extractCode(llmResponse);
-  if (!newCode) {
-    console.error("[optimizer] LLM response did not contain a valid code block");
-    await insertExperiment({
-      overallAvgPoints: 0,
-      hitRate: 0,
-      weights: JSON.parse(weightsJson),
-      description: "LLM response had no code block",
-      status: "crash",
-      parentScore,
-      temperature: GENERATION_TEMPERATURE,
+  const newCode = extractCode(llmOutput.content);
+  const description = summarizeIdea(llmOutput.content);
+  if (!newCode || newCode === strategyCode) {
+    console.log("[optimizer] no valid code change proposed");
+    await appendResult({
+      commit: parentCommitShort,
+      avgPointsPerGw: parentScore,
+      totalHitCost: parentResult?.total_hit_cost ?? 0,
+      status: "discard",
+      description: `no-op: ${description}`,
     });
+    await generateChart();
     return;
   }
 
-  // Extract description from the LLM's explanation (before the code fence)
-  const descriptionMatch = llmResponse.split("```")[0].trim();
-  const description = descriptionMatch.slice(0, 200) || "LLM-proposed change";
-
-  console.log(`[optimizer] idea: ${description.slice(0, 100)}...`);
-
-  // 5. Save trial code and verify syntax
-  const originalCode = strategyCode;
   await writeFile(STRATEGY_PATH, newCode, "utf8");
 
-  // Quick syntax check
+  let trialCommitShort;
   try {
-    const { execFileSync } = await import("node:child_process");
-    execFileSync(process.execPath, ["--check", STRATEGY_PATH], { cwd: ROOT, timeout: 10_000 });
-  } catch (syntaxErr) {
-    console.error("[optimizer] syntax error in LLM output, reverting");
-    await writeFile(STRATEGY_PATH, originalCode, "utf8");
-    await insertExperiment({
-      overallAvgPoints: 0,
-      hitRate: 0,
-      weights: JSON.parse(weightsJson),
-      description: `syntax error: ${description.slice(0, 150)}`,
+    trialCommitShort = await commitStrategy(description);
+  } catch (error) {
+    await writeFile(STRATEGY_PATH, strategyCode, "utf8");
+    console.error(`[optimizer] commit failed: ${error.message}`);
+    await appendResult({
+      commit: parentCommitShort,
+      avgPointsPerGw: 0,
+      totalHitCost: 0,
       status: "crash",
-      parentScore,
-      temperature: GENERATION_TEMPERATURE,
+      description: `commit failed: ${description}`,
     });
+    await generateChart();
     return;
   }
 
   const missingExports = findMissingExports(newCode, requiredExports);
   if (missingExports.length) {
     console.error(`[optimizer] missing required exports: ${missingExports.join(", ")}`);
-    await writeFile(STRATEGY_PATH, originalCode, "utf8");
-    await insertExperiment({
-      overallAvgPoints: 0,
-      hitRate: 0,
-      weights: JSON.parse(weightsJson),
-      description: `missing exports: ${missingExports.slice(0, 4).join(", ")}`,
+    await appendResult({
+      commit: trialCommitShort,
+      avgPointsPerGw: 0,
+      totalHitCost: 0,
       status: "crash",
-      parentScore,
-      temperature: GENERATION_TEMPERATURE,
+      description: `missing exports: ${missingExports.join(", ")}`,
     });
+    await resetToCommit(parentCommit);
+    await generateChart();
     return;
   }
 
-  // 6. Run backtest with trial code
+  let trialOutput;
   let trialResult;
-  const splitGw = computeSplitGw(6, 31);
   try {
-    const output = await runBacktest(splitGw);
-    trialResult = parseBacktestOutput(output);
-  } catch (err) {
-    console.error(`[optimizer] backtest crashed: ${err.message}`);
-    await writeFile(STRATEGY_PATH, originalCode, "utf8");
-    await insertExperiment({
-      overallAvgPoints: 0,
-      hitRate: 0,
-      weights: JSON.parse(weightsJson),
-      description: `backtest crash: ${description.slice(0, 150)}`,
+    trialOutput = await runBacktestToLog();
+    trialResult = parseBacktestOutput(trialOutput);
+    if (trialResult.avgPointsPerGw == null) {
+      throw new Error("backtest output missing avg_points_per_gw");
+    }
+  } catch (error) {
+    console.error(`[optimizer] backtest crashed: ${error.message}`);
+    await appendResult({
+      commit: trialCommitShort,
+      avgPointsPerGw: 0,
+      totalHitCost: 0,
       status: "crash",
-      parentScore,
-      temperature: GENERATION_TEMPERATURE,
+      description: `backtest crash: ${description}`,
     });
+    await resetToCommit(parentCommit);
+    await generateChart();
     return;
   }
 
-  // 7. Acceptance decision — pure greedy (like Karpathy)
-  const trialScore = trialResult.overallAvgPoints;
-  let accepted = trialScore > parentScore;
-  let rejectReason = accepted ? null : `worse: ${trialScore.toFixed(2)} <= ${parentScore.toFixed(2)}`;
-
-  // Overfitting guard
-  if (accepted && trialResult.testAvgPoints !== null && best?.test_avg_points) {
-    if (trialResult.testAvgPoints < best.test_avg_points - TEST_DEGRADATION_LIMIT) {
-      accepted = false;
-      rejectReason = `test degraded: ${trialResult.testAvgPoints.toFixed(2)} < ${best.test_avg_points.toFixed(2)} - ${TEST_DEGRADATION_LIMIT}`;
-    }
-  }
-
-  if (accepted) {
-    const delta = trialScore - parentScore;
-    console.log(
-      `[optimizer] IMPROVED: ${trialScore.toFixed(2)} (Δ=+${delta.toFixed(3)})`,
-    );
-    await insertExperiment({
-      overallAvgPoints: trialResult.overallAvgPoints,
-      hitRate: trialResult.hitRate,
-      weights: JSON.parse(weightsJson),
-      description,
+  if (trialResult.avgPointsPerGw > parentScore) {
+    const delta = trialResult.avgPointsPerGw - parentScore;
+    console.log(`[optimizer] KEEP ${trialCommitShort}: ${trialResult.avgPointsPerGw.toFixed(2)} (Δ=+${delta.toFixed(2)})`);
+    await appendResult({
+      commit: trialCommitShort,
+      avgPointsPerGw: trialResult.avgPointsPerGw,
+      totalHitCost: trialResult.totalHitCost,
       status: "keep",
-      trainAvgPoints: trialResult.trainAvgPoints,
-      testAvgPoints: trialResult.testAvgPoints,
-      parentScore,
-      temperature: GENERATION_TEMPERATURE,
-    });
-    // strategy.mjs already has the improved code
-  } else {
-    console.log(
-      `[optimizer] DISCARD: ${trialScore.toFixed(2)} (reason=${rejectReason})`,
-    );
-    await writeFile(STRATEGY_PATH, originalCode, "utf8");
-    await insertExperiment({
-      overallAvgPoints: trialResult.overallAvgPoints,
-      hitRate: trialResult.hitRate,
-      weights: JSON.parse(weightsJson),
       description,
-      status: "discard",
-      trainAvgPoints: trialResult.trainAvgPoints,
-      testAvgPoints: trialResult.testAvgPoints,
-      parentScore,
-      temperature: GENERATION_TEMPERATURE,
     });
+    await persistAcceptedStrategy(STRATEGY_PATH);
+    await runReport();
+  } else {
+    console.log(`[optimizer] DISCARD ${trialCommitShort}: ${trialResult.avgPointsPerGw.toFixed(2)} <= ${parentScore.toFixed(2)}`);
+    await appendResult({
+      commit: trialCommitShort,
+      avgPointsPerGw: trialResult.avgPointsPerGw,
+      totalHitCost: trialResult.totalHitCost,
+      status: "discard",
+      description,
+    });
+    await resetToCommit(parentCommit);
   }
 
-  // 8. Re-run report with current best code
-  console.log("[optimizer] generating report...");
-  try {
-    await runReport();
-    console.log("[optimizer] report updated");
-  } catch (err) {
-    console.error(`[optimizer] report failed: ${err.message}`);
-  }
+  await generateChart();
 }
 
-// Allow running standalone: node optimizer.mjs
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
-  runOptimizationCycle().catch((err) => {
-    console.error(err);
+  runOptimizationCycle().catch((error) => {
+    console.error(error);
     process.exitCode = 1;
   });
 }
