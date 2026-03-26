@@ -6,7 +6,6 @@
     "start": "node server.mjs"
   },
   "dependencies": {
-    "e": "^0.2.33",
-    "pg": "^8.13.0"
+    "e": "^0.2.33"
   }
 }

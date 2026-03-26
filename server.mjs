@@ -1,24 +1,51 @@
 import { createServer } from "node:http";
-import { readFile, access, writeFile } from "node:fs/promises";
+import { access, readFile } from "node:fs/promises";
 import { extname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { runOptimizationCycle } from "./optimizer.mjs";
 import { generateChart } from "./chart.mjs";
-import { migrate } from "./db.mjs";
+import { runOptimizationCycle } from "./optimizer.mjs";
+import { PROGRESS_SVG_PATH, REPORT_PATH, resetAutoresearchState } from "./results.mjs";
 
 const ROOT = fileURLToPath(new URL(".", import.meta.url));
+const CONFIG_PATH = join(ROOT, "autoresearch-fpl", "config.json");
+const REPO_STRATEGY_PATH = join(ROOT, "autoresearch-fpl", "strategy.mjs");
 const PORT = process.env.PORT || 3000;
 const DATA_DIR = process.env.DATA_DIR || null;
-const REPORT_PATH = DATA_DIR ? join(DATA_DIR, "latest-report.md") : join(ROOT, "autoresearch-fpl", "latest-report.md");
-const PROGRESS_SVG_PATH = DATA_DIR ? join(DATA_DIR, "progress.svg") : join(ROOT, "progress.svg");
 const CYCLE_INTERVAL_MINUTES = parseInt(process.env.CYCLE_INTERVAL_MINUTES ?? "30", 10);
 const CYCLE_INTERVAL_MS = CYCLE_INTERVAL_MINUTES * 60 * 1000;
+const RATE_LIMIT_DELAY_MS = 10_000;
 
-// Rate limit delay: OpenRouter free tier = 8 req/min = 7.5 sec between requests
-const RATE_LIMIT_DELAY_MS = 8000;
+let cachedConfig = null;
 
 function delay(ms) {
-  return new Promise(resolve => setTimeout(resolve, ms));
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function loadConfig() {
+  if (cachedConfig) return cachedConfig;
+  try {
+    cachedConfig = JSON.parse(await readFile(CONFIG_PATH, "utf8"));
+  } catch {
+    cachedConfig = {};
+  }
+  return cachedConfig;
+}
+
+async function getProvider() {
+  if (process.env.LLM_PROVIDER) return process.env.LLM_PROVIDER;
+  const config = await loadConfig();
+  return config.llm?.provider || "openrouter";
+}
+
+async function getModel() {
+  const provider = await getProvider();
+  if (provider === "cloudflare" && process.env.CF_MODEL) return process.env.CF_MODEL;
+  if (provider !== "cloudflare" && process.env.OPENROUTER_MODEL) return process.env.OPENROUTER_MODEL;
+  if (process.env.CF_MODEL || process.env.OPENROUTER_MODEL) {
+    return process.env.CF_MODEL || process.env.OPENROUTER_MODEL;
+  }
+  const config = await loadConfig();
+  return config.llm?.model || "qwen/qwen3-4b:free";
 }
 
 const MIME = {
@@ -40,28 +67,6 @@ const MIME = {
 let cycleRunning = false;
 let cycleCount = 0;
 
-// File-based lock for multi-instance safety
-const LOCK_FILE = DATA_DIR ? join(DATA_DIR, ".cycle.lock") : join(ROOT, ".cycle.lock");
-const LOCK_TTL_MS = 5 * 60 * 1000; // 5 minutes
-
-async function acquireLock() {
-  try {
-    const existing = await readFile(LOCK_FILE, "utf8");
-    const lockTime = parseInt(existing, 10);
-    if (Date.now() - lockTime < LOCK_TTL_MS) {
-      return false; // Lock is held by another process
-    }
-  } catch {}
-  await writeFile(LOCK_FILE, String(Date.now()), "utf8");
-  return true;
-}
-
-async function releaseLock() {
-  try {
-    await writeFile(LOCK_FILE, "", "utf8");
-  } catch {}
-}
-
 async function runCycle() {
   if (cycleRunning) {
     console.log("[cycle] already running, skipping");
@@ -75,11 +80,9 @@ async function runCycle() {
   try {
     for (let i = 0; i < nExperiments; i++) {
       await runOptimizationCycle();
-      // Wait between experiments to respect rate limits
-      // OpenRouter free tier = 8 RPM, so 8+ seconds between calls
       if (i < nExperiments - 1) {
-        console.log("[cycle] waiting 10s before next experiment...");
-        await new Promise(resolve => setTimeout(resolve, 10000));
+        console.log(`[cycle] waiting ${RATE_LIMIT_DELAY_MS / 1000}s before next experiment...`);
+        await delay(RATE_LIMIT_DELAY_MS);
       }
     }
     await generateChart();
@@ -91,18 +94,15 @@ async function runCycle() {
   }
 }
 
-// Initialize DB, then schedule (no startup cycle to avoid rate limit spam)
-migrate()
-  .then(() => {
-    console.log("[db] ready");
-    console.log(`[cycle] scheduled every ${CYCLE_INTERVAL_MINUTES} minutes`);
-  })
-  .catch((err) => console.error("[startup] migration failed:", err.message));
+console.log("[startup] file-backed autoresearch state ready");
+console.log(
+  CYCLE_INTERVAL_MS > 0
+    ? `[cycle] scheduled every ${CYCLE_INTERVAL_MINUTES} minutes`
+    : "[cycle] interval disabled (CYCLE_INTERVAL_MINUTES=0), using external cron",
+);
 
 if (CYCLE_INTERVAL_MS > 0) {
   setInterval(runCycle, CYCLE_INTERVAL_MS);
-} else {
-  console.log("[cycle] interval disabled (CYCLE_INTERVAL_MINUTES=0), using external cron");
 }
 
 // ── HTTP server ──────────────────────────────────────────────────────────────
@@ -158,11 +158,14 @@ const server = createServer(async (req, res) => {
 
   // Debug endpoint
   if (url.pathname === "/debug") {
+    const provider = await getProvider();
+    const model = await getModel();
     res.writeHead(200, { "Content-Type": "application/json" });
     res.end(JSON.stringify({
-      apiKeySet: !!process.env.OPENROUTER_API_KEY,
-      provider: process.env.LLM_PROVIDER || "openrouter",
-      model: process.env.OPENROUTER_MODEL || "qwen/qwen3-coder:free",
+      openRouterConfigured: !!process.env.OPENROUTER_API_KEY,
+      cloudflareConfigured: !!(process.env.CF_GATEWAY_URL && process.env.CF_AIG_TOKEN),
+      provider,
+      model,
       experimentsPerCron: process.env.EXPERIMENTS_PER_CRON || "1",
       cycleIntervalMinutes: CYCLE_INTERVAL_MINUTES,
       dataDir: DATA_DIR ? "set" : "not set"
@@ -221,7 +224,7 @@ const server = createServer(async (req, res) => {
   }
 
 
-  // Reset endpoint - clears volume and copies fresh strategy.mjs
+  // Reset endpoint - clears file-backed state and restores the repo strategy
   if (url.pathname === "/reset") {
     const triggerSecret = process.env.TRIGGER_SECRET;
     const providedSecret = url.searchParams.get("secret") || req.headers["x-trigger-secret"];
@@ -239,23 +242,10 @@ const server = createServer(async (req, res) => {
     }
     
     try {
-      const { unlink } = await import("node:fs/promises");
-      const volumeStrategy = join(DATA_DIR, "strategy.mjs");
-      const volumeExperiments = join(DATA_DIR, "experiments.json");
-      
-      // Delete old files
-      for (const file of [volumeStrategy, volumeExperiments]) {
-        try { await unlink(file); console.log(`[reset] deleted ${file}`); } catch {}
-      }
-      
-      // Copy fresh strategy.mjs from repo
-      const repoStrategy = join(ROOT, "autoresearch-fpl", "strategy.mjs");
-      const fresh = await readFile(repoStrategy, "utf8");
-      await writeFile(volumeStrategy, fresh, "utf8");
-      console.log("[reset] copied fresh strategy.mjs");
-      
+      await resetAutoresearchState(REPO_STRATEGY_PATH);
+      console.log("[reset] restored repo strategy and cleared file-backed experiment state");
       res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ status: "reset", message: "Volume cleared, fresh code copied" }));
+      res.end(JSON.stringify({ status: "reset", message: "State cleared and repo strategy restored" }));
     } catch (err) {
       res.writeHead(500, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ error: err.message }));
@@ -301,7 +291,7 @@ const server = createServer(async (req, res) => {
   </style>
 </head>
 <body>
-<div class="status">Optimization cycle #${cycleCount} | ${cycleRunning ? "Running..." : "Idle"} | Every ${CYCLE_INTERVAL_MS / 60000}m</div>
+<div class="status">Optimization cycle #${cycleCount} | ${cycleRunning ? "Running..." : "Idle"} | ${CYCLE_INTERVAL_MS > 0 ? `Every ${CYCLE_INTERVAL_MS / 60000}m` : "Manual triggers only"}</div>
 ${progressChart}
 <pre>${escaped}</pre>
 </body>
