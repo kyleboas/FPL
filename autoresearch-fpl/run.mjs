@@ -281,6 +281,135 @@ function actualPoints(actualRowsById, playerId) {
   return toNumber(actualRowsById.get(playerId)?.event_points, 0);
 }
 
+function actualMinutes(actualRowsById, playerId) {
+  return toNumber(actualRowsById.get(playerId)?.minutes, 0);
+}
+
+const STARTING_MINIMUMS = { DEF: 3, MID: 2, FWD: 1 };
+const STARTING_MAXIMUMS = { DEF: 5, MID: 5, FWD: 3 };
+
+function projectedSquadPlayersForGw(squadIds, seasonScores, gw) {
+  return squadIds
+    .map((id) => {
+      const data = seasonScores.get(id);
+      if (!data?.scored) return null;
+      const gwEntry = data.gwScores.find((entry) => entry.gw === gw);
+      return {
+        id,
+        player: data.scored.player,
+        positionName: data.scored.positionName,
+        teamName: data.scored.teamName,
+        score: gwEntry ? gwEntry.score : 0,
+      };
+    })
+    .filter(Boolean);
+}
+
+function validOutfieldFormation(counts) {
+  return Object.entries(STARTING_MINIMUMS).every(([positionName, minimum]) => toNumber(counts[positionName], 0) >= minimum)
+    && Object.entries(STARTING_MAXIMUMS).every(([positionName, maximum]) => toNumber(counts[positionName], 0) <= maximum);
+}
+
+function scoreActualLineup({ lineup, actualById, benchBoost = false }) {
+  const finalStarting = [...lineup.starting];
+  const benchGoalkeeper = lineup.bench.find((player) => player.positionName === "GK") ?? null;
+  const benchOutfield = lineup.bench.filter((player) => player.positionName !== "GK");
+
+  if (!benchBoost) {
+    const startingGoalkeeperIndex = finalStarting.findIndex((player) => player.positionName === "GK");
+    if (startingGoalkeeperIndex >= 0) {
+      const starter = finalStarting[startingGoalkeeperIndex];
+      if (actualMinutes(actualById, getPlayerId(starter)) <= 0 && benchGoalkeeper) {
+        if (actualMinutes(actualById, getPlayerId(benchGoalkeeper)) > 0) {
+          finalStarting[startingGoalkeeperIndex] = benchGoalkeeper;
+        }
+      }
+    }
+
+    const outfieldCounts = { DEF: 0, MID: 0, FWD: 0 };
+    const absentOutfieldIndices = [];
+
+    for (let index = 0; index < finalStarting.length; index += 1) {
+      const player = finalStarting[index];
+      if (player.positionName === "GK") continue;
+      outfieldCounts[player.positionName] = toNumber(outfieldCounts[player.positionName], 0) + 1;
+      if (actualMinutes(actualById, getPlayerId(player)) <= 0) {
+        absentOutfieldIndices.push(index);
+      }
+    }
+
+    for (const benchPlayer of benchOutfield) {
+      if (actualMinutes(actualById, getPlayerId(benchPlayer)) <= 0) continue;
+
+      const replacementIndex = absentOutfieldIndices.find((index) => {
+        const starter = finalStarting[index];
+        if (!starter || starter.positionName === "GK") return false;
+
+        const nextCounts = { ...outfieldCounts };
+        nextCounts[starter.positionName] = toNumber(nextCounts[starter.positionName], 0) - 1;
+        nextCounts[benchPlayer.positionName] = toNumber(nextCounts[benchPlayer.positionName], 0) + 1;
+        return validOutfieldFormation(nextCounts);
+      });
+
+      if (replacementIndex === undefined) continue;
+
+      const replaced = finalStarting[replacementIndex];
+      outfieldCounts[replaced.positionName] = toNumber(outfieldCounts[replaced.positionName], 0) - 1;
+      finalStarting[replacementIndex] = benchPlayer;
+      outfieldCounts[benchPlayer.positionName] = toNumber(outfieldCounts[benchPlayer.positionName], 0) + 1;
+      absentOutfieldIndices.splice(absentOutfieldIndices.indexOf(replacementIndex), 1);
+    }
+  }
+
+  const startingTotal = sum(finalStarting.map((player) => actualPoints(actualById, getPlayerId(player))));
+  const benchTotal = benchBoost
+    ? sum(lineup.bench.map((player) => actualPoints(actualById, getPlayerId(player))))
+    : 0;
+
+  const captainPlayed = lineup.captain && actualMinutes(actualById, getPlayerId(lineup.captain)) > 0;
+  const vicePlayed = lineup.viceCaptain && actualMinutes(actualById, getPlayerId(lineup.viceCaptain)) > 0;
+  const captainBonus = captainPlayed
+    ? actualPoints(actualById, getPlayerId(lineup.captain))
+    : vicePlayed
+      ? actualPoints(actualById, getPlayerId(lineup.viceCaptain))
+      : 0;
+
+  return {
+    finalStarting,
+    startingTotal,
+    benchTotal,
+    captainBonus,
+    total: startingTotal + benchTotal + captainBonus,
+  };
+}
+
+function renderLineup(lines, title, lineup, scoreKey, decimals = 1, scoreLabel = "score") {
+  lines.push(title);
+  lines.push("");
+  lines.push(`- Captain: ${lineup.captain?.player?.web_name ?? "?"} (${toNumber(lineup.captain?.[scoreKey], 0).toFixed(decimals)})`);
+  lines.push(`- Vice captain: ${lineup.viceCaptain?.player?.web_name ?? "?"} (${toNumber(lineup.viceCaptain?.[scoreKey], 0).toFixed(decimals)})`);
+  lines.push("");
+  lines.push("### Starting 11");
+  lines.push("");
+  for (const player of lineup.starting) {
+    const isCaptain = player === lineup.captain;
+    const isViceCaptain = player === lineup.viceCaptain;
+    const tag = isCaptain ? " (C)" : isViceCaptain ? " (VC)" : "";
+    lines.push(
+      `- ${player.player.web_name ?? player.player.second_name}${tag} (${player.positionName}, ${formatMoney(player.player.now_cost)}, ${player.teamName}) — ${scoreLabel} ${toNumber(player[scoreKey], 0).toFixed(decimals)}`,
+    );
+  }
+  lines.push("");
+  lines.push("### Bench");
+  lines.push("");
+  for (const player of lineup.bench) {
+    lines.push(
+      `- ${player.player.web_name ?? player.player.second_name} (${player.positionName}, ${formatMoney(player.player.now_cost)}, ${player.teamName}) — ${scoreLabel} ${toNumber(player[scoreKey], 0).toFixed(decimals)}`,
+    );
+  }
+  lines.push("");
+}
+
 /**
  * Season simulator backtest.
  *
@@ -360,16 +489,12 @@ function simulateSeason({
     const unusedFree = Math.max(0, freeTransfers - plan.transfersMade);
     freeTransfers = Math.min(5, 1 + unusedFree);
 
-    // Score the squad using ACTUAL points from this GW
+    // Pick the projected XI and score it using the actual GW outcome.
     const actualRows = rowsByGw.get(gw) ?? [];
     const actualById = new Map(actualRows.map((row) => [getPlayerId(row), row]));
-
-    // Pick best 11 from squad of 15 (highest actual points — simulates optimal captain/bench)
-    // Simplified: just sum all 15 players' points (bench included for evaluation)
-    let gwPoints = 0;
-    for (const id of squadIds) {
-      gwPoints += actualPoints(actualById, id);
-    }
+    const projectedSquad = projectedSquadPlayersForGw(squadIds, seasonScores, gw);
+    const lineup = selectStartingEleven(projectedSquad, "score");
+    const { total: gwPoints } = scoreActualLineup({ lineup, actualById });
 
     const netPoints = gwPoints - plan.hitsTaken * hitCost;
     totalPoints += netPoints;
@@ -463,6 +588,14 @@ function renderReport({
     }
     lines.push("");
 
+    const currentLineupPlayers = currentSquadScored.map((p) => ({
+      player: p.scored.player,
+      positionName: p.scored.positionName,
+      teamName: p.scored.teamName,
+      score: p.seasonScore,
+    }));
+    renderLineup(lines, "## Current lineup", selectStartingEleven(currentLineupPlayers, "score"), "score", 1, "season score");
+
     // Chip plan
     if (transferPlan?.chipPlan?.length > 0) {
       lines.push("## Chip strategy");
@@ -524,26 +657,7 @@ function renderReport({
           teamName: p.scored.teamName,
           score: p.seasonScore,
         }));
-      
-      const { starting: finalStarting, bench: finalBench } = selectStartingEleven(finalSquadPlayers);
-      
-      lines.push("## Starting 11 (final squad)");
-      lines.push("");
-      for (const player of finalStarting) {
-        lines.push(
-          `- ${player.player.web_name ?? player.player.second_name} (${player.positionName}, ${formatMoney(player.player.now_cost)}, ${player.teamName}) — season score ${player.score.toFixed(1)}`,
-        );
-      }
-      lines.push("");
-
-      lines.push("## Bench (final squad)");
-      lines.push("");
-      for (const player of finalBench) {
-        lines.push(
-          `- ${player.player.web_name ?? player.player.second_name} (${player.positionName}, ${formatMoney(player.player.now_cost)}, ${player.teamName}) — season score ${player.score.toFixed(1)}`,
-        );
-      }
-      lines.push("");
+      renderLineup(lines, "## Final lineup", selectStartingEleven(finalSquadPlayers, "score"), "score", 1, "season score");
       
       // Starting 11 per GW
       if (transferPlan.squadPerGw && transferPlan.squadPerGw.length > 0) {
@@ -622,29 +736,7 @@ function renderReport({
     }
     lines.push("");
 
-    // Starting 11 selection
-    const { starting, bench } = selectStartingEleven(squad);
-    lines.push("## Starting 11");
-    lines.push("");
-    for (const player of starting) {
-      lines.push(
-        `- ${player.player.web_name ?? player.player.second_name} (${player.positionName}, ${formatMoney(
-          player.player.now_cost,
-        )}, ${player.teamName}) — score ${player.score.toFixed(2)}`,
-      );
-    }
-    lines.push("");
-
-    lines.push("## Bench");
-    lines.push("");
-    for (const player of bench) {
-      lines.push(
-        `- ${player.player.web_name ?? player.player.second_name} (${player.positionName}, ${formatMoney(
-          player.player.now_cost,
-        )}, ${player.teamName}) — score ${player.score.toFixed(2)}`,
-      );
-    }
-    lines.push("");
+    renderLineup(lines, "## Suggested lineup", selectStartingEleven(squad, "score"), "score", 2, "score");
   }
 
   // Always show top overall picks for reference

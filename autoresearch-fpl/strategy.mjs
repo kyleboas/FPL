@@ -387,6 +387,50 @@ export function selectBudgetSquad(ranked, weights) {
   return { squad, spent, budget };
 }
 
+const STARTING_MINIMUMS = { GK: 1, DEF: 3, MID: 2, FWD: 1 };
+const STARTING_MAXIMUMS = { GK: 1, DEF: 5, MID: 5, FWD: 3 };
+
+function playerScore(player, scoreKey) {
+  return toNumber(player?.[scoreKey], 0);
+}
+
+function squadPlayersForGw(squadIds, seasonScores, gw) {
+  return squadIds
+    .map((id) => {
+      const data = seasonScores.get(id);
+      if (!data?.scored) return null;
+      const gwEntry = data.gwScores.find((entry) => entry.gw === gw);
+      return {
+        id,
+        player: data.scored.player,
+        positionName: data.scored.positionName,
+        teamName: data.scored.teamName,
+        score: gwEntry ? gwEntry.score : 0,
+      };
+    })
+    .filter(Boolean);
+}
+
+export function projectedLineupForGw(squadIds, seasonScores, gw) {
+  const squad = squadPlayersForGw(squadIds, seasonScores, gw);
+  return selectStartingEleven(squad, "score");
+}
+
+export function projectedLineupScore(squadIds, seasonScores, gw, { benchBoost = false } = {}) {
+  const lineup = projectedLineupForGw(squadIds, seasonScores, gw);
+  const startingTotal = sum(lineup.starting.map((player) => playerScore(player, "score")));
+  const benchTotal = sum(lineup.bench.map((player) => playerScore(player, "score")));
+  const captainBonus = playerScore(lineup.captain, "score");
+
+  return {
+    ...lineup,
+    startingTotal,
+    benchTotal,
+    captainBonus,
+    total: startingTotal + captainBonus + (benchBoost ? benchTotal : 0),
+  };
+}
+
 export function selectStartingEleven(squad, scoreKey = "score") {
   const byPosition = { GK: [], DEF: [], MID: [], FWD: [] };
   for (const player of squad) {
@@ -395,57 +439,43 @@ export function selectStartingEleven(squad, scoreKey = "score") {
   }
 
   for (const pos of Object.keys(byPosition)) {
-    byPosition[pos].sort((a, b) => b[scoreKey] - a[scoreKey]);
+    byPosition[pos].sort((a, b) => playerScore(b, scoreKey) - playerScore(a, scoreKey));
   }
 
   const starting = [];
   const startingSet = new Set();
+  const counts = { GK: 0, DEF: 0, MID: 0, FWD: 0 };
 
-  if (byPosition.GK.length > 0) {
-    const p = byPosition.GK.shift();
-    starting.push(p);
-    startingSet.add(p);
-  }
+  const addStarter = (player) => {
+    if (!player || startingSet.has(player) || starting.length >= 11) return;
+    starting.push(player);
+    startingSet.add(player);
+    counts[player.positionName] = (counts[player.positionName] ?? 0) + 1;
+  };
 
-  for (let i = 0; i < 3 && byPosition.DEF.length > 0; i++) {
-    const p = byPosition.DEF.shift();
-    starting.push(p);
-    startingSet.add(p);
-  }
-  for (let i = 0; i < 2 && byPosition.MID.length > 0; i++) {
-    const p = byPosition.MID.shift();
-    starting.push(p);
-    startingSet.add(p);
-  }
-  if (byPosition.FWD.length > 0) {
-    const p = byPosition.FWD.shift();
-    starting.push(p);
-    startingSet.add(p);
+  for (const [positionName, minimum] of Object.entries(STARTING_MINIMUMS)) {
+    for (let i = 0; i < minimum && byPosition[positionName].length > 0; i += 1) {
+      addStarter(byPosition[positionName].shift());
+    }
   }
 
   const remaining = [...byPosition.DEF, ...byPosition.MID, ...byPosition.FWD]
-    .sort((a, b) => b[scoreKey] - a[scoreKey]);
-
-  const counts = { DEF: 0, MID: 0, FWD: 0 };
-  for (const p of starting) {
-    if (counts[p.positionName] !== undefined) counts[p.positionName]++;
-  }
+    .sort((a, b) => playerScore(b, scoreKey) - playerScore(a, scoreKey));
 
   for (const player of remaining) {
     if (starting.length >= 11) break;
     const pos = player.positionName;
-    const maxMap = { DEF: 5, MID: 5, FWD: 3 };
-    if (counts[pos] < maxMap[pos]) {
-      starting.push(player);
-      startingSet.add(player);
-      counts[pos]++;
-    }
+    if ((counts[pos] ?? 0) >= (STARTING_MAXIMUMS[pos] ?? 0)) continue;
+    addStarter(player);
   }
 
-  // Bench = all players not in starting 11
-  const bench = squad.filter(p => !startingSet.has(p));
+  const benchGoalkeepers = byPosition.GK.filter((player) => !startingSet.has(player));
+  const benchOutfield = squad
+    .filter((player) => !startingSet.has(player) && player.positionName !== "GK")
+    .sort((a, b) => playerScore(b, scoreKey) - playerScore(a, scoreKey));
+  const bench = [...benchGoalkeepers.slice(0, 1), ...benchOutfield.slice(0, 3)];
 
-  const sortedStarting = [...starting].sort((a, b) => b[scoreKey] - a[scoreKey]);
+  const sortedStarting = [...starting].sort((a, b) => playerScore(b, scoreKey) - playerScore(a, scoreKey));
   const captain = sortedStarting[0] || null;
   const viceCaptain = sortedStarting[1] || null;
 
@@ -576,12 +606,7 @@ export function evaluateChips({
 
   const currentGwTotals = new Map();
   for (let gw = fromGw; gw <= toGw; gw += 1) {
-    let total = 0;
-    for (const id of currentSquadIds) {
-      const data = seasonScores.get(id)?.gwScores?.find((g) => g.gw === gw);
-      total += data ? data.score : 0;
-    }
-    currentGwTotals.set(gw, total);
+    currentGwTotals.set(gw, projectedLineupScore(currentSquadIds, seasonScores, gw).total);
   }
 
   for (let gw = fromGw; gw <= toGw; gw += 1) {
@@ -589,11 +614,7 @@ export function evaluateChips({
 
     // Free Hit
     const fhSquad = buildOptimalSquadForGw({ seasonScores, weights, gw, budget: totalBudget });
-    let fhTotal = 0;
-    for (const id of fhSquad) {
-      const gwEntry = seasonScores.get(id)?.gwScores?.find((g) => g.gw === gw);
-      fhTotal += gwEntry ? gwEntry.score : 0;
-    }
+    const fhTotal = projectedLineupScore(fhSquad, seasonScores, gw).total;
     results.freeHit.push({ gw, gain: fhTotal - currentGwTotal });
 
     // Wildcard
@@ -625,26 +646,13 @@ export function evaluateChips({
     let wcSeasonTotal = 0;
     let currentSeasonTotal = 0;
     for (let futureGw = gw; futureGw <= toGw; futureGw += 1) {
-      for (const id of wcSquad) {
-        const gwEntry = seasonScores.get(id)?.gwScores?.find((g) => g.gw === futureGw);
-        wcSeasonTotal += gwEntry ? gwEntry.score : 0;
-      }
-      for (const id of currentSquadIds) {
-        const gwEntry = seasonScores.get(id)?.gwScores?.find((g) => g.gw === futureGw);
-        currentSeasonTotal += gwEntry ? gwEntry.score : 0;
-      }
+      wcSeasonTotal += projectedLineupScore(wcSquad, seasonScores, futureGw).total;
+      currentSeasonTotal += projectedLineupScore(currentSquadIds, seasonScores, futureGw).total;
     }
     results.wildcard.push({ gw, gain: wcSeasonTotal - currentSeasonTotal, wcSquad });
 
     // Bench Boost
-    const squadScores = currentSquadIds
-      .map((id) => {
-        const gwEntry = seasonScores.get(id)?.gwScores?.find((g) => g.gw === gw);
-        return { id, score: gwEntry ? gwEntry.score : 0 };
-      })
-      .sort((a, b) => b.score - a.score);
-    const benchScores = squadScores.slice(11);
-    const benchTotal = sum(benchScores.map((p) => p.score));
+    const benchTotal = projectedLineupScore(currentSquadIds, seasonScores, gw, { benchBoost: true }).benchTotal;
     results.benchBoost.push({ gw, gain: benchTotal });
   }
 
