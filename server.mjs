@@ -4,7 +4,7 @@ import { extname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { generateChart } from "./chart.mjs";
 import { runOptimizationCycle } from "./optimizer.mjs";
-import { PROGRESS_SVG_PATH, REPORT_PATH, resetAutoresearchState } from "./results.mjs";
+import { PROGRESS_SVG_PATH, REPORT_PATH, RESULTS_PATH, readResults, resetAutoresearchState } from "./results.mjs";
 
 const ROOT = fileURLToPath(new URL(".", import.meta.url));
 const CONFIG_PATH = join(ROOT, "autoresearch-fpl", "config.json");
@@ -19,6 +19,15 @@ let cachedConfig = null;
 
 function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function escapeHtml(str) {
+  if (!str) return "";
+  return String(str)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
 }
 
 async function loadConfig() {
@@ -249,6 +258,85 @@ const server = createServer(async (req, res) => {
     } catch (err) {
       res.writeHead(500, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ error: err.message }));
+    }
+    return;
+  }
+
+  // Experiment results endpoint — shows reasoning for each experiment
+  if (url.pathname === "/results" || url.pathname === "/results.tsv") {
+    try {
+      const raw = await readFile(RESULTS_PATH, "utf8");
+      if (url.pathname === "/results.tsv") {
+        res.writeHead(200, { "Content-Type": "text/tab-separated-values" });
+        res.end(raw);
+        return;
+      }
+      
+      const results = await readResults();
+      const rows = results.map(r => `
+        <tr class="${r.status}">
+          <td>#${r.id}</td>
+          <td>${r.commit || "-"}</td>
+          <td>${r.avg_points_per_gw.toFixed(2)}</td>
+          <td>${Math.round(r.total_hit_cost)}</td>
+          <td class="status-cell">${r.status}</td>
+          <td class="desc-cell">${escapeHtml(r.description) || "-"}</td>
+        </tr>
+      `).join("");
+      
+      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+      res.end(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>FPL Autoresearch Experiments</title>
+  <style>
+    body { font-family: monospace; max-width: 1200px; margin: 2rem auto; padding: 0 1rem; background: #0f1117; color: #e8eaf0; line-height: 1.6; }
+    h1 { color: #7cb9e8; }
+    table { width: 100%; border-collapse: collapse; margin-top: 1rem; font-size: 0.85rem; }
+    th, td { padding: 0.5rem 0.75rem; text-align: left; border-bottom: 1px solid #333; }
+    th { background: #1a1d24; color: #888; font-weight: normal; }
+    tr.keep { background: rgba(46, 204, 113, 0.1); }
+    tr.discard { opacity: 0.6; }
+    tr.crash { background: rgba(231, 76, 60, 0.1); }
+    .status-cell { text-transform: uppercase; font-weight: bold; }
+    tr.keep .status-cell { color: #2ecc71; }
+    tr.discard .status-cell { color: #f39c12; }
+    tr.crash .status-cell { color: #e74c3c; }
+    .desc-cell { max-width: 500px; word-break: break-word; }
+    a { color: #7cb9e8; }
+    .nav { margin-bottom: 1rem; }
+    .nav a { margin-right: 1rem; }
+  </style>
+</head>
+<body>
+  <div class="nav">
+    <a href="/">Home</a>
+    <a href="/report">Report</a>
+    <a href="/progress.svg">Chart</a>
+    <a href="/results.tsv">Raw TSV</a>
+  </div>
+  <h1>Experiment History</h1>
+  <p>${results.length} experiments, ${results.filter(r => r.status === "keep").length} kept, best: ${results.filter(r => r.status === "keep").reduce((best, r) => r.avg_points_per_gw > best.avg_points_per_gw ? r : best, {avg_points_per_gw: 0}).avg_points_per_gw.toFixed(2)} avg pts/gw</p>
+  <table>
+    <thead>
+      <tr>
+        <th>#</th>
+        <th>Commit</th>
+        <th>Avg Pts/GW</th>
+        <th>Hit Cost</th>
+        <th>Status</th>
+        <th>Description / Reasoning</th>
+      </tr>
+    </thead>
+    <tbody>${rows}</tbody>
+  </table>
+</body>
+</html>`);
+    } catch (err) {
+      res.writeHead(500, { "Content-Type": "text/plain" });
+      res.end("Error reading results: " + err.message);
     }
     return;
   }
