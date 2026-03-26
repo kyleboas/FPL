@@ -4,6 +4,7 @@ import { extname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { generateChart } from "./chart.mjs";
 import { runOptimizationCycle } from "./optimizer.mjs";
+import { DIFFS_DIR } from "./optimizer.mjs";
 import { PROGRESS_SVG_PATH, REPORT_PATH, RESULTS_PATH, readResults, resetAutoresearchState } from "./results.mjs";
 
 const ROOT = fileURLToPath(new URL(".", import.meta.url));
@@ -215,6 +216,7 @@ const server = createServer(async (req, res) => {
             <td>${r.total_hit_cost}</td>
             <td style="color:${statusColor};font-weight:bold">${r.status.toUpperCase()}</td>
             <td class="reasoning">${escapeHtml(r.description || "-")}</td>
+            <td><a href="/diffs/${r.commit}">View diff</a></td>
           </tr>`;
       }).join("");
       
@@ -271,6 +273,7 @@ const server = createServer(async (req, res) => {
         <th>Hit Cost</th>
         <th>Status</th>
         <th>Reasoning</th>
+        <th>Diff</th>
       </tr>
     </thead>
     <tbody>
@@ -422,6 +425,54 @@ ${progressChart}
 <pre>${escaped}</pre>
 </body>
 </html>`);
+    return;
+  }
+
+  // Diff endpoint - serve diff file by revision
+  const diffMatch = url.pathname.match(/^\/diffs\/([a-f0-9]{7})$/);
+  if (diffMatch) {
+    const revision = diffMatch[1];
+    const diffPath = join(DIFFS_DIR, `${revision}.diff`);
+    try {
+      const diff = await readFile(diffPath, "utf8");
+      const escaped = diff
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;");
+      
+      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+      res.end(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Diff ${revision}</title>
+  <style>
+    body { font-family: 'SF Mono', 'Monaco', 'Inconsolata', 'Fira Mono', monospace; max-width: 1200px; margin: 2rem auto; padding: 0 1rem; background: #0d1117; color: #c9d1d9; line-height: 1.5; }
+    h1 { font-size: 1.2rem; margin-bottom: 1rem; }
+    pre { white-space: pre; overflow-x: auto; background: #161b22; padding: 1rem; border-radius: 8px; }
+    .add { color: #3fb950; }
+    .del { color: #f85149; }
+    .ctx { color: #8b949e; }
+    a { color: #58a6ff; text-decoration: none; }
+    a:hover { text-decoration: underline; }
+  </style>
+</head>
+<body>
+  <h1>Diff for revision <code>${revision}</code></h1>
+  <p><a href="/experiments">← Back to experiments</a></p>
+  <pre>${escaped.split('\n').map(line => {
+    if (line.startsWith('+')) return `<span class="add">${line}</span>`;
+    if (line.startsWith('-')) return `<span class="del">${line}</span>`;
+    if (line.startsWith('@@')) return `<span class="ctx">${line}</span>`;
+    return line;
+  }).join('\n')}</pre>
+</body>
+</html>`);
+    } catch {
+      res.writeHead(404, { "Content-Type": "text/plain" });
+      res.end("Diff not found");
+    }
     return;
   }
 

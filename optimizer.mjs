@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile, writeFile, mkdir } from "node:fs/promises";
+import { existsSync } from "node:fs";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
@@ -14,6 +15,7 @@ import {
   readResults,
   RUN_LOG_PATH,
   syncPersistedStrategy,
+  RESULTS_PATH,
 } from "./results.mjs";
 
 const ROOT = fileURLToPath(new URL(".", import.meta.url));
@@ -22,6 +24,8 @@ const PROGRAM_PATH = join(ROOT, "autoresearch-fpl", "program.md");
 const WEIGHTS_PATH = join(ROOT, "autoresearch-fpl", "weights.json");
 const RUN_SCRIPT = join(ROOT, "autoresearch-fpl", "run.mjs");
 const CONFIG_PATH = join(ROOT, "autoresearch-fpl", "config.json");
+const DATA_DIR = process.env.DATA_DIR || null;
+export const DIFFS_DIR = DATA_DIR ? join(DATA_DIR, "diffs") : join(ROOT, "diffs");
 
 const OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions";
 const DEFAULT_PROVIDER = "openrouter";
@@ -44,6 +48,92 @@ const GENERATION_MAX_TOKENS = Number(process.env.LLM_MAX_TOKENS ?? "12000");
 const REPORT_ENABLED = process.env.DATA_DIR ? process.env.GENERATE_REPORT_AFTER_EXPERIMENTS !== "0" : false;
 
 let cachedConfig = null;
+
+/**
+ * Compute a unified diff between old and new code.
+ * Returns a diff string with +/- line prefixes.
+ */
+function computeDiff(oldCode, newCode, contextLines = 3) {
+  const oldLines = oldCode.split("\n");
+  const newLines = newCode.split("\n");
+  const diff = [];
+  
+  // Find all changes using LCS approach
+  const changes = [];
+  let i = 0, j = 0;
+  
+  while (i < oldLines.length || j < newLines.length) {
+    if (i < oldLines.length && j < newLines.length && oldLines[i] === newLines[j]) {
+      i++; j++;
+    } else {
+      // Find extent of change
+      const oldStart = i;
+      const newStart = j;
+      
+      // Look ahead for next match
+      let foundMatch = false;
+      for (let k = i; k < Math.min(oldLines.length, i + 30) && !foundMatch; k++) {
+        for (let l = j; l < Math.min(newLines.length, j + 30) && !foundMatch; l++) {
+          if (oldLines[k] === newLines[l]) {
+            changes.push({ oldStart, oldEnd: k, newStart, newEnd: l });
+            i = k;
+            j = l;
+            foundMatch = true;
+          }
+        }
+      }
+      
+      if (!foundMatch) {
+        // Change extends to end
+        changes.push({ oldStart, oldEnd: oldLines.length, newStart, newEnd: newLines.length });
+        i = oldLines.length;
+        j = newLines.length;
+      }
+    }
+  }
+  
+  // Generate diff output
+  for (const change of changes) {
+    const oldStart = Math.max(0, change.oldStart - contextLines);
+    const oldEnd = Math.min(oldLines.length, change.oldEnd + contextLines);
+    
+    diff.push(`@@ -${change.oldStart + 1},${change.oldEnd - change.oldStart} +${change.newStart + 1},${change.newEnd - change.newStart} @@`);
+    
+    // Show context before
+    for (let k = oldStart; k < change.oldStart; k++) {
+      diff.push(`  ${oldLines[k]}`);
+    }
+    
+    // Show removed lines
+    for (let k = change.oldStart; k < change.oldEnd; k++) {
+      diff.push(`- ${oldLines[k]}`);
+    }
+    
+    // Show added lines
+    for (let k = change.newStart; k < change.newEnd; k++) {
+      diff.push(`+ ${newLines[k]}`);
+    }
+    
+    // Show context after
+    for (let k = change.oldEnd; k < oldEnd; k++) {
+      diff.push(`  ${oldLines[k]}`);
+    }
+  }
+  
+  return diff.join("\n");
+}
+
+/**
+ * Save diff to file and return the path.
+ */
+async function saveDiff(revision, diff) {
+  if (!existsSync(DIFFS_DIR)) {
+    await mkdir(DIFFS_DIR, { recursive: true });
+  }
+  const diffPath = join(DIFFS_DIR, `${revision}.diff`);
+  await writeFile(diffPath, diff, "utf8");
+  return diffPath;
+}
 
 function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -427,10 +517,32 @@ Briefly explain the idea in 2-3 sentences, then output the COMPLETE strategy.mjs
 
   await writeFile(STRATEGY_PATH, newCode, "utf8");
   const trialRevision = strategyRevision(newCode);
+  
+  // Compute and save diff
+  const codeDiff = computeDiff(strategyCode, newCode);
+  await saveDiff(trialRevision, codeDiff);
+  
+  // Verbose log: PROPOSED CHANGE
+  console.log("\n" + "═".repeat(60));
+  console.log("[optimizer] PROPOSED CHANGE");
+  console.log(`[optimizer]   revision: ${parentRevision} → ${trialRevision}`);
+  console.log(`[optimizer]   idea: ${description.slice(0, 80)}`);
+  console.log("[optimizer]   diff:");
+  for (const line of codeDiff.split("\n").slice(0, 30)) {
+    console.log(`[optimizer]     ${line}`);
+  }
+  if (codeDiff.split("\n").length > 30) {
+    console.log(`[optimizer]     ... (${codeDiff.split("\n").length - 30} more lines)`);
+  }
+  console.log("═".repeat(60) + "\n");
 
   const missingExports = findMissingExports(newCode, requiredExports);
   if (missingExports.length) {
     console.error(`[optimizer] missing required exports: ${missingExports.join(", ")}`);
+    console.log("\n" + "═".repeat(60));
+    console.log("[optimizer] ✗ CRASH - MISSING EXPORTS");
+    console.log(`[optimizer]   missing: ${missingExports.join(", ")}`);
+    console.log("═".repeat(60) + "\n");
     await appendResult({
       commit: trialRevision,
       avgPointsPerGw: 0,
@@ -453,6 +565,10 @@ Briefly explain the idea in 2-3 sentences, then output the COMPLETE strategy.mjs
     }
   } catch (error) {
     console.error(`[optimizer] backtest crashed: ${error.message}`);
+    console.log("\n" + "═".repeat(60));
+    console.log("[optimizer] ✗ CRASH - BACKTEST FAILED");
+    console.log(`[optimizer]   error: ${error.message.slice(0, 100)}`);
+    console.log("═".repeat(60) + "\n");
     await appendResult({
       commit: trialRevision,
       avgPointsPerGw: 0,
@@ -467,7 +583,12 @@ Briefly explain the idea in 2-3 sentences, then output the COMPLETE strategy.mjs
 
   if (trialResult.avgPointsPerGw > parentScore) {
     const delta = trialResult.avgPointsPerGw - parentScore;
-    console.log(`[optimizer] KEEP ${trialRevision}: ${trialResult.avgPointsPerGw.toFixed(2)} (Δ=+${delta.toFixed(2)})`);
+    console.log("\n" + "═".repeat(60));
+    console.log("[optimizer] ✓ KEEP - IMPROVED");
+    console.log(`[optimizer]   score: ${parentScore.toFixed(2)} → ${trialResult.avgPointsPerGw.toFixed(2)}`);
+    console.log(`[optimizer]   delta: +${delta.toFixed(3)}`);
+    console.log(`[optimizer]   revision: ${trialRevision}`);
+    console.log("═".repeat(60) + "\n");
     await appendResult({
       commit: trialRevision,
       avgPointsPerGw: trialResult.avgPointsPerGw,
@@ -478,7 +599,11 @@ Briefly explain the idea in 2-3 sentences, then output the COMPLETE strategy.mjs
     await persistAcceptedStrategy(STRATEGY_PATH);
     await runReport();
   } else {
-    console.log(`[optimizer] DISCARD ${trialRevision}: ${trialResult.avgPointsPerGw.toFixed(2)} <= ${parentScore.toFixed(2)}`);
+    console.log("\n" + "═".repeat(60));
+    console.log("[optimizer] ✗ DISCARD - NO IMPROVEMENT");
+    console.log(`[optimizer]   score: ${parentScore.toFixed(2)} → ${trialResult.avgPointsPerGw.toFixed(2)}`);
+    console.log(`[optimizer]   revision: ${trialRevision}`);
+    console.log("═".repeat(60) + "\n");
     await appendResult({
       commit: trialRevision,
       avgPointsPerGw: trialResult.avgPointsPerGw,
