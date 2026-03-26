@@ -43,7 +43,7 @@ const FALLBACK_MODELS_CLOUDFLARE = [
 ];
 const MAX_RETRIES = 3;
 const BASE_DELAY_MS = 8000;
-const GENERATION_TEMPERATURE = Number(process.env.LLM_TEMPERATURE ?? "0.2");
+const GENERATION_TEMPERATURE = Number(process.env.LLM_TEMPERATURE ?? "0.8");
 const GENERATION_MAX_TOKENS = Number(process.env.LLM_MAX_TOKENS ?? "12000");
 const REPORT_ENABLED = process.env.DATA_DIR ? process.env.GENERATE_REPORT_AFTER_EXPERIMENTS !== "0" : false;
 
@@ -459,6 +459,7 @@ Rules:
 - Preserve every existing export exactly once: ${requiredExports.join(", ")}
 - Do not add dependencies
 - Do not edit any file except strategy.mjs
+- **CRITICAL: Try DIFFERENT areas each time. If captain selection was already tried, try transfer logic, scoring formulas, player filtering, chip strategy, or feature engineering instead.**
 
 The fixed harness is run.mjs. The metric is avg_points_per_gw from node autoresearch-fpl/run.mjs backtest. Higher is better.`;
 
@@ -478,6 +479,13 @@ ${strategyCode}
 
 ## Task
 Propose one focused change to improve avg_points_per_gw over ${parentScore.toFixed(2)}.
+
+**IMPORTANT: Look at the experiment history above. If similar ideas were already tried and discarded, try a completely different area of the code:**
+- Transfer planning logic (how transfers are prioritized and executed)
+- Player scoring formula (how features are combined and weighted)
+- Player filtering/eligibility (who gets considered)
+- Chip strategy (wildcard, free-hit, bench-boost timing)
+- Feature engineering (new features, normalization)
 
 Briefly explain the idea in 2-3 sentences, then output the COMPLETE strategy.mjs file in a javascript code fence.`;
 
