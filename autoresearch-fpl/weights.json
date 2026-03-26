@@ -25,23 +25,31 @@
     "FWD": 5
   },
   "common": {
-    "epNext": 5,
-    "form": 2,
+    "availability": 2,
     "fixtureEase": 3,
-    "availability": 1.5,
-    "value": 1
+    "epNext": 5,
+    "form": 1.5,
+    "pointsPerGame": 6,
+    "seasonMinutes": 0.5,
+    "recentMinutesRatio": 1.5,
+    "recentPointsPer90": 3,
+    "recentExpectedGoalsPer90": 0.8,
+    "recentExpectedAssistsPer90": 0.8,
+    "recentCleanSheetRate": 1,
+    "recentBonusPer90": 0.5,
+    "value": 1.5
   },
   "byPosition": {
     "GK": {
-      "recentCleanSheetRate": 4,
-      "recentSavesPer90": 1.5,
-      "recentBonusPer90": 0.5
+      "recentCleanSheetRate": 1.5,
+      "recentSavesPer90": 1,
+      "recentGoalsConcededPer90": -0.5
     },
     "DEF": {
-      "recentCleanSheetRate": 4,
-      "recentDefensiveContributionsPer90": 2,
-      "recentExpectedGoalsPer90": 0.5,
-      "recentExpectedAssistsPer90": 0.5
+      "recentCleanSheetRate": 1.2,
+      "recentExpectedGoalsPer90": 0.6,
+      "recentExpectedAssistsPer90": 0.5,
+      "recentGoalsConcededPer90": -0.5
     },
     "MID": {
       "recentExpectedGoalsPer90": 0.8,
