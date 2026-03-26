@@ -10,6 +10,7 @@ import { PROGRESS_SVG_PATH, REPORT_PATH, RESULTS_PATH, readResults, resetAutores
 const ROOT = fileURLToPath(new URL(".", import.meta.url));
 const CONFIG_PATH = join(ROOT, "autoresearch-fpl", "config.json");
 const REPO_STRATEGY_PATH = join(ROOT, "autoresearch-fpl", "strategy.mjs");
+const REPO_WEIGHTS_PATH = join(ROOT, "autoresearch-fpl", "weights.json");
 const PORT = process.env.PORT || 3000;
 const DATA_DIR = process.env.DATA_DIR || null;
 const CYCLE_INTERVAL_MINUTES = parseInt(process.env.CYCLE_INTERVAL_MINUTES ?? "30", 10);
@@ -208,15 +209,20 @@ const server = createServer(async (req, res) => {
       
       const rows = results.map(r => {
         const statusColor = r.status === "keep" ? "#2ecc71" : r.status === "discard" ? "#e74c3c" : "#f39c12";
+        const timestamp = r.timestamp ? escapeHtml(r.timestamp.replace("T", " ").replace("Z", " UTC")) : "—";
+        const holdout = Number.isFinite(r.holdout_avg_points) ? r.holdout_avg_points.toFixed(2) : "—";
+        const gap = Number.isFinite(r.holdout_gap) ? r.holdout_gap.toFixed(2) : "—";
         return `
           <tr class="${r.status}">
             <td>${r.id}</td>
+            <td>${timestamp}</td>
             <td><code>${r.commit}</code></td>
             <td>${r.avg_points_per_gw.toFixed(2)}</td>
+            <td>${holdout}</td>
+            <td>${gap}</td>
             <td>${r.total_hit_cost}</td>
             <td style="color:${statusColor};font-weight:bold">${r.status.toUpperCase()}</td>
             <td class="reasoning">${escapeHtml(r.description || "-")}</td>
-            <td><a href="/diffs/${r.commit}">View diff</a></td>
           </tr>`;
       }).join("");
       
@@ -268,12 +274,14 @@ const server = createServer(async (req, res) => {
     <thead>
       <tr>
         <th>#</th>
-        <th>Commit</th>
+        <th>When</th>
+        <th>Revision</th>
         <th>Avg Pts/GW</th>
+        <th>Holdout</th>
+        <th>Gap</th>
         <th>Hit Cost</th>
         <th>Status</th>
         <th>Reasoning</th>
-        <th>Diff</th>
       </tr>
     </thead>
     <tbody>
@@ -340,7 +348,7 @@ const server = createServer(async (req, res) => {
   }
 
 
-  // Reset endpoint - clears file-backed state and restores the repo strategy
+  // Reset endpoint - clears file-backed state and restores the repo weights
   if (url.pathname === "/reset") {
     const triggerSecret = process.env.TRIGGER_SECRET;
     const providedSecret = url.searchParams.get("secret") || req.headers["x-trigger-secret"];
@@ -358,10 +366,10 @@ const server = createServer(async (req, res) => {
     }
     
     try {
-      await resetAutoresearchState(REPO_STRATEGY_PATH);
-      console.log("[reset] restored repo strategy and cleared file-backed experiment state");
+      await resetAutoresearchState(REPO_STRATEGY_PATH, REPO_WEIGHTS_PATH);
+      console.log("[reset] restored repo weights and cleared file-backed experiment state");
       res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ status: "reset", message: "State cleared and repo strategy restored" }));
+      res.end(JSON.stringify({ status: "reset", message: "State cleared and repo weights restored" }));
     } catch (err) {
       res.writeHead(500, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ error: err.message }));
