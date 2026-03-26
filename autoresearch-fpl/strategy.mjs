@@ -100,6 +100,8 @@ export function featureLabel(name, rawValue) {
       return `fixture ease ${rawValue.toFixed(2)}`;
     case "fixtureCountBonus":
       return rawValue > 0 ? `${rawValue + 1} fixtures` : "single fixture";
+    case "homeBonus":
+      return rawValue > 0 ? `${rawValue} home fixtures` : "all away";
     case "availability":
       return `${Math.round(rawValue * 100)}% availability`;
     case "epNext":
@@ -167,9 +169,11 @@ export function scorePlayer({
   if (seasonMinutes < weights.minimumSeasonMinutes) return null;
 
   const fixtureEaseRaw = sum(fixtures.map((fixture) => 6 - toNumber(fixture.difficulty, 3)));
+  const homeCount = fixtures.filter((fixture) => fixture.isHome).length;
   const featureValues = {
     availability,
     fixtureEase: fixtureEaseRaw / (fixtures.length * 5),
+    homeBonus: homeCount,
     fixtureCountBonus: Math.max(0, fixtures.length - 1),
     epNext: normalizeFeature(toNumber(mergedPlayer.ep_next, 0), 10),
     form: normalizeFeature(toNumber(mergedPlayer.form, 0), 10),

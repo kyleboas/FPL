@@ -448,6 +448,58 @@ export async function runOptimizationCycle() {
   await ensureBaseline();
 
   const parentResult = await getBestKeptResult();
+  const results = await readResults();
+  
+  // Check for restart: if last 15 results are all discards/crashes, reset to best weights
+  const recent = results.slice(-15);
+  const allBad = recent.length >= 15 && recent.every(r => r.status === "discard" || r.status === "crash");
+  
+  if (allBad) {
+    console.log("[optimizer] 🔃 RESTART - 15 consecutive failures, resetting to best weights");
+    const best = await getBestKeptResult();
+    if (best && best.commit) {
+      // Reset weights to a clean baseline
+      const baselineWeights = {
+        teamId: 387838,
+        freeTransfers: 1,
+        hitCost: 4,
+        chips: { wildcard: false, freeHit: true, benchBoost: false },
+        historyWindow: 4,
+        minimumRecentMinutes: 180,
+        minimumChanceOfPlaying: 50,
+        minimumSeasonMinutes: 600,
+        budget: 1000,
+        squadSize: { GK: 2, DEF: 5, MID: 5, FWD: 3 },
+        picksPerPosition: { GK: 2, DEF: 8, MID: 8, FWD: 5 },
+        common: {
+          availability: 2,
+          fixtureEase: 3,
+          homeBonus: 0.5,
+          epNext: 5,
+          form: 1.5,
+          pointsPerGame: 6,
+          recentPointsPer90: 4,
+          recentXgiPer90: 1,
+          value: 0.5
+        },
+        byPosition: {
+          GK: { recentCleanSheetRate: 2, recentSavesPer90: 0.5 },
+          DEF: { recentCleanSheetRate: 1.5, recentExpectedGoalsPer90: 0.5 },
+          MID: { recentExpectedGoalsPer90: 0.8, recentExpectedAssistsPer90: 0.8 },
+          FWD: { recentExpectedGoalsPer90: 1.2, recentExpectedAssistsPer90: 0.3 }
+        }
+      };
+      await writeFile(WEIGHTS_PATH, JSON.stringify(baselineWeights, null, 2), "utf8");
+      await appendResult({
+        commit: best.commit,
+        avgPointsPerGw: best.avg_points_per_gw,
+        totalHitCost: best.total_hit_cost,
+        status: "keep",
+        description: "restart: reset to baseline after 15 failures"
+      });
+    }
+  }
+  
   const [strategyCode, programMd, weightsJson] = await Promise.all([
     readFile(STRATEGY_PATH, "utf8"),
     readFile(PROGRAM_PATH, "utf8"),
