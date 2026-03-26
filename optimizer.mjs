@@ -11,15 +11,13 @@ import {
   appendResult,
   ensureResultsFile,
   getBestKeptResult,
-  persistAcceptedStrategy,
+  persistAcceptedWeights,
   readResults,
   RUN_LOG_PATH,
-  syncPersistedStrategy,
-  RESULTS_PATH,
+  syncPersistedWeights,
 } from "./results.mjs";
 
 const ROOT = fileURLToPath(new URL(".", import.meta.url));
-const STRATEGY_PATH = join(ROOT, "autoresearch-fpl", "strategy.mjs");
 const PROGRAM_PATH = join(ROOT, "autoresearch-fpl", "program.md");
 const WEIGHTS_PATH = join(ROOT, "autoresearch-fpl", "weights.json");
 const RUN_SCRIPT = join(ROOT, "autoresearch-fpl", "run.mjs");
@@ -315,9 +313,15 @@ async function callLLM(messages) {
 
 function parseBacktestOutput(output) {
   const avgMatch = output.match(/avg_points_per_gw:\s*([\d.]+)/);
+  const trainAvgMatch = output.match(/train_avg_points:\s*([\d.]+)/);
+  const holdoutAvgMatch = output.match(/holdout_avg_points:\s*([\d.]+)/);
+  const holdoutGapMatch = output.match(/holdout_gap:\s*(-?[\d.]+)/);
   const hitMatch = output.match(/total_hit_cost:\s*([\d.]+)/);
   return {
     avgPointsPerGw: avgMatch ? Number.parseFloat(avgMatch[1]) : null,
+    trainAvgPoints: trainAvgMatch ? Number.parseFloat(trainAvgMatch[1]) : null,
+    holdoutAvgPoints: holdoutAvgMatch ? Number.parseFloat(holdoutAvgMatch[1]) : null,
+    holdoutGap: holdoutGapMatch ? Number.parseFloat(holdoutGapMatch[1]) : null,
     totalHitCost: hitMatch ? Number.parseFloat(hitMatch[1]) : 0,
   };
 }
@@ -346,26 +350,30 @@ function extractJson(response) {
   return null;
 }
 
-function extractRequiredExports(strategyCode) {
-  return [...strategyCode.matchAll(/export function\s+([A-Za-z0-9_]+)/g)].map((match) => match[1]);
-}
-
-function findMissingExports(code, requiredExports) {
-  return requiredExports.filter((name) => {
-    const pattern = new RegExp(`export\\s+(?:async\\s+)?function\\s+${name}\\b|export\\s+(?:const|let|var)\\s+${name}\\b`);
-    return !pattern.test(code);
-  });
-}
-
 function summarizeIdea(response) {
   return response.split("```")[0].replace(/\s+/g, " ").trim().slice(0, 500) || "LLM-proposed strategy change";
 }
 
-function strategyRevision(code) {
-  return createHash("sha1").update(code).digest("hex").slice(0, 7);
+function weightsRevision(weightsJson) {
+  return createHash("sha1").update(weightsJson).digest("hex").slice(0, 7);
 }
 
-async function getExperimentSummary(limit = 10) {
+function isFiniteNumber(value) {
+  return typeof value === "number" && Number.isFinite(value);
+}
+
+function shouldKeepResult(trialResult, parentResult) {
+  const parentAvg = parentResult?.avg_points_per_gw ?? Number.NEGATIVE_INFINITY;
+  if ((trialResult.avgPointsPerGw ?? Number.NEGATIVE_INFINITY) <= parentAvg) return false;
+
+  if (!isFiniteNumber(parentResult?.holdout_avg_points) || !isFiniteNumber(trialResult.holdoutAvgPoints)) {
+    return true;
+  }
+
+  return trialResult.holdoutAvgPoints >= parentResult.holdout_avg_points;
+}
+
+async function getExperimentSummary(limit = 25) {
   const results = await readResults();
   if (!results.length) {
     return "No experiments run yet. The first run should establish the baseline.";
@@ -381,7 +389,10 @@ async function getExperimentSummary(limit = 10) {
   ];
 
   for (const result of recent) {
-    lines.push(`  ${result.commit}: ${result.status.toUpperCase()} score=${result.avg_points_per_gw.toFixed(2)} — ${result.description}`);
+    const holdoutText = isFiniteNumber(result.holdout_avg_points)
+      ? ` holdout=${result.holdout_avg_points.toFixed(2)}`
+      : "";
+    lines.push(`  ${result.commit}: ${result.status.toUpperCase()} avg=${result.avg_points_per_gw.toFixed(2)}${holdoutText} — ${result.description}`);
   }
 
   return lines.join("\n");
@@ -422,7 +433,7 @@ async function ensureBaseline() {
   if (results.length) return;
 
   console.log("[optimizer] no baseline found, running initial backtest...");
-  const strategyCode = await readFile(STRATEGY_PATH, "utf8");
+  const weightsJson = await readFile(WEIGHTS_PATH, "utf8");
   const output = await runBacktestToLog();
   const baseline = parseBacktestOutput(output);
   if (baseline.avgPointsPerGw == null) {
@@ -430,13 +441,15 @@ async function ensureBaseline() {
   }
 
   await appendResult({
-    commit: strategyRevision(strategyCode),
+    commit: weightsRevision(weightsJson),
     avgPointsPerGw: baseline.avgPointsPerGw,
+    holdoutAvgPoints: baseline.holdoutAvgPoints,
+    holdoutGap: baseline.holdoutGap,
     totalHitCost: baseline.totalHitCost,
     status: "keep",
     description: "baseline",
   });
-  await persistAcceptedStrategy(STRATEGY_PATH);
+  await persistAcceptedWeights(WEIGHTS_PATH);
   await runReport();
   await generateChart();
   console.log(`[optimizer] baseline: avg=${baseline.avgPointsPerGw.toFixed(2)}`);
@@ -444,71 +457,26 @@ async function ensureBaseline() {
 
 export async function runOptimizationCycle() {
   await ensureResultsFile();
-  await syncPersistedStrategy(STRATEGY_PATH);
+  await syncPersistedWeights(WEIGHTS_PATH);
   await ensureBaseline();
 
-  const parentResult = await getBestKeptResult();
   const results = await readResults();
-  
-  // Check for restart: if last 15 results are all discards/crashes, reset to best weights
   const recent = results.slice(-15);
   const allBad = recent.length >= 15 && recent.every(r => r.status === "discard" || r.status === "crash");
-  
+
   if (allBad) {
-    console.log("[optimizer] 🔃 RESTART - 15 consecutive failures, resetting to best weights");
-    const best = await getBestKeptResult();
-    if (best && best.commit) {
-      // Reset weights to a clean baseline
-      const baselineWeights = {
-        teamId: 387838,
-        freeTransfers: 1,
-        hitCost: 4,
-        chips: { wildcard: false, freeHit: true, benchBoost: false },
-        historyWindow: 4,
-        minimumRecentMinutes: 180,
-        minimumChanceOfPlaying: 50,
-        minimumSeasonMinutes: 600,
-        budget: 1000,
-        squadSize: { GK: 2, DEF: 5, MID: 5, FWD: 3 },
-        picksPerPosition: { GK: 2, DEF: 8, MID: 8, FWD: 5 },
-        common: {
-          availability: 2,
-          fixtureEase: 3,
-          homeBonus: 0.5,
-          epNext: 5,
-          form: 1.5,
-          pointsPerGame: 6,
-          recentPointsPer90: 4,
-          recentXgiPer90: 1,
-          value: 0.5
-        },
-        byPosition: {
-          GK: { recentCleanSheetRate: 2, recentSavesPer90: 0.5 },
-          DEF: { recentCleanSheetRate: 1.5, recentExpectedGoalsPer90: 0.5 },
-          MID: { recentExpectedGoalsPer90: 0.8, recentExpectedAssistsPer90: 0.8 },
-          FWD: { recentExpectedGoalsPer90: 1.2, recentExpectedAssistsPer90: 0.3 }
-        }
-      };
-      await writeFile(WEIGHTS_PATH, JSON.stringify(baselineWeights, null, 2), "utf8");
-      await appendResult({
-        commit: best.commit,
-        avgPointsPerGw: best.avg_points_per_gw,
-        totalHitCost: best.total_hit_cost,
-        status: "keep",
-        description: "restart: reset to baseline after 15 failures"
-      });
-    }
+    console.log("[optimizer] restart: restoring best accepted weights after 15 consecutive failures");
+    await syncPersistedWeights(WEIGHTS_PATH);
   }
-  
-  const [strategyCode, programMd, weightsJson] = await Promise.all([
-    readFile(STRATEGY_PATH, "utf8"),
+
+  const parentResult = await getBestKeptResult();
+  const [programMd, weightsJson] = await Promise.all([
     readFile(PROGRAM_PATH, "utf8"),
     readFile(WEIGHTS_PATH, "utf8"),
   ]);
-  const parentRevision = strategyRevision(strategyCode);
+  const parentRevision = weightsRevision(weightsJson);
   const parentScore = parentResult?.avg_points_per_gw ?? 0;
   const experimentSummary = await getExperimentSummary();
-  const requiredExports = extractRequiredExports(strategyCode);
   const provider = await getProvider();
   const requestedModel = await getModel(provider);
 
@@ -572,6 +540,8 @@ Briefly explain the idea in 1-2 sentences, then output the COMPLETE weights.json
     await appendResult({
       commit: parentRevision,
       avgPointsPerGw: 0,
+      holdoutAvgPoints: null,
+      holdoutGap: null,
       totalHitCost: 0,
       status: "crash",
       description: `llm error: ${error.message.slice(0, 120)}`,
@@ -587,6 +557,8 @@ Briefly explain the idea in 1-2 sentences, then output the COMPLETE weights.json
     await appendResult({
       commit: parentRevision,
       avgPointsPerGw: parentScore,
+      holdoutAvgPoints: parentResult?.holdout_avg_points ?? null,
+      holdoutGap: parentResult?.holdout_gap ?? null,
       totalHitCost: parentResult?.total_hit_cost ?? 0,
       status: "discard",
       description: `no-op: ${description}`,
@@ -596,7 +568,13 @@ Briefly explain the idea in 1-2 sentences, then output the COMPLETE weights.json
   }
 
   await writeFile(WEIGHTS_PATH, newWeights, "utf8");
-  const trialRevision = createHash("sha256").update(newWeights).digest("hex").slice(0, 7);
+  const trialRevision = weightsRevision(newWeights);
+
+  if (results.some((result) => result.commit === trialRevision)) {
+    console.log(`[optimizer] duplicate weights revision ${trialRevision}, skipping`);
+    await writeFile(WEIGHTS_PATH, weightsJson, "utf8");
+    return;
+  }
   
   // Verbose log: PROPOSED CHANGE
   console.log("\n" + "═".repeat(60));
@@ -625,6 +603,8 @@ Briefly explain the idea in 1-2 sentences, then output the COMPLETE weights.json
     await appendResult({
       commit: trialRevision,
       avgPointsPerGw: 0,
+      holdoutAvgPoints: null,
+      holdoutGap: null,
       totalHitCost: 0,
       status: "crash",
       description: `backtest crash: ${description}`,
@@ -633,26 +613,39 @@ Briefly explain the idea in 1-2 sentences, then output the COMPLETE weights.json
     return;
   }
 
-  if (trialResult.avgPointsPerGw > parentScore) {
+  if (shouldKeepResult(trialResult, parentResult)) {
     const delta = trialResult.avgPointsPerGw - parentScore;
     console.log("\n" + "═".repeat(60));
     console.log("[optimizer] ✓ KEEP - IMPROVED");
     console.log(`[optimizer]   score: ${parentScore.toFixed(2)} → ${trialResult.avgPointsPerGw.toFixed(2)}`);
+    if (isFiniteNumber(trialResult.holdoutAvgPoints)) {
+      const parentHoldout = parentResult?.holdout_avg_points;
+      const parentHoldoutText = isFiniteNumber(parentHoldout) ? parentHoldout.toFixed(2) : "n/a";
+      console.log(`[optimizer]   holdout: ${parentHoldoutText} → ${trialResult.holdoutAvgPoints.toFixed(2)}`);
+    }
     console.log(`[optimizer]   delta: +${delta.toFixed(3)}`);
     console.log(`[optimizer]   revision: ${trialRevision}`);
     console.log("═".repeat(60) + "\n");
     await appendResult({
       commit: trialRevision,
       avgPointsPerGw: trialResult.avgPointsPerGw,
+      holdoutAvgPoints: trialResult.holdoutAvgPoints,
+      holdoutGap: trialResult.holdoutGap,
       totalHitCost: trialResult.totalHitCost,
       status: "keep",
       description,
     });
+    await persistAcceptedWeights(WEIGHTS_PATH);
     await runReport();
   } else {
     console.log("\n" + "═".repeat(60));
     console.log("[optimizer] ✗ DISCARD - NO IMPROVEMENT");
     console.log(`[optimizer]   score: ${parentScore.toFixed(2)} → ${trialResult.avgPointsPerGw.toFixed(2)}`);
+    if (isFiniteNumber(trialResult.holdoutAvgPoints)) {
+      const parentHoldout = parentResult?.holdout_avg_points;
+      const parentHoldoutText = isFiniteNumber(parentHoldout) ? parentHoldout.toFixed(2) : "n/a";
+      console.log(`[optimizer]   holdout: ${parentHoldoutText} → ${trialResult.holdoutAvgPoints.toFixed(2)}`);
+    }
     console.log(`[optimizer]   revision: ${trialRevision}`);
     console.log("═".repeat(60) + "\n");
     // Revert to previous weights
@@ -661,6 +654,8 @@ Briefly explain the idea in 1-2 sentences, then output the COMPLETE weights.json
     await appendResult({
       commit: trialRevision,
       avgPointsPerGw: trialResult.avgPointsPerGw,
+      holdoutAvgPoints: trialResult.holdoutAvgPoints,
+      holdoutGap: trialResult.holdoutGap,
       totalHitCost: trialResult.totalHitCost,
       status: "discard",
       description,
