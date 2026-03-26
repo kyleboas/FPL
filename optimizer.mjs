@@ -68,6 +68,8 @@ const FALLBACK_MODELS_CLOUDFLARE = [
 // Rate limit handling
 const MAX_RETRIES = 3;
 const BASE_DELAY_MS = 8000;
+const GENERATION_TEMPERATURE = Number(process.env.LLM_TEMPERATURE ?? "0.2");
+const GENERATION_MAX_TOKENS = Number(process.env.LLM_MAX_TOKENS ?? "12000");
 
 // Train/test split configuration
 const TEST_FRACTION = 0.2;  // 20% of gameweeks for testing
@@ -108,7 +110,10 @@ async function getModel() {
 async function getFallbackModels(provider) {
   const config = await loadConfig();
   if (config.llm?.fallbackModels?.length) {
-    return config.llm.fallbackModels;
+    const filtered = config.llm.fallbackModels.filter((model) =>
+      provider === "cloudflare" ? model.startsWith("workers-ai/") : !model.startsWith("workers-ai/"),
+    );
+    if (filtered.length) return filtered;
   }
   return provider === "cloudflare" ? FALLBACK_MODELS_CLOUDFLARE : FALLBACK_MODELS_OPENROUTER;
 }
@@ -152,8 +157,8 @@ async function callOpenRouterWithModel(messages, model, maxRetries = 3) {
       body: JSON.stringify({
         model,
         messages,
-        max_tokens: 4096,
-        temperature: 0.8,
+        max_tokens: GENERATION_MAX_TOKENS,
+        temperature: GENERATION_TEMPERATURE,
       }),
     });
 
@@ -201,8 +206,8 @@ async function callCloudflareWithModel(messages, model, maxRetries = 3) {
       body: JSON.stringify({
         model,
         messages,
-        max_tokens: 4096,
-        temperature: 0.8,
+        max_tokens: GENERATION_MAX_TOKENS,
+        temperature: GENERATION_TEMPERATURE,
       }),
     });
 
@@ -343,7 +348,35 @@ function extractCode(llmResponse) {
     return trimmed;
   }
 
+  const markers = [
+    "\n/**",
+    "\nimport {",
+    "\nexport function availabilityScore",
+    "\nexport function scorePlayer",
+  ];
+  const startIndexes = markers
+    .map((marker) => llmResponse.indexOf(marker))
+    .filter((index) => index >= 0)
+    .sort((a, b) => a - b);
+
+  if (startIndexes.length) {
+    return llmResponse.slice(startIndexes[0] + 1).trim();
+  }
+
   return null;
+}
+
+function extractRequiredExports(strategyCode) {
+  return [...strategyCode.matchAll(/export function\s+([A-Za-z0-9_]+)/g)].map((match) => match[1]);
+}
+
+function findMissingExports(code, requiredExports) {
+  return requiredExports.filter((name) => {
+    const exportPattern = new RegExp(
+      `export\\s+(?:async\\s+)?function\\s+${name}\\b|export\\s+(?:const|let|var)\\s+${name}\\b`,
+    );
+    return !exportPattern.test(code);
+  });
 }
 
 /**
@@ -385,6 +418,7 @@ export async function runOptimizationCycle() {
     readFile(PROGRAM_PATH, "utf8"),
     readFile(WEIGHTS_PATH, "utf8"),
   ]);
+  const requiredExports = extractRequiredExports(strategyCode);
 
   const best = await getBestExperiment();
   const experimentSummary = await getExperimentSummary();
@@ -406,7 +440,7 @@ export async function runOptimizationCycle() {
       trainAvgPoints: baselineResult.trainAvgPoints,
       testAvgPoints: baselineResult.testAvgPoints,
       parentScore: null,
-      temperature: null,
+      temperature: GENERATION_TEMPERATURE,
     });
     console.log(`[optimizer] baseline: avg=${parentScore.toFixed(2)}`);
   } else {
@@ -423,6 +457,7 @@ export async function runOptimizationCycle() {
 - You MUST output the COMPLETE modified strategy.mjs file inside a single \`\`\`javascript code fence
 - Make exactly ONE focused change per experiment (one new feature, one formula tweak, one logic change)
 - Keep all existing imports and exports — do not break the module interface
+- Preserve every existing export from strategy.mjs exactly once: ${requiredExports.join(", ")}
 - The file must be valid ES module JavaScript (import/export, no require)
 - Do not add external dependencies — only use built-in Node.js modules and imports from ./run.mjs
 - Available imports from ./run.mjs: toNumber, clamp, mean, sum, getPlayerId, getTeamId, getPosition, groupRowsByPlayer, POSITION_NAMES, AVAILABILITY_BY_STATUS
@@ -476,7 +511,7 @@ First, briefly explain your idea (2-3 sentences), then output the COMPLETE modif
       description: `LLM error: ${err.message.slice(0, 100)}`,
       status: "crash",
       parentScore,
-      temperature: null,
+      temperature: GENERATION_TEMPERATURE,
     });
     return;
   }
@@ -492,7 +527,7 @@ First, briefly explain your idea (2-3 sentences), then output the COMPLETE modif
       description: "LLM response had no code block",
       status: "crash",
       parentScore,
-      temperature: null,
+      temperature: GENERATION_TEMPERATURE,
     });
     return;
   }
@@ -521,7 +556,23 @@ First, briefly explain your idea (2-3 sentences), then output the COMPLETE modif
       description: `syntax error: ${description.slice(0, 150)}`,
       status: "crash",
       parentScore,
-      temperature: null,
+      temperature: GENERATION_TEMPERATURE,
+    });
+    return;
+  }
+
+  const missingExports = findMissingExports(newCode, requiredExports);
+  if (missingExports.length) {
+    console.error(`[optimizer] missing required exports: ${missingExports.join(", ")}`);
+    await writeFile(STRATEGY_PATH, originalCode, "utf8");
+    await insertExperiment({
+      overallAvgPoints: 0,
+      hitRate: 0,
+      weights: JSON.parse(weightsJson),
+      description: `missing exports: ${missingExports.slice(0, 4).join(", ")}`,
+      status: "crash",
+      parentScore,
+      temperature: GENERATION_TEMPERATURE,
     });
     return;
   }
@@ -542,7 +593,7 @@ First, briefly explain your idea (2-3 sentences), then output the COMPLETE modif
       description: `backtest crash: ${description.slice(0, 150)}`,
       status: "crash",
       parentScore,
-      temperature: null,
+      temperature: GENERATION_TEMPERATURE,
     });
     return;
   }
@@ -574,7 +625,7 @@ First, briefly explain your idea (2-3 sentences), then output the COMPLETE modif
       trainAvgPoints: trialResult.trainAvgPoints,
       testAvgPoints: trialResult.testAvgPoints,
       parentScore,
-      temperature: null,
+      temperature: GENERATION_TEMPERATURE,
     });
     // strategy.mjs already has the improved code
   } else {
@@ -591,7 +642,7 @@ First, briefly explain your idea (2-3 sentences), then output the COMPLETE modif
       trainAvgPoints: trialResult.trainAvgPoints,
       testAvgPoints: trialResult.testAvgPoints,
       parentScore,
-      temperature: null,
+      temperature: GENERATION_TEMPERATURE,
     });
   }
 

@@ -161,6 +161,7 @@ const server = createServer(async (req, res) => {
     res.writeHead(200, { "Content-Type": "application/json" });
     res.end(JSON.stringify({
       apiKeySet: !!process.env.OPENROUTER_API_KEY,
+      provider: process.env.LLM_PROVIDER || "openrouter",
       model: process.env.OPENROUTER_MODEL || "qwen/qwen3-coder:free",
       experimentsPerCron: process.env.EXPERIMENTS_PER_CRON || "1",
       cycleIntervalMinutes: CYCLE_INTERVAL_MINUTES,
