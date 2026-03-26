@@ -2,6 +2,7 @@
 
 import { readFile, writeFile } from "node:fs/promises";
 import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 import { generateChart } from "./chart.mjs";
@@ -21,7 +22,6 @@ const PROGRAM_PATH = join(ROOT, "autoresearch-fpl", "program.md");
 const WEIGHTS_PATH = join(ROOT, "autoresearch-fpl", "weights.json");
 const RUN_SCRIPT = join(ROOT, "autoresearch-fpl", "run.mjs");
 const CONFIG_PATH = join(ROOT, "autoresearch-fpl", "config.json");
-const RELATIVE_STRATEGY_PATH = "autoresearch-fpl/strategy.mjs";
 
 const OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions";
 const DEFAULT_PROVIDER = "openrouter";
@@ -259,6 +259,10 @@ function summarizeIdea(response) {
   return response.split("```")[0].replace(/\s+/g, " ").trim().slice(0, 180) || "LLM-proposed strategy change";
 }
 
+function strategyRevision(code) {
+  return createHash("sha1").update(code).digest("hex").slice(0, 7);
+}
+
 async function getExperimentSummary(limit = 10) {
   const results = await readResults();
   if (!results.length) {
@@ -279,45 +283,6 @@ async function getExperimentSummary(limit = 10) {
   }
 
   return lines.join("\n");
-}
-
-async function git(args, { allowFailure = false, timeout = 15_000 } = {}) {
-  try {
-    return await runCommand("git", ["-C", ROOT, ...args], { cwd: ROOT, timeout });
-  } catch (error) {
-    if (allowFailure) return { stdout: "", stderr: error.message };
-    throw error;
-  }
-}
-
-async function getCurrentCommit({ short = false } = {}) {
-  const args = short ? ["rev-parse", "--short", "HEAD"] : ["rev-parse", "HEAD"];
-  const { stdout } = await git(args);
-  return stdout.trim();
-}
-
-async function getCurrentBranchName() {
-  const { stdout } = await git(["rev-parse", "--abbrev-ref", "HEAD"]);
-  return stdout.trim();
-}
-
-async function commitStrategy(description) {
-  await git(["add", RELATIVE_STRATEGY_PATH]);
-  await git(
-    [
-      "-c", "user.name=Autoresearch",
-      "-c", "user.email=autoresearch@local",
-      "commit",
-      "-m",
-      description.slice(0, 120),
-    ],
-    { timeout: 30_000 },
-  );
-  return getCurrentCommit({ short: true });
-}
-
-async function resetToCommit(commit) {
-  await git(["reset", "--hard", commit], { timeout: 30_000 });
 }
 
 async function runBacktestToLog() {
@@ -355,15 +320,15 @@ async function ensureBaseline() {
   if (results.length) return;
 
   console.log("[optimizer] no baseline found, running initial backtest...");
+  const strategyCode = await readFile(STRATEGY_PATH, "utf8");
   const output = await runBacktestToLog();
   const baseline = parseBacktestOutput(output);
   if (baseline.avgPointsPerGw == null) {
     throw new Error("baseline run did not produce avg_points_per_gw");
   }
 
-  const baselineCommit = await getCurrentCommit({ short: true });
   await appendResult({
-    commit: baselineCommit,
+    commit: strategyRevision(strategyCode),
     avgPointsPerGw: baseline.avgPointsPerGw,
     totalHitCost: baseline.totalHitCost,
     status: "keep",
@@ -380,22 +345,20 @@ export async function runOptimizationCycle() {
   await syncPersistedStrategy(STRATEGY_PATH);
   await ensureBaseline();
 
-  const branchName = await getCurrentBranchName();
-  const parentCommit = await getCurrentCommit();
-  const parentCommitShort = await getCurrentCommit({ short: true });
   const parentResult = await getBestKeptResult();
-  const parentScore = parentResult?.avg_points_per_gw ?? 0;
-  const experimentSummary = await getExperimentSummary();
   const [strategyCode, programMd, weightsJson] = await Promise.all([
     readFile(STRATEGY_PATH, "utf8"),
     readFile(PROGRAM_PATH, "utf8"),
     readFile(WEIGHTS_PATH, "utf8"),
   ]);
+  const parentRevision = strategyRevision(strategyCode);
+  const parentScore = parentResult?.avg_points_per_gw ?? 0;
+  const experimentSummary = await getExperimentSummary();
   const requiredExports = extractRequiredExports(strategyCode);
   const provider = await getProvider();
   const requestedModel = await getModel(provider);
 
-  console.log(`[optimizer] branch=${branchName} commit=${parentCommitShort} best=${parentScore.toFixed(2)} model=${requestedModel}`);
+  console.log(`[optimizer] strategy=${parentRevision} best=${parentScore.toFixed(2)} model=${requestedModel}`);
 
   const systemPrompt = `You are an autonomous FPL (Fantasy Premier League) research agent. Your job is to improve strategy.mjs.
 
@@ -437,7 +400,7 @@ Briefly explain the idea in 2-3 sentences, then output the COMPLETE strategy.mjs
   } catch (error) {
     console.error(`[optimizer] LLM call failed: ${error.message}`);
     await appendResult({
-      commit: parentCommitShort,
+      commit: parentRevision,
       avgPointsPerGw: 0,
       totalHitCost: 0,
       status: "crash",
@@ -452,7 +415,7 @@ Briefly explain the idea in 2-3 sentences, then output the COMPLETE strategy.mjs
   if (!newCode || newCode === strategyCode) {
     console.log("[optimizer] no valid code change proposed");
     await appendResult({
-      commit: parentCommitShort,
+      commit: parentRevision,
       avgPointsPerGw: parentScore,
       totalHitCost: parentResult?.total_hit_cost ?? 0,
       status: "discard",
@@ -463,35 +426,19 @@ Briefly explain the idea in 2-3 sentences, then output the COMPLETE strategy.mjs
   }
 
   await writeFile(STRATEGY_PATH, newCode, "utf8");
-
-  let trialCommitShort;
-  try {
-    trialCommitShort = await commitStrategy(description);
-  } catch (error) {
-    await writeFile(STRATEGY_PATH, strategyCode, "utf8");
-    console.error(`[optimizer] commit failed: ${error.message}`);
-    await appendResult({
-      commit: parentCommitShort,
-      avgPointsPerGw: 0,
-      totalHitCost: 0,
-      status: "crash",
-      description: `commit failed: ${description}`,
-    });
-    await generateChart();
-    return;
-  }
+  const trialRevision = strategyRevision(newCode);
 
   const missingExports = findMissingExports(newCode, requiredExports);
   if (missingExports.length) {
     console.error(`[optimizer] missing required exports: ${missingExports.join(", ")}`);
     await appendResult({
-      commit: trialCommitShort,
+      commit: trialRevision,
       avgPointsPerGw: 0,
       totalHitCost: 0,
       status: "crash",
       description: `missing exports: ${missingExports.join(", ")}`,
     });
-    await resetToCommit(parentCommit);
+    await writeFile(STRATEGY_PATH, strategyCode, "utf8");
     await generateChart();
     return;
   }
@@ -507,22 +454,22 @@ Briefly explain the idea in 2-3 sentences, then output the COMPLETE strategy.mjs
   } catch (error) {
     console.error(`[optimizer] backtest crashed: ${error.message}`);
     await appendResult({
-      commit: trialCommitShort,
+      commit: trialRevision,
       avgPointsPerGw: 0,
       totalHitCost: 0,
       status: "crash",
       description: `backtest crash: ${description}`,
     });
-    await resetToCommit(parentCommit);
+    await writeFile(STRATEGY_PATH, strategyCode, "utf8");
     await generateChart();
     return;
   }
 
   if (trialResult.avgPointsPerGw > parentScore) {
     const delta = trialResult.avgPointsPerGw - parentScore;
-    console.log(`[optimizer] KEEP ${trialCommitShort}: ${trialResult.avgPointsPerGw.toFixed(2)} (Δ=+${delta.toFixed(2)})`);
+    console.log(`[optimizer] KEEP ${trialRevision}: ${trialResult.avgPointsPerGw.toFixed(2)} (Δ=+${delta.toFixed(2)})`);
     await appendResult({
-      commit: trialCommitShort,
+      commit: trialRevision,
       avgPointsPerGw: trialResult.avgPointsPerGw,
       totalHitCost: trialResult.totalHitCost,
       status: "keep",
@@ -531,15 +478,15 @@ Briefly explain the idea in 2-3 sentences, then output the COMPLETE strategy.mjs
     await persistAcceptedStrategy(STRATEGY_PATH);
     await runReport();
   } else {
-    console.log(`[optimizer] DISCARD ${trialCommitShort}: ${trialResult.avgPointsPerGw.toFixed(2)} <= ${parentScore.toFixed(2)}`);
+    console.log(`[optimizer] DISCARD ${trialRevision}: ${trialResult.avgPointsPerGw.toFixed(2)} <= ${parentScore.toFixed(2)}`);
     await appendResult({
-      commit: trialCommitShort,
+      commit: trialRevision,
       avgPointsPerGw: trialResult.avgPointsPerGw,
       totalHitCost: trialResult.totalHitCost,
       status: "discard",
       description,
     });
-    await resetToCommit(parentCommit);
+    await writeFile(STRATEGY_PATH, strategyCode, "utf8");
   }
 
   await generateChart();
