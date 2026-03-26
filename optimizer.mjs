@@ -256,7 +256,7 @@ function findMissingExports(code, requiredExports) {
 }
 
 function summarizeIdea(response) {
-  return response.split("```")[0].replace(/\s+/g, " ").trim().slice(0, 180) || "LLM-proposed strategy change";
+  return response.split("```")[0].replace(/\s+/g, " ").trim().slice(0, 500) || "LLM-proposed strategy change";
 }
 
 function strategyRevision(code) {
