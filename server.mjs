@@ -182,6 +182,110 @@ const server = createServer(async (req, res) => {
     return;
   }
 
+  // Results API endpoint - JSON
+  if (url.pathname === "/results") {
+    try {
+      const results = await readResults();
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(results, null, 2));
+    } catch (err) {
+      res.writeHead(500, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: err.message }));
+    }
+    return;
+  }
+
+  // Experiments page - chart + table with reasoning
+  if (url.pathname === "/experiments") {
+    try {
+      const results = await readResults();
+      const statusCounts = {
+        keep: results.filter(r => r.status === "keep").length,
+        discard: results.filter(r => r.status === "discard").length,
+        crash: results.filter(r => r.status === "crash").length,
+      };
+      
+      const rows = results.map(r => {
+        const statusColor = r.status === "keep" ? "#2ecc71" : r.status === "discard" ? "#e74c3c" : "#f39c12";
+        return `
+          <tr class="${r.status}">
+            <td>${r.id}</td>
+            <td><code>${r.commit}</code></td>
+            <td>${r.avg_points_per_gw.toFixed(2)}</td>
+            <td>${r.total_hit_cost}</td>
+            <td style="color:${statusColor};font-weight:bold">${r.status.toUpperCase()}</td>
+            <td class="reasoning">${escapeHtml(r.description || "-")}</td>
+          </tr>`;
+      }).join("");
+      
+      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+      res.end(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>FPL Autoresearch Experiments</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { font-family: 'SF Mono', 'Monaco', 'Inconsolata', 'Fira Mono', monospace; max-width: 1400px; margin: 0 auto; padding: 2rem; background: #0d1117; color: #c9d1d9; line-height: 1.6; }
+    h1 { margin: 0 0 0.5rem 0; font-size: 1.5rem; }
+    .stats { color: #8b949e; font-size: 0.9em; margin-bottom: 1.5rem; }
+    .stats span { margin-right: 1rem; }
+    .chart-container { background: #161b22; border-radius: 8px; padding: 1rem; margin-bottom: 2rem; }
+    .chart-container img { width: 100%; max-width: 100%; height: auto; }
+    table { width: 100%; border-collapse: collapse; background: #161b22; border-radius: 8px; overflow: hidden; }
+    th, td { padding: 0.75rem 1rem; text-align: left; }
+    th { background: #21262d; color: #8b949e; font-weight: 600; text-transform: uppercase; font-size: 0.75rem; letter-spacing: 0.05em; }
+    tr { border-bottom: 1px solid #21262d; }
+    tr:last-child { border-bottom: none; }
+    tr:hover { background: #1c2128; }
+    code { background: #21262d; padding: 0.2rem 0.5rem; border-radius: 4px; font-size: 0.85em; }
+    .reasoning { max-width: 500px; word-wrap: break-word; }
+    a { color: #58a6ff; text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    .nav { margin-bottom: 1.5rem; }
+    .nav a { margin-right: 1rem; }
+  </style>
+</head>
+<body>
+  <h1>FPL Autoresearch Experiments</h1>
+  <div class="nav">
+    <a href="/">Home</a>
+    <a href="/report">Report</a>
+  </div>
+  <div class="stats">
+    <span>${results.length} experiments</span>
+    <span style="color:#2ecc71">${statusCounts.keep} kept</span>
+    <span style="color:#e74c3c">${statusCounts.discard} discarded</span>
+    <span style="color:#f39c12">${statusCounts.crash} crashed</span>
+  </div>
+  <div class="chart-container">
+    <img src="/progress.svg" alt="Progress Chart">
+  </div>
+  <table>
+    <thead>
+      <tr>
+        <th>#</th>
+        <th>Commit</th>
+        <th>Avg Pts/GW</th>
+        <th>Hit Cost</th>
+        <th>Status</th>
+        <th>Reasoning</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${rows}
+    </tbody>
+  </table>
+</body>
+</html>`);
+    } catch (err) {
+      res.writeHead(500, { "Content-Type": "text/plain" });
+      res.end("Error reading results: " + err.message);
+    }
+    return;
+  }
+
   // Manual trigger endpoint (requires auth)
   if (url.pathname === "/trigger") {
     // Check for secret token
@@ -337,6 +441,107 @@ const server = createServer(async (req, res) => {
     } catch (err) {
       res.writeHead(500, { "Content-Type": "text/plain" });
       res.end("Error reading results: " + err.message);
+    }
+    return;
+  }
+
+
+  // Results API endpoint - serves experiment data as JSON
+  if (url.pathname === "/results") {
+    try {
+      const results = await readResults();
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(results, null, 2));
+    } catch (err) {
+      res.writeHead(500, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: err.message }));
+    }
+    return;
+  }
+
+  // Experiments page - shows chart + table of all experiments with reasoning
+  if (url.pathname === "/experiments") {
+    let results;
+    try {
+      results = await readResults();
+    } catch {
+      results = [];
+    }
+
+    let progressChart = "";
+    try {
+      await access(PROGRESS_SVG_PATH);
+      progressChart = `<img src="/progress.svg" alt="Autoresearch Progress" style="max-width:100%; margin-bottom: 1.5rem; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1);">`;
+    } catch {}
+
+    const tableRows = results.map((r) => {
+      const statusClass = r.status === "keep" ? "status-keep" : r.status === "discard" ? "status-discard" : "status-crash";
+      const statusIcon = r.status === "keep" ? "✓" : r.status === "discard" ? "✗" : "⚠";
+      return `<tr><td class="num">#${r.id}</td><td class="commit">${r.commit || "-"}</td><td class="score">${r.avg_points_per_gw.toFixed(2)}</td><td class="hit">${r.total_hit_cost}</td><td class="${statusClass}">${statusIcon} ${r.status}</td><td class="desc">${escapeHtml(r.description || "-")}</td></tr>`;
+    }).join("");
+
+    const bestKept = results.filter(r => r.status === "keep").sort((a, b) => b.avg_points_per_gw - a.avg_points_per_gw)[0];
+
+    res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+    res.end(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>FPL Autoresearch Experiments</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; max-width: 1100px; margin: 0 auto; padding: 1.5rem; background: #0f1117; color: #e8eaf0; }
+    h1 { margin: 0 0 0.5rem 0; font-size: 1.5rem; }
+    .subtitle { color: #888; font-size: 0.9rem; margin-bottom: 1rem; }
+    .stats { display: flex; gap: 1.5rem; margin-bottom: 1.5rem; flex-wrap: wrap; }
+    .stat { background: #1a1d24; padding: 0.75rem 1rem; border-radius: 8px; }
+    .stat-label { color: #888; font-size: 0.75rem; text-transform: uppercase; }
+    .stat-value { font-size: 1.25rem; font-weight: 600; margin-top: 0.25rem; }
+    .stat-value.best { color: #22c55e; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.85rem; background: #1a1d24; border-radius: 8px; overflow: hidden; }
+    th, td { padding: 0.6rem 0.75rem; text-align: left; }
+    th { background: #252830; color: #888; font-weight: 500; }
+    tr:nth-child(even) { background: #1d2028; }
+    .num { color: #666; font-family: monospace; }
+    .commit { font-family: monospace; color: #7cb9e8; font-size: 0.8rem; }
+    .score { font-family: monospace; font-weight: 600; }
+    .hit { color: #888; font-family: monospace; }
+    .status-keep { color: #22c55e; font-weight: 500; }
+    .status-discard { color: #ef4444; }
+    .status-crash { color: #f59e0b; }
+    .desc { color: #c9ccd4; max-width: 400px; }
+    .header { display: flex; align-items: center; margin-bottom: 1rem; }
+    .links { margin-left: auto; display: flex; gap: 1rem; }
+    .links a { color: #7cb9e8; font-size: 0.85rem; }
+  </style>
+</head>
+<body>
+  <div class="header"><h1>FPL Autoresearch Experiments</h1><div class="links"><a href="/report">Report</a><a href="/health">Health</a></div></div>
+  <p class="subtitle">LLM-driven FPL strategy optimization. Each experiment proposes a code change to strategy.mjs and tests it via backtest.</p>
+  <div class="stats">
+    <div class="stat"><div class="stat-label">Total</div><div class="stat-value">${results.length}</div></div>
+    <div class="stat"><div class="stat-label">Kept</div><div class="stat-value" style="color:#22c55e;">${results.filter(r=>r.status==="keep").length}</div></div>
+    <div class="stat"><div class="stat-label">Discarded</div><div class="stat-value" style="color:#ef4444;">${results.filter(r=>r.status==="discard").length}</div></div>
+    <div class="stat"><div class="stat-label">Best</div><div class="stat-value best">${bestKept?bestKept.avg_points_per_gw.toFixed(2):"-"} pts/GW</div></div>
+    <div class="stat"><div class="stat-label">Status</div><div class="stat-value">${cycleRunning?"Running...":"Idle"}</div></div>
+  </div>
+  ${progressChart}
+  <table><thead><tr><th>#</th><th>Commit</th><th>Avg Pts/GW</th><th>Hit Cost</th><th>Status</th><th>Description</th></tr></thead><tbody>${tableRows||'<tr><td colspan="6" style="text-align:center;color:#888;">No experiments yet</td></tr>'}</tbody></table>
+</body>
+</html>`);
+    return;
+  }
+
+  // Raw TSV endpoint
+  if (url.pathname === "/results.tsv") {
+    try {
+      const tsv = await readFile(RESULTS_PATH, "utf8");
+      res.writeHead(200, { "Content-Type": "text/tab-separated-values" });
+      res.end(tsv);
+    } catch {
+      res.writeHead(404, { "Content-Type": "text/plain" });
+      res.end("Not found");
     }
     return;
   }
