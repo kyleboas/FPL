@@ -298,6 +298,11 @@ export function buildSeasonScores({
   for (const player of players) {
     const playerId = getPlayerId(player);
     const historyRows = historyRowsByPlayer.get(playerId) ?? [];
+    const playerMeta = playerMetaById.get(playerId) ?? {};
+    const mergedPlayer = mergePlayerData(playerMeta, player);
+    const positionName = POSITION_NAMES[getPosition(mergedPlayer)] ?? null;
+    const teamId = getTeamId(mergedPlayer);
+    const fixtures = fixturesByTeamAndGw.get(fromGw)?.get(teamId) ?? [];
 
     const eligible = scorePlayer({
       player,
@@ -308,8 +313,6 @@ export function buildSeasonScores({
       fixturesByTeamAndGw,
       teamsById,
     });
-
-    if (!eligible) continue;
 
     const season = scorePlayerSeason({
       player,
@@ -325,7 +328,23 @@ export function buildSeasonScores({
     scores.set(playerId, {
       seasonScore: season.totalScore,
       gwScores: season.gwScores,
-      scored: eligible,
+      scored: eligible ?? (
+        playerId && positionName
+          ? {
+              id: playerId,
+              player: mergedPlayer,
+              position: getPosition(mergedPlayer),
+              positionName,
+              teamId,
+              teamName: teamsById.get(teamId)?.name ?? String(teamId),
+              score: 0,
+              fixtures,
+              topReasons: [],
+              totalRecentMinutes: recentTotalMinutes(historyRows),
+              contributions: [],
+            }
+          : null
+      ),
     });
   }
 
@@ -357,7 +376,36 @@ export function buildStartingSquad({
     teamsById,
   });
 
-  const { squad } = selectBudgetSquad(ranked, weights);
+  const rankedIds = new Set(ranked.map((player) => player.id));
+  const fallbackPlayers = snapshotRows
+    .map((player) => {
+      const playerId = getPlayerId(player);
+      if (!playerId || rankedIds.has(playerId)) return null;
+
+      const playerMeta = playerMetaById.get(playerId) ?? {};
+      const mergedPlayer = mergePlayerData(playerMeta, player);
+      const position = getPosition(mergedPlayer);
+      const positionName = POSITION_NAMES[position];
+      if (!positionName) return null;
+
+      const teamId = getTeamId(mergedPlayer);
+      return {
+        id: playerId,
+        player: mergedPlayer,
+        position,
+        positionName,
+        teamId,
+        teamName: teamsById.get(teamId)?.name ?? String(teamId),
+        score: -1,
+        fixtures: fixturesByTeamAndGw.get(targetGw)?.get(teamId) ?? [],
+        topReasons: [],
+        totalRecentMinutes: 0,
+        contributions: [],
+      };
+    })
+    .filter(Boolean);
+
+  const { squad } = selectBudgetSquad([...ranked, ...fallbackPlayers], weights);
   return squad.map((p) => p.id);
 }
 
@@ -367,6 +415,7 @@ export function selectBudgetSquad(ranked, weights) {
 
   const squad = [];
   const remaining = { ...squadSize };
+  const selectedIds = new Set();
   let spent = 0;
 
   for (const player of ranked) {
@@ -377,11 +426,43 @@ export function selectBudgetSquad(ranked, weights) {
     if (spent + cost > budget) continue;
 
     squad.push(player);
+    selectedIds.add(player.id);
     remaining[pos] -= 1;
     spent += cost;
 
     const totalPicked = Object.values(squadSize).reduce((a, b) => a + b, 0);
     if (squad.length >= totalPicked) break;
+  }
+
+  if (Object.values(remaining).some((count) => count > 0)) {
+    const cheapestByPosition = new Map();
+
+    for (const player of ranked) {
+      if (selectedIds.has(player.id)) continue;
+      const pos = player.positionName;
+      if (!remaining[pos] || remaining[pos] <= 0) continue;
+      if (!cheapestByPosition.has(pos)) cheapestByPosition.set(pos, []);
+      cheapestByPosition.get(pos).push(player);
+    }
+
+    for (const playersForPosition of cheapestByPosition.values()) {
+      playersForPosition.sort(
+        (a, b) => toNumber(a.player.now_cost, 0) - toNumber(b.player.now_cost, 0) || b.score - a.score,
+      );
+    }
+
+    for (const positionName of Object.keys(remaining)) {
+      while ((remaining[positionName] ?? 0) > 0) {
+        const candidates = cheapestByPosition.get(positionName) ?? [];
+        const nextPlayer = candidates.shift();
+        if (!nextPlayer) break;
+
+        squad.push(nextPlayer);
+        selectedIds.add(nextPlayer.id);
+        remaining[positionName] -= 1;
+        spent += toNumber(nextPlayer.player.now_cost, 0);
+      }
+    }
   }
 
   return { squad, spent, budget };
@@ -522,8 +603,6 @@ export function buildOptimalSquadForGw({
 // ── Transfer planning ───────────────────────────────────────────────────────
 
 export function planTransfersForGw({ squadIds, seasonScores, weights, gw, endGw, freeTransfers, bank }) {
-  const hitCost = toNumber(weights.hitCost, 4);
-  const remainingGws = endGw - gw + 1;
   const currentSquad = new Set(squadIds);
   let currentBank = bank;
   const candidates = [];
@@ -565,10 +644,8 @@ export function planTransfersForGw({ squadIds, seasonScores, weights, gw, endGw,
   const usedIn = new Set();
 
   for (const c of candidates) {
+    if (transfersMade >= freeTransfers) break;
     if (usedOut.has(c.outId) || usedIn.has(c.inId)) continue;
-
-    const isHit = transfersMade >= freeTransfers;
-    if (isHit && c.gain < hitCost * 1.5) continue;
 
     currentSquad.delete(c.outId);
     currentSquad.add(c.inId);
@@ -576,9 +653,6 @@ export function planTransfersForGw({ squadIds, seasonScores, weights, gw, endGw,
     usedOut.add(c.outId);
     usedIn.add(c.inId);
     transfersMade += 1;
-    if (isHit) hitsTaken += 1;
-
-    if (transfersMade >= Math.min(freeTransfers + 2, 3)) break;
   }
 
   return {
@@ -822,7 +896,8 @@ export function planTransfers({
       if (usedOut.has(candidate.outId) || usedIn.has(candidate.inId)) continue;
 
       const isHit = transfersMade >= freeTransfers;
-      if (isHit && candidate.gain < hitCost * 1.5) continue;
+      const gainPerGw = candidate.gain / remainingGws;
+      if (isHit && gainPerGw < 1.5) continue;
 
       transfers.push({
         gw: candidate.gw,
