@@ -1,11 +1,13 @@
 {
   "experimentsPerCron": 100,
   "llm": {
-    "provider": "cloudflare",
-    "model": "workers-ai/@cf/meta/llama-3.3-70b-instruct-fp8-fast",
+    "provider": "openrouter",
+    "model": "anthropic/claude-3.5-haiku",
     "fallbackModels": [
-      "workers-ai/@cf/meta/llama-3.1-8b-instruct",
-      "workers-ai/@cf/qwen/qwen2.5-14b-instruct"
+      "qwen/qwen3-coder:free",
+      "google/gemma-3-27b-it:free",
+      "meta-llama/llama-3.3-8b-instruct:free",
+      "google/gemini-2.0-flash-001"
     ]
   }
 }
