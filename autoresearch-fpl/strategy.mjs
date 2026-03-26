@@ -63,6 +63,24 @@ export function countRecentCleanSheets(rows) {
   return cleanSheets / matches.length;
 }
 
+export function averageDefensiveContributionsPer90(rows) {
+  // Combines tackles, blocks, interceptions, clearances per 90 mins
+  // FPL awards 2 pts per 10 contributions (tackles + blocks + interceptions + clearances)
+  const per90Values = rows
+    .map((row) => {
+      const minutes = toNumber(row.minutes, 0);
+      if (minutes <= 0) return null;
+      const contributions =
+        toNumber(row.tackles, 0) +
+        toNumber(row.blocks, 0) +
+        toNumber(row.interceptions, 0) +
+        toNumber(row.clearances, 0);
+      return (contributions / minutes) * 90;
+    })
+    .filter((value) => value !== null);
+  return mean(per90Values);
+}
+
 export function recentMinutesRatio(rows) {
   const minutes = rows.map((row) => clamp(toNumber(row.minutes, 0) / 90, 0, 1));
   return mean(minutes);
@@ -112,6 +130,8 @@ export function featureLabel(name, rawValue) {
       return `${rawValue.toFixed(2)} xG/90`;
     case "recentExpectedAssistsPer90":
       return `${rawValue.toFixed(2)} xA/90`;
+    case "recentDefensiveContributionsPer90":
+      return `${rawValue.toFixed(1)} defensive contribs/90`;
     default:
       return `${name} ${rawValue.toFixed(2)}`;
   }
@@ -171,6 +191,7 @@ export function scorePlayer({
     recentGoalsConcededPer90: normalizeFeature(averagePer90(historyRows, "goals_conceded"), 3),
     recentExpectedGoalsPer90: normalizeFeature(averagePer90(historyRows, "expected_goals"), 1.2),
     recentExpectedAssistsPer90: normalizeFeature(averagePer90(historyRows, "expected_assists"), 1.2),
+    recentDefensiveContributionsPer90: normalizeFeature(averageDefensiveContributionsPer90(historyRows), 1.2),
   };
 
   const contributions = [];
