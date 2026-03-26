@@ -520,17 +520,24 @@ function renderBacktestSummary(simResult, startGw, endGw, splitGw) {
   lines.push(`total_hit_cost: ${simResult.totalHitCost.toFixed(0)}`);
   lines.push(`avg_points_per_gw: ${(simResult.totalPoints / simResult.gwResults.length).toFixed(2)}`);
 
-  // Train/test split reporting
+  // Train/holdout reporting
   if (splitGw && splitGw > startGw && splitGw < endGw) {
     const trainGws = simResult.gwResults.filter((g) => g.gw <= splitGw);
-    const testGws = simResult.gwResults.filter((g) => g.gw > splitGw);
+    const holdoutGws = simResult.gwResults.filter((g) => g.gw > splitGw);
     if (trainGws.length > 0) {
       const trainPts = trainGws.reduce((s, g) => s + g.netPoints, 0);
+      lines.push(`train_gws: GW${trainGws[0].gw} → GW${trainGws.at(-1)?.gw ?? trainGws[0].gw} (${trainGws.length} GWs)`);
       lines.push(`train_avg_points: ${(trainPts / trainGws.length).toFixed(2)}`);
     }
-    if (testGws.length > 0) {
-      const testPts = testGws.reduce((s, g) => s + g.netPoints, 0);
-      lines.push(`test_avg_points: ${(testPts / testGws.length).toFixed(2)}`);
+    if (holdoutGws.length > 0) {
+      const holdoutPts = holdoutGws.reduce((s, g) => s + g.netPoints, 0);
+      const holdoutAvg = holdoutPts / holdoutGws.length;
+      const trainAvg = trainGws.length > 0
+        ? trainGws.reduce((s, g) => s + g.netPoints, 0) / trainGws.length
+        : 0;
+      lines.push(`holdout_gws: GW${holdoutGws[0].gw} → GW${holdoutGws.at(-1)?.gw ?? holdoutGws[0].gw} (${holdoutGws.length} GWs)`);
+      lines.push(`holdout_avg_points: ${holdoutAvg.toFixed(2)}`);
+      lines.push(`holdout_gap: ${(holdoutAvg - trainAvg).toFixed(2)}`);
     }
   }
 
@@ -544,6 +551,27 @@ function renderBacktestSummary(simResult, startGw, endGw, splitGw) {
   }
 
   return lines.join("\n");
+}
+
+function resolveBacktestSplitGw(startGw, endGw) {
+  const explicitSplitArg = process.argv.find((a) => a.startsWith("--split-gw="));
+  if (explicitSplitArg) {
+    const splitGw = parseInt(explicitSplitArg.split("=")[1], 10);
+    return Number.isFinite(splitGw) ? splitGw : null;
+  }
+
+  const explicitHoldoutArg = process.argv.find((a) => a.startsWith("--holdout-gws="));
+  if (explicitHoldoutArg) {
+    const holdoutGws = parseInt(explicitHoldoutArg.split("=")[1], 10);
+    if (!Number.isFinite(holdoutGws) || holdoutGws <= 0) return null;
+    return endGw - holdoutGws;
+  }
+
+  const totalGws = endGw - startGw + 1;
+  if (totalGws < 12) return null;
+
+  const defaultHoldoutGws = Math.min(8, Math.max(6, Math.floor(totalGws / 4)));
+  return endGw - defaultHoldoutGws;
 }
 
 function renderReport({
@@ -801,9 +829,7 @@ async function runBacktest(weights) {
     endGw,
   });
 
-  // Support --split-gw=N for train/test reporting
-  const splitArg = process.argv.find((a) => a.startsWith("--split-gw="));
-  const splitGw = splitArg ? parseInt(splitArg.split("=")[1], 10) : null;
+  const splitGw = resolveBacktestSplitGw(startGw, endGw);
 
   const output = renderBacktestSummary(simResult, startGw, endGw, splitGw);
   console.log(output);
