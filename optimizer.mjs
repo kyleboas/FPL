@@ -469,9 +469,24 @@ Rules:
 - Make exactly ONE focused change per experiment (adjust 1-3 related weights)
 - Keep all existing fields intact
 - Do not edit any file except weights.json
-- **CRITICAL: Try DIFFERENT areas each time. If recentPointsPer90 was already tried, try fixtureEase, epNext, form, pointsPerGame, historyWindow, minimumRecentMinutes, or byPosition weights instead.**
+- **CRITICAL: You MUST pick from the "GENUINELY NEW DIRECTIONS" list below. Do NOT re-propose weights that have already been tried (even if the history says they "failed" — that only means the specific weight values didn't improve score, not that the direction is bad). Explore the same direction with different weight values.**
+- If all GENUINELY NEW DIRECTIONS are exhausted, try combining a common weight with a position-specific weight (e.g. raise recentPointsPer90 AND add recentCleanSheetRate for DEF).
 
-The metric is avg_points_per_gw from node autoresearch-fpl/run.mjs backtest. Higher is better.`;
+The metric is avg_points_per_gw from node autoresearch-fpl/run.mjs backtest. Higher is better.
+
+## GENUINELY NEW DIRECTIONS (never been tried — use these first):
+- **form** weight adjustment — FPL form stat, never explored
+- **recentCleanSheetRate** for DEF or MID — position-specific, never tried
+- **recentExpectedGoalsPer90** for FWD — FWD-specific xG weight, never tried
+- **recentExpectedAssistsPer90** for FWD — FWD-specific xA weight, never tried
+- **recentMinutesRatio** position variants — adjust byPosition for DEF/MID
+- **seasonMinutes** weight — never explored, may help filter reliable players
+- **availability** weight — boost or reduce based on injury risk weighting
+
+## WEIGHTS THAT HAVE BEEN TRIED (revisit only if all new directions exhausted):
+- recentPointsPer90, recentXgiPer90, fixtureCountBonus, historyWindow — tried multiple times
+- recentBonusPer90, recentMinutesRatio (common), epNext, value, pointsPerGame — tried
+- recentExpectedGoalsPer90 for DEF/MID — tried, found not helpful at current weight`;
 
   const userPrompt = `## Program
 ${programMd}
