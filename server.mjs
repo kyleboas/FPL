@@ -4,7 +4,7 @@ import { extname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { generateChart } from "./chart.mjs";
 import { runOptimizationCycle } from "./optimizer.mjs";
-import { PROGRESS_SVG_PATH, REPORT_PATH, resetAutoresearchState, readResults } from "./results.mjs";
+import { PROGRESS_SVG_PATH, REPORT_PATH, RESULTS_PATH, resetAutoresearchState, readResults } from "./results.mjs";
 
 const ROOT = fileURLToPath(new URL(".", import.meta.url));
 const CONFIG_PATH = join(ROOT, "autoresearch-fpl", "config.json");
@@ -262,77 +262,97 @@ const server = createServer(async (req, res) => {
     return;
   }
 
-  // Results endpoint - shows all experiments with reasoning
+  // Results endpoint - HTML table of all experiments
   if (url.pathname === "/results") {
     try {
       const results = await readResults();
-      const rows = results.map(r => `
-        <tr class="${r.status}">
-          <td>${r.id}</td>
-          <td><code>${r.commit}</code></td>
-          <td>${r.avg_points_per_gw.toFixed(2)}</td>
-          <td>${r.total_hit_cost}</td>
-          <td>${r.status}</td>
-          <td>${r.description || "-"}</td>
-        </tr>
-      `).join("");
-      
-      const statusCounts = {
-        keep: results.filter(r => r.status === "keep").length,
-        discard: results.filter(r => r.status === "discard").length,
-        crash: results.filter(r => r.status === "crash").length,
-      };
-      
+      const escaped = results.map(r => ({
+        id: r.id,
+        commit: r.commit,
+        avg: r.avg_points_per_gw.toFixed(2),
+        hitCost: r.total_hit_cost,
+        status: r.status,
+        description: r.description
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+      }));
+
       res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
       res.end(`<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>FPL Autoresearch Experiments</title>
+  <title>FPL Autoresearch Results</title>
   <style>
     body { font-family: monospace; max-width: 1200px; margin: 2rem auto; padding: 0 1rem; background: #0f1117; color: #e8eaf0; line-height: 1.6; }
-    h1 { margin-bottom: 0.5rem; }
-    .stats { color: #888; font-size: 0.85em; margin-bottom: 1rem; }
+    h1 { color: #7cb9e8; }
+    .chart { margin: 1rem 0; }
     table { width: 100%; border-collapse: collapse; margin-top: 1rem; }
-    th, td { padding: 0.5rem 0.75rem; text-align: left; border-bottom: 1px solid #333; }
-    th { color: #888; font-weight: normal; }
-    code { background: #1a1d24; padding: 0.15rem 0.4rem; border-radius: 3px; font-size: 0.9em; }
-    tr.keep td:last-child { color: #2ecc71; }
-    tr.discard td:last-child { color: #e74c3c; }
-    tr.crash td:last-child { color: #f39c12; }
-    a { color: #7cb9e8; }
+    th { text-align: left; padding: 0.5rem; border-bottom: 2px solid #334155; color: #94a3b8; }
+    td { padding: 0.5rem; border-bottom: 1px solid #1e293b; }
+    .status-keep { color: #2ecc71; font-weight: bold; }
+    .status-discard { color: #94a3b8; }
+    .status-crash { color: #ef4444; }
+    .avg { font-family: monospace; }
+    .description { max-width: 60%; word-break: break-word; }
+    .nav { margin-bottom: 1rem; }
+    .nav a { color: #7cb9e8; margin-right: 1rem; }
   </style>
 </head>
 <body>
-  <h1>FPL Autoresearch Experiments</h1>
-  <div class="stats">
-    ${results.length} experiments | 
-    <span style="color:#2ecc71">${statusCounts.keep} kept</span> | 
-    <span style="color:#e74c3c">${statusCounts.discard} discarded</span> | 
-    <span style="color:#f39c12">${statusCounts.crash} crashed</span>
+  <div class="nav">
+    <a href="/">Home</a>
+    <a href="/report">Report</a>
+    <a href="/results">Results</a>
+    <a href="/progress.svg">Chart</a>
   </div>
-  <p><a href="/report">View Report</a> | <a href="/progress.svg">Progress Chart</a></p>
+  <h1>FPL Autoresearch Experiments</h1>
+  <div class="chart">
+    <img src="/progress.svg" alt="Progress Chart" style="max-width:100%; border-radius: 8px;">
+  </div>
   <table>
     <thead>
       <tr>
         <th>#</th>
-        <th>Commit</th>
+        <th>Description / Reasoning</th>
         <th>Avg Pts/GW</th>
         <th>Hit Cost</th>
         <th>Status</th>
-        <th>Reasoning</th>
+        <th>Revision</th>
       </tr>
     </thead>
     <tbody>
-      ${rows}
+      ${escaped.map(r => `<tr>
+        <td>${r.id}</td>
+        <td class="description">${r.description || "—"}</td>
+        <td class="avg">${r.avg}</td>
+        <td>${r.hitCost}</td>
+        <td class="status-${r.status}">${r.status.toUpperCase()}</td>
+        <td>${r.commit}</td>
+      </tr>`).join("\n      ")}
     </tbody>
   </table>
+  <p style="margin-top: 2rem; color: #64748b;">Total: ${results.length} experiments | ${results.filter(r => r.status === "keep").length} kept | ${results.filter(r => r.status === "discard").length} discarded | ${results.filter(r => r.status === "crash").length} crashed</p>
 </body>
 </html>`);
     } catch (err) {
       res.writeHead(500, { "Content-Type": "text/plain" });
       res.end("Error reading results: " + err.message);
+    }
+    return;
+  }
+
+  // Raw TSV endpoint
+  if (url.pathname === "/results.tsv") {
+    try {
+      const tsv = await readFile(RESULTS_PATH, "utf8");
+      res.writeHead(200, { "Content-Type": "text/tab-separated-values" });
+      res.end(tsv);
+    } catch {
+      res.writeHead(404, { "Content-Type": "text/plain" });
+      res.end("Not found");
     }
     return;
   }
