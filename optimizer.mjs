@@ -334,6 +334,18 @@ function extractCode(response) {
   return null;
 }
 
+function extractJson(response) {
+  const fenced = response.match(/```(?:json)?\s*\n([\s\S]*?)```/);
+  if (fenced) return fenced[1].trim();
+
+  const trimmed = response.trim();
+  if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
+    return trimmed;
+  }
+
+  return null;
+}
+
 function extractRequiredExports(strategyCode) {
   return [...strategyCode.matchAll(/export function\s+([A-Za-z0-9_]+)/g)].map((match) => match[1]);
 }
@@ -450,44 +462,37 @@ export async function runOptimizationCycle() {
 
   console.log(`[optimizer] strategy=${parentRevision} best=${parentScore.toFixed(2)} model=${requestedModel}`);
 
-  const systemPrompt = `You are an autonomous FPL (Fantasy Premier League) research agent. Your job is to improve strategy.mjs.
+  const systemPrompt = `You are an autonomous FPL (Fantasy Premier League) research agent. Your job is to improve weights.json.
 
 Rules:
-- Output the COMPLETE modified strategy.mjs inside one javascript code fence
-- Make exactly ONE focused change per experiment
-- Keep all imports and exports intact
-- Preserve every existing export exactly once: ${requiredExports.join(", ")}
-- Do not add dependencies
-- Do not edit any file except strategy.mjs
-- **CRITICAL: Try DIFFERENT areas each time. If captain selection was already tried, try transfer logic, scoring formulas, player filtering, chip strategy, or feature engineering instead.**
+- Output the COMPLETE modified weights.json inside one json code fence
+- Make exactly ONE focused change per experiment (adjust 1-3 related weights)
+- Keep all existing fields intact
+- Do not edit any file except weights.json
+- **CRITICAL: Try DIFFERENT areas each time. If recentPointsPer90 was already tried, try fixtureEase, epNext, form, pointsPerGame, historyWindow, minimumRecentMinutes, or byPosition weights instead.**
 
-The fixed harness is run.mjs. The metric is avg_points_per_gw from node autoresearch-fpl/run.mjs backtest. Higher is better.`;
+The metric is avg_points_per_gw from node autoresearch-fpl/run.mjs backtest. Higher is better.`;
 
   const userPrompt = `## Program
 ${programMd}
 
 ## Current weights.json
+\`\`\`json
 ${weightsJson}
+\`\`\`
 
 ## Experiment history
 ${experimentSummary}
 
-## Current strategy.mjs
-\`\`\`javascript
-${strategyCode}
-\`\`\`
-
 ## Task
 Propose one focused change to improve avg_points_per_gw over ${parentScore.toFixed(2)}.
 
-**IMPORTANT: Look at the experiment history above. If similar ideas were already tried and discarded, try a completely different area of the code:**
-- Transfer planning logic (how transfers are prioritized and executed)
-- Player scoring formula (how features are combined and weighted)
-- Player filtering/eligibility (who gets considered)
-- Chip strategy (wildcard, free-hit, bench-boost timing)
-- Feature engineering (new features, normalization)
+**IMPORTANT: Look at the experiment history above. If similar ideas were already tried and discarded, try a completely different area:**
+- Common weights: epNext, fixtureEase, form, pointsPerGame, recentPointsPer90, recentXgiPer90, value
+- History window and minute filters
+- By-position weights: GK, DEF, MID, FWD
 
-Briefly explain the idea in 2-3 sentences, then output the COMPLETE strategy.mjs file in a javascript code fence.`;
+Briefly explain the idea in 1-2 sentences, then output the COMPLETE weights.json file in a json code fence.`;
 
   let llmOutput;
   try {
@@ -508,10 +513,10 @@ Briefly explain the idea in 2-3 sentences, then output the COMPLETE strategy.mjs
     return;
   }
 
-  const newCode = extractCode(llmOutput.content);
+  const newWeights = extractJson(llmOutput.content);
   const description = summarizeIdea(llmOutput.content);
-  if (!newCode || newCode === strategyCode) {
-    console.log("[optimizer] no valid code change proposed");
+  if (!newWeights || newWeights === weightsJson) {
+    console.log("[optimizer] no valid weights change proposed");
     await appendResult({
       commit: parentRevision,
       avgPointsPerGw: parentScore,
@@ -523,45 +528,15 @@ Briefly explain the idea in 2-3 sentences, then output the COMPLETE strategy.mjs
     return;
   }
 
-  await writeFile(STRATEGY_PATH, newCode, "utf8");
-  const trialRevision = strategyRevision(newCode);
-  
-  // Compute and save diff
-  const codeDiff = computeDiff(strategyCode, newCode);
-  await saveDiff(trialRevision, codeDiff);
+  await writeFile(WEIGHTS_PATH, newWeights, "utf8");
+  const trialRevision = createHash("sha256").update(newWeights).digest("hex").slice(0, 7);
   
   // Verbose log: PROPOSED CHANGE
   console.log("\n" + "═".repeat(60));
-  console.log("[optimizer] PROPOSED CHANGE");
+  console.log("[optimizer] PROPOSED WEIGHTS CHANGE");
   console.log(`[optimizer]   revision: ${parentRevision} → ${trialRevision}`);
   console.log(`[optimizer]   idea: ${description.slice(0, 80)}`);
-  console.log("[optimizer]   diff:");
-  for (const line of codeDiff.split("\n").slice(0, 30)) {
-    console.log(`[optimizer]     ${line}`);
-  }
-  if (codeDiff.split("\n").length > 30) {
-    console.log(`[optimizer]     ... (${codeDiff.split("\n").length - 30} more lines)`);
-  }
   console.log("═".repeat(60) + "\n");
-
-  const missingExports = findMissingExports(newCode, requiredExports);
-  if (missingExports.length) {
-    console.error(`[optimizer] missing required exports: ${missingExports.join(", ")}`);
-    console.log("\n" + "═".repeat(60));
-    console.log("[optimizer] ✗ CRASH - MISSING EXPORTS");
-    console.log(`[optimizer]   missing: ${missingExports.join(", ")}`);
-    console.log("═".repeat(60) + "\n");
-    await appendResult({
-      commit: trialRevision,
-      avgPointsPerGw: 0,
-      totalHitCost: 0,
-      status: "crash",
-      description: `missing exports: ${missingExports.join(", ")}`,
-    });
-    await writeFile(STRATEGY_PATH, strategyCode, "utf8");
-    await generateChart();
-    return;
-  }
 
   let trialOutput;
   let trialResult;
@@ -577,6 +552,9 @@ Briefly explain the idea in 2-3 sentences, then output the COMPLETE strategy.mjs
     console.log("[optimizer] ✗ CRASH - BACKTEST FAILED");
     console.log(`[optimizer]   error: ${error.message.slice(0, 100)}`);
     console.log("═".repeat(60) + "\n");
+    // Revert to previous weights
+    await writeFile(WEIGHTS_PATH, weightsJson, "utf8");
+    console.log("[optimizer] reverted to previous weights");
     await appendResult({
       commit: trialRevision,
       avgPointsPerGw: 0,
@@ -584,7 +562,6 @@ Briefly explain the idea in 2-3 sentences, then output the COMPLETE strategy.mjs
       status: "crash",
       description: `backtest crash: ${description}`,
     });
-    await writeFile(STRATEGY_PATH, strategyCode, "utf8");
     await generateChart();
     return;
   }
@@ -604,7 +581,6 @@ Briefly explain the idea in 2-3 sentences, then output the COMPLETE strategy.mjs
       status: "keep",
       description,
     });
-    await persistAcceptedStrategy(STRATEGY_PATH);
     await runReport();
   } else {
     console.log("\n" + "═".repeat(60));
@@ -612,6 +588,9 @@ Briefly explain the idea in 2-3 sentences, then output the COMPLETE strategy.mjs
     console.log(`[optimizer]   score: ${parentScore.toFixed(2)} → ${trialResult.avgPointsPerGw.toFixed(2)}`);
     console.log(`[optimizer]   revision: ${trialRevision}`);
     console.log("═".repeat(60) + "\n");
+    // Revert to previous weights
+    await writeFile(WEIGHTS_PATH, weightsJson, "utf8");
+    console.log("[optimizer] reverted to previous weights");
     await appendResult({
       commit: trialRevision,
       avgPointsPerGw: trialResult.avgPointsPerGw,
@@ -619,7 +598,6 @@ Briefly explain the idea in 2-3 sentences, then output the COMPLETE strategy.mjs
       status: "discard",
       description,
     });
-    await writeFile(STRATEGY_PATH, strategyCode, "utf8");
   }
 
   await generateChart();
