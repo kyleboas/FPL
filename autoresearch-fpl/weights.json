@@ -27,7 +27,7 @@
   "common": {
     "availability": 2,
     "fixtureEase": 3,
-    "fixtureCountBonus": 1,
+    "fixtureCountBonus": 1.5,
     "epNext": 5,
     "form": 1.5,
     "pointsPerGame": 6,
@@ -36,7 +36,7 @@
     "recentPointsPer90": 3,
     "recentXgiPer90": 0.8,
     "recentBonusPer90": 0.5,
-    "value": 0.5
+    "value": 0.75
   },
   "byPosition": {
     "GK": {
