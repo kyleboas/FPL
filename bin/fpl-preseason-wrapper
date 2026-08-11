@@ -1,0 +1,12 @@
+#!/bin/sh
+set -eu
+
+[ "$#" -eq 0 ] || {
+  echo "The preseason broker accepts no arguments." >&2
+  exit 64
+}
+[ "${EUID:-$(id -u)}" -eq 0 ] || {
+  echo "The preseason broker must be invoked with sudo -n." >&2
+  exit 1
+}
+exec /usr/local/libexec/fpl-preseason/fpl-preseason-broker
