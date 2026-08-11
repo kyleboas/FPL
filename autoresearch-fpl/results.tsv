@@ -1,0 +1,6 @@
+timestamp	avg_points_per_gw	holdout_avg_points	holdout_gap	total_hit_cost	status	description
+2026-08-11T21:39:15Z	51.36	54.57	4.29	0	keep	corrected pinned historical-input baseline (GW6-GW33)
+2026-08-11T21:39:15Z	51.36	54.57	4.29	0	discard	raise common.fixtureEase 3.0 to 3.5; no change
+2026-08-11T21:39:15Z	51.61	55.57	5.29	0	keep	raise common.fixtureCountBonus 1.0 to 1.5
+2026-08-11T21:39:15Z	49.29	49.14	-0.19	0	discard	raise common.epNext 5.0 to 5.5
+2026-08-11T21:39:15Z	51.68	54.57	3.86	0	keep	raise common.value 0.5 to 0.75; no holdout deterioration
