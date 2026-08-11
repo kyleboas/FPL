@@ -1,0 +1,113 @@
+#!/bin/bash
+set -euo pipefail
+PATH="/usr/bin:/bin"
+export PATH
+
+# Root-installed fixed action. Do not add arguments or environment-controlled
+# paths: this command is the only sudoers entry granted to the FPL agent.
+[[ "$#" -eq 0 ]] || {
+  echo "The preseason broker accepts no arguments." >&2
+  exit 64
+}
+[[ "${EUID}" -eq 0 ]] || {
+  echo "The preseason broker must run through its installed sudo rule." >&2
+  exit 1
+}
+
+PROJECT_ROOT="/home/kyle/fpl"
+IMPORTER="/usr/local/libexec/fpl-preseason/fetch-preseason-data.mjs"
+NODE="/usr/bin/node"
+SECRET_FILE="/etc/agent-secrets/projects/fpl/api-football.secret"
+CACHE_DIR="/var/cache/fpl-preseason-api"
+OUTPUT_DIR="$PROJECT_ROOT/data/preseason"
+OUTPUT_PATH="$OUTPUT_DIR/2026-27.json"
+OVERRIDES_PATH="$OUTPUT_DIR/player-overrides.json"
+RUN_HOME="/var/lib/fpl-preseason"
+
+require_root_file() {
+  local path="$1"
+  python3 - "$path" <<'PY'
+import os
+import stat
+import sys
+
+path = sys.argv[1]
+st = os.lstat(path)
+if stat.S_ISLNK(st.st_mode) or not stat.S_ISREG(st.st_mode):
+    raise SystemExit(f"Unsafe broker file: {path}")
+if st.st_uid != 0 or st.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
+    raise SystemExit(f"Unsafe broker file ownership or mode: {path}")
+PY
+}
+
+require_private_secret() {
+  local path="$1"
+  python3 - "$path" <<'PY'
+import os
+import stat
+import sys
+
+path = sys.argv[1]
+st = os.lstat(path)
+if stat.S_ISLNK(st.st_mode) or not stat.S_ISREG(st.st_mode):
+    raise SystemExit(f"Unsafe broker secret: {path}")
+if st.st_uid != 0 or st.st_mode & 0o077:
+    raise SystemExit("Broker credential permissions are unsafe")
+PY
+}
+
+require_root_directory() {
+  local path="$1"
+  python3 - "$path" <<'PY'
+import os
+import stat
+import sys
+
+path = sys.argv[1]
+st = os.lstat(path)
+if stat.S_ISLNK(st.st_mode) or not stat.S_ISDIR(st.st_mode):
+    raise SystemExit(f"Unsafe broker directory: {path}")
+if st.st_uid != 0 or st.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
+    raise SystemExit(f"Unsafe broker directory ownership or mode: {path}")
+PY
+}
+
+require_root_file "$IMPORTER"
+require_root_file "$NODE"
+require_private_secret "$SECRET_FILE"
+require_root_directory "$CACHE_DIR"
+require_root_directory "$RUN_HOME"
+
+# The output directory is the one existing agent-owned project directory that
+# this action may use. Resolve it before starting, and reject a replaced output
+# entry; no caller-provided path reaches the importer.
+[[ "$(realpath -e "$OUTPUT_DIR")" == "$OUTPUT_DIR" ]] || {
+  echo "Preseason output directory is unavailable." >&2
+  exit 1
+}
+[[ ! -L "$OUTPUT_PATH" ]] || {
+  echo "Preseason output path is unsafe." >&2
+  exit 1
+}
+[[ -f "$OVERRIDES_PATH" && ! -L "$OVERRIDES_PATH" ]] || {
+  echo "Preseason overrides are unavailable." >&2
+  exit 1
+}
+
+[[ -r "$SECRET_FILE" && -s "$SECRET_FILE" ]] || {
+  echo "The API-Football credential is unavailable to the installed broker." >&2
+  exit 1
+}
+
+# env -i prevents caller-controlled Node options, proxies, paths, or output
+# overrides. The root-owned importer reads the fixed credential path in its
+# own process and never prints or passes the credential as an argument.
+exec /usr/bin/env -i \
+  HOME="$RUN_HOME" \
+  PATH="/usr/bin:/bin" \
+  FPL_PRESEASON_PROJECT_ROOT="$PROJECT_ROOT" \
+  PRESEASON_CACHE_DIR="$CACHE_DIR" \
+  PRESEASON_OUTPUT="$OUTPUT_PATH" \
+  PRESEASON_OVERRIDES="$OVERRIDES_PATH" \
+  FPL_PRESEASON_BROKER="1" \
+  "$NODE" "$IMPORTER"

@@ -3,18 +3,18 @@
 /**
  * Fetch and sanitize API-Football player data for the current FPL teams.
  *
- * The API key is read from API_FOOTBALL_KEY or, when running on the host,
- * from the root-owned local secret broker. API responses are cached under
- * .cache/ and are never written to the public data directory.
+ * The API key is read from API_FOOTBALL_KEY for controlled CI. The normal
+ * project command invokes the fixed root-installed broker, which reads the
+ * project secret in-process. API responses are cached outside public data.
  */
 
 import { createHash } from 'node:crypto';
+import { lstatSync, readFileSync } from 'node:fs';
 import { mkdir, readFile, writeFile, rename } from 'node:fs/promises';
-import { spawnSync } from 'node:child_process';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
+const ROOT = process.env.FPL_PRESEASON_PROJECT_ROOT || dirname(dirname(fileURLToPath(import.meta.url)));
 const API_BASE = 'https://v3.football.api-sports.io';
 const FPL_BOOTSTRAP_URL = 'https://fantasy.premierleague.com/api/bootstrap-static/';
 const LEAGUE_ID = 39;
@@ -68,32 +68,24 @@ function playerNameKeys(player) {
   return [...new Set([normalise(full), normalise(player.web_name), normalise(`${first} ${second}`)].filter(Boolean))];
 }
 
-function readSecretFromBroker() {
-  const service = process.env.API_FOOTBALL_SECRET_SERVICE || 'api-football';
-  const project = process.env.API_FOOTBALL_SECRET_PROJECT || 'fpl';
-  const attempts = [
-    ['sudo', ['-n', 'secret', project, service]],
-    ['sudo', ['-n', 'secret', 'global', service]],
-  ];
-
-  for (const [command, args] of attempts) {
-    const result = spawnSync(command, args, {
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'ignore'],
-      timeout: 3000,
-      windowsHide: true,
-    });
-    if (result.status === 0 && result.stdout?.trim()) return result.stdout.trim();
+function readInstalledBrokerKey() {
+  if (process.env.FPL_PRESEASON_BROKER !== '1') return '';
+  const secretPath = '/etc/agent-secrets/projects/fpl/api-football.secret';
+  try {
+    const stat = lstatSync(secretPath);
+    if (!stat.isFile() || stat.uid !== 0 || (stat.mode & 0o077) !== 0) return '';
+    return readFileSync(secretPath, 'utf8').replace(/[\r\n]/g, '').trim();
+  } catch {
+    return '';
   }
-  return '';
 }
 
 function getApiKey() {
   const fromEnv = process.env.API_FOOTBALL_KEY?.trim();
   if (fromEnv) return fromEnv;
-  const fromBroker = readSecretFromBroker();
-  if (fromBroker) return fromBroker;
-  throw new Error('API-Football key unavailable. Set API_FOOTBALL_KEY for controlled automation or store it with `sudo secret fpl api-football` (or `sudo secret global api-football`).');
+  const fromInstalledBroker = readInstalledBrokerKey();
+  if (fromInstalledBroker) return fromInstalledBroker;
+  throw new Error('API-Football key unavailable. Use the installed preseason broker or set API_FOOTBALL_KEY for controlled CI.');
 }
 
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));

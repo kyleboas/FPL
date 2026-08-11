@@ -4,7 +4,8 @@
   "type": "module",
   "scripts": {
     "start": "node server.mjs",
-    "fetch-preseason-data": "node scripts/fetch-preseason-data.mjs"
+    "fetch-preseason-data": "node scripts/run-preseason-data.mjs",
+    "fetch-preseason-data:direct": "node scripts/fetch-preseason-data.mjs"
   },
   "dependencies": {
     "e": "^0.2.33"
