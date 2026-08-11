@@ -52,6 +52,12 @@ export const fetchFPL = async (path) => {
 };
 
 /**
+ * Fetch the current FPL bootstrap data for player/team identity joins.
+ * @returns {Promise<Object>} FPL bootstrap response
+ */
+export const fetchFPLBootstrap = async () => fetchFPL('/bootstrap-static/');
+
+/**
  * Fetch an FPL team's current picks
  * @param {string|number} teamId - FPL team ID
  * @returns {Promise<{playerIds: number[], eventId: number}>}

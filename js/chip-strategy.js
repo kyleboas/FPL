@@ -7,6 +7,9 @@ import {
     CONFIG,
     getVal,
     loadAllData,
+    augmentPlayersWithPreseason,
+    getPreseasonStatus,
+    fetchFPLBootstrap,
     deriveArchetype,
     processProbabilities,
     processGoalsData,
@@ -31,7 +34,8 @@ const STATE = {
         stats: [],
         fixtures: [],
         myPlayers: [],
-        positionOverrides: []
+        positionOverrides: [],
+        preseason: null
     },
     lookups: {
         playersById: {},
@@ -182,6 +186,12 @@ function performChipAnalysis() {
     });
 
     // Analyze chip strategy
+    const preseasonStatus = getPreseasonStatus({
+        preseason: STATE.data.preseason,
+        players: STATE.data.players,
+        selectedPlayerIds: myPlayers
+    });
+
     const chipRecommendations = analyzeChipStrategy({
         fixtureDifficulty,
         coverage,
@@ -189,7 +199,8 @@ function performChipAnalysis() {
         myTeamCodes: Array.from(myTeamCodes),
         startGW,
         endGW,
-        latestGW: STATE.latestGW
+        latestGW: STATE.latestGW,
+        preseasonStatus
     });
 
     return {
@@ -197,6 +208,7 @@ function performChipAnalysis() {
         coverage,
         weaknesses,
         chipRecommendations,
+        preseasonStatus,
         startGW,
         endGW
     };
@@ -205,6 +217,26 @@ function performChipAnalysis() {
 // ==========================================
 // RENDERING
 // ==========================================
+
+function renderPreseasonStatus() {
+    const element = document.getElementById('preseason-status');
+    if (!element) return;
+
+    const status = STATE.analysis?.preseasonStatus || getPreseasonStatus({
+        preseason: STATE.data.preseason,
+        players: STATE.data.players,
+        selectedPlayerIds: STATE.data.myPlayers
+    });
+    const updated = status.sourceUpdatedAt ? new Date(status.sourceUpdatedAt).toLocaleString() : 'not available';
+    const selectedText = status.selectedPlayers > 0
+        ? `Selected players mapped: ${status.mappedSelectedPlayers}/${status.selectedPlayers}.`
+        : 'Load your FPL team to verify selected-player coverage.';
+    const ready = status.selectedComplete;
+    element.style.display = 'block';
+    element.style.background = ready ? 'rgba(76, 175, 80, 0.14)' : 'rgba(255, 152, 0, 0.16)';
+    element.style.border = `1px solid ${ready ? '#4CAF50' : '#FF9800'}`;
+    element.innerHTML = `<strong>${ready ? 'Preseason data ready' : 'Preseason data incomplete'}</strong> — ${selectedText}<br><small>API-Football completed fixtures: ${status.completedFixtures}; mapped players: ${status.mappedPlayers}; source updated: ${updated}. Data is attributed to API-Football and refreshed server-side.</small>`;
+}
 
 function renderTeamCoverage() {
     const analysis = STATE.analysis;
@@ -273,6 +305,7 @@ function renderChipRecommendations() {
                 <div style="font-size: 0.9em; color: #ccc; line-height: 1.6;">
                     ${rec.reasoning}
                 </div>
+                ${chip.key === 'benchBoost' && rec.warning ? `<div style="margin-top: 14px; padding: 10px; border-radius: 6px; background: rgba(255, 152, 0, 0.18); color: #ffb74d; font-weight: 600;">⚠ ${rec.warning}</div>` : ''}
             </div>
         `;
     });
@@ -403,6 +436,7 @@ function renderWeaknessAnalysis() {
 }
 
 function renderAllAnalysis() {
+    renderPreseasonStatus();
     renderTeamCoverage();
     renderChipRecommendations();
     renderFixtureDifficultyTable();
@@ -489,9 +523,21 @@ async function init() {
         loadingDiv.style.display = 'block';
 
         const allData = await loadAllData();
+        // Use current FPL identities when available so preseason IDs join the
+        // team being analyzed, while retaining the static fallback for outages.
+        try {
+            const current = await fetchFPLBootstrap();
+            if (Array.isArray(current.elements) && Array.isArray(current.teams)) {
+                allData.players = augmentPlayersWithPreseason(current.elements, allData.preseason);
+                allData.teams = current.teams;
+            }
+        } catch (bootstrapError) {
+            console.warn('Current FPL bootstrap unavailable; using static player data.', bootstrapError.message);
+        }
         STATE.data = allData;
 
         processData();
+        renderPreseasonStatus();
 
         loadingDiv.style.display = 'none';
         mainDiv.style.display = 'block';
