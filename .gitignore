@@ -5,4 +5,7 @@ data/latest-report.md
 data/progress.svg
 data/results.tsv
 data/run.log
+
+# API-Football responses are authenticated raw data and must stay off-client.
+.cache/preseason-api/
 data/strategy.mjs

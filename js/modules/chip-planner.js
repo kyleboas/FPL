@@ -195,7 +195,8 @@ export function analyzeChipStrategy({
     myTeamCodes,
     startGW,
     endGW,
-    latestGW
+    latestGW,
+    preseasonStatus
 }) {
     // Find best gameweeks for each chip
 
@@ -234,6 +235,15 @@ export function analyzeChipStrategy({
         startGW,
         endGW
     });
+
+    if (preseasonStatus && !preseasonStatus.selectedComplete) {
+        benchBoostAnalysis.dataReady = false;
+        benchBoostAnalysis.warning = preseasonStatus.selectedPlayers > 0
+            ? `Preseason data is incomplete for ${preseasonStatus.selectedPlayers - preseasonStatus.mappedSelectedPlayers} selected player(s). Keep Bench Boost planning on hold until every selected player has mapped preseason data.`
+            : 'Select your team to check preseason player coverage before relying on this Bench Boost recommendation.';
+    } else if (preseasonStatus) {
+        benchBoostAnalysis.dataReady = true;
+    }
 
     return {
         freeHit: freeHitAnalysis,
