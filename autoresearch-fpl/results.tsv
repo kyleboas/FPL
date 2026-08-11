@@ -4,3 +4,9 @@ timestamp	avg_points_per_gw	holdout_avg_points	holdout_gap	total_hit_cost	status
 2026-08-11T21:39:15Z	51.61	55.57	5.29	0	keep	raise common.fixtureCountBonus 1.0 to 1.5
 2026-08-11T21:39:15Z	49.29	49.14	-0.19	0	discard	raise common.epNext 5.0 to 5.5
 2026-08-11T21:39:15Z	51.68	54.57	3.86	0	keep	raise common.value 0.5 to 0.75; no holdout deterioration
+2026-08-11T23:20:49Z	51.50	55.14	4.86	0	discard	raise common.recentXgiPer90 0.8 to 1.0; lower full-season average
+2026-08-11T23:21:11Z	50.32	53.86	4.71	0	discard	raise common.recentBonusPer90 0.5 to 0.75; lower full-season and holdout averages
+2026-08-11T23:21:33Z	50.96	54.57	4.81	0	discard	raise common.form 1.5 to 2.0; lower full-season average
+2026-08-11T23:22:04Z	51.68	54.57	3.86	0	discard	raise DEF.recentExpectedGoalsPer90 0.6 to 0.8; no change
+2026-08-11T23:22:37Z	51.57	54.57	4.00	0	discard	raise MID.recentExpectedAssistsPer90 0.8 to 1.0; lower full-season average
+2026-08-11T23:23:26Z	51.71	55.14	4.57	0	discard	raise FWD.recentExpectedGoalsPer90 1.0 to 1.2; insufficient +0.03 avg/GW gain, treated as noise
