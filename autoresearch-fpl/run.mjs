@@ -42,6 +42,10 @@ const REPORT_PATH = DATA_DIR ? join(DATA_DIR, "latest-report.md") : fileURLToPat
 const FPL_BASE = "https://fantasy.premierleague.com/api";
 const FPL_BOOTSTRAP_URL = `${FPL_BASE}/bootstrap-static/`;
 const FPL_FIXTURES_URL = `${FPL_BASE}/fixtures/`;
+// Vendored 2025-26 snapshot. Its _source header pins player stats to
+// olbauday/FPL-Elo-Insights@b446cf27a0931a5ef91a45bb7e70d980600474d9 and
+// metadata/fixtures to vaastav/Fantasy-Premier-League@8c97b2adb123863c3dd581e730f1360e89815ac2.
+const HISTORICAL_DATA_URL = new URL("./historical-data.json", import.meta.url);
 const FINAL_GW = 38;
 const SEASON_BASE =
   "https://raw.githubusercontent.com/olbauday/FPL-Elo-Insights/main/data/2025-2026/By%20Tournament/Premier%20League";
@@ -186,6 +190,35 @@ async function loadSnapshotRows(gw) {
   const data = await fetchCsv(`${SEASON_BASE}/GW${gw}/player_gameweek_stats.csv`);
   await writeCache(`gw-${gw}`, data);
   return data;
+}
+
+// Backtests use only this immutable historical snapshot; report mode below
+// continues to load current bootstrap/fixture data from the live FPL API.
+async function loadHistoricalBacktestData() {
+  const snapshot = JSON.parse(await readFile(HISTORICAL_DATA_URL, "utf8"));
+  const historicalMetaById = new Map(
+    snapshot.bootstrap.elements.map((player) => [toNumber(player.id, 0), player]),
+  );
+  // The stat source omits FPL team/position fields; fill only those structural
+  // fields from the separately pinned 2025-26 metadata, never from live data.
+  const rowsByGw = new Map(
+    Object.entries(snapshot.gameweeks).map(([gw, rows]) => [
+      toNumber(gw, 0),
+      rows.map((row) => {
+        const meta = historicalMetaById.get(getPlayerId(row));
+        return {
+          ...row,
+          team: toNumber(row.team, 0) || toNumber(meta?.team, 0),
+          element_type: toNumber(row.element_type, 0) || toNumber(meta?.element_type, 0),
+        };
+      }),
+    ]),
+  );
+  return {
+    bootstrap: snapshot.bootstrap,
+    fixtures: snapshot.fixtures,
+    rowsByGw,
+  };
 }
 
 async function loadTeamPicks(teamId, gw) {
@@ -786,28 +819,14 @@ function renderReport({
 }
 
 async function runBacktest(weights) {
-  const bootstrap = await loadBootstrap();
-  const fixtures = await loadFixtures();
-  const currentGw =
-    bootstrap.events.find((event) => event.is_current)?.id ??
-    bootstrap.events.find((event) => event.is_next)?.id ??
-    1;
+  const { bootstrap, fixtures, rowsByGw } = await loadHistoricalBacktestData();
+  const currentGw = bootstrap.events
+    .filter((event) => event.finished)
+    .reduce((latest, event) => Math.max(latest, toNumber(event.id, 0)), 0);
 
   const teamsById = new Map(bootstrap.teams.map((team) => [team.id, team]));
   const playerMetaById = new Map(bootstrap.elements.map((player) => [player.id, player]));
   const fixturesByTeamAndGw = buildFixturesByTeamAndGw(fixtures);
-
-  // Load all historical snapshots
-  const rowsByGw = new Map();
-  const snapshotPromises = [];
-  for (let gw = 1; gw <= currentGw; gw += 1) {
-    snapshotPromises.push(
-      loadSnapshotRows(gw).then((rows) => {
-        rowsByGw.set(gw, rows);
-      }),
-    );
-  }
-  await Promise.all(snapshotPromises);
 
   // Simulate a full season: build squad at startGw, then transfer through endGw
   // Start after enough history is available for features
