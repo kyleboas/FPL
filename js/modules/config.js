@@ -12,6 +12,7 @@ export const CONFIG = {
         PLAYERS: 'https://raw.githubusercontent.com/olbauday/FPL-Elo-Insights/main/data/2025-2026/players.csv',
         TEAMS: 'https://raw.githubusercontent.com/olbauday/FPL-Elo-Insights/main/data/2025-2026/teams.csv',
         POSITION_OVERRIDES: './data/player_position_overrides.csv',
+        PRESEASON_DATA: './data/preseason/2026-27.json',
         FPL_API_BASE: 'https://fantasy.premierleague.com/api',
         FPL_API_PROXIES: [
             'https://corsproxy.io/?',

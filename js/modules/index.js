@@ -16,6 +16,9 @@ export { getVal, roundToTwo, parseExcludedGWs } from './utils.js';
 export {
     fetchCSV,
     fetchCSVOptional,
+    loadPreseasonData,
+    augmentPlayersWithPreseason,
+    getPreseasonStatus,
     updateStatus,
     loadGameweekData,
     loadBaseData,
@@ -55,6 +58,7 @@ export {
 // FPL API
 export {
     fetchFPL,
+    fetchFPLBootstrap,
     fetchFPLTeam
 } from './fpl-api.js';
 
