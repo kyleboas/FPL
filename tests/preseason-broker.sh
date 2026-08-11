@@ -3,7 +3,11 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 tmpdir="$(mktemp -d)"
-trap 'rm -rf "$tmpdir"' EXIT
+cleanup() {
+  rm -f "$tmpdir/sudo"
+  rmdir "$tmpdir" 2>/dev/null || true
+}
+trap cleanup EXIT
 
 bash -n "$repo_root/bin/install-preseason-broker"
 bash -n "$repo_root/bin/fpl-preseason-broker"
