@@ -1,4 +1,6 @@
 {
+  "schema_version": 1,
   "team_overrides": {},
-  "player_overrides": {}
+  "player_overrides": {},
+  "manual_review_notes": "No unresolved source-name or team collisions were found in this collection. Add reviewed mappings here rather than changing source evidence records."
 }
