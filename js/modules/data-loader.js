@@ -35,15 +35,15 @@ export const fetchCSVOptional = async (url) => {
 };
 
 /**
- * Load the sanitized server-generated preseason dataset. The raw API-Football
- * cache is never requested by the browser.
+ * Load the sanitized, manually verified preseason dataset. Raw source material
+ * is never requested by the browser.
  * @param {string} url - Public normalized dataset URL
  * @returns {Promise<Object>} Dataset or an empty, explicitly incomplete dataset
  */
 export const loadPreseasonData = async (url = CONFIG.URLS.PRESEASON_DATA) => {
     const empty = {
-        schema_version: 1,
-        source: 'API-Football',
+        schema_version: 2,
+        source: 'official-club-match-reports',
         records: [],
         coverage: {
             current_fpl_teams: 0,
@@ -51,8 +51,9 @@ export const loadPreseasonData = async (url = CONFIG.URLS.PRESEASON_DATA) => {
             completed_fixtures: 0,
             mapped_players: 0,
             mapped_player_records: 0,
-            unmapped_players: 0,
-            mapping_complete: false
+            unmapped_players: null,
+            mapping_complete: false,
+            completeness: 'unavailable'
         }
     };
 
@@ -60,7 +61,7 @@ export const loadPreseasonData = async (url = CONFIG.URLS.PRESEASON_DATA) => {
         const res = await fetch(url);
         if (!res.ok) return empty;
         const data = await res.json();
-        if (!data || data.source !== 'API-Football' || !Array.isArray(data.records)) return empty;
+        if (!data || data.source !== 'official-club-match-reports' || !Array.isArray(data.records)) return empty;
         return { ...empty, ...data, coverage: { ...empty.coverage, ...(data.coverage || {}) } };
     } catch (e) {
         return empty;
@@ -84,14 +85,21 @@ export const augmentPlayersWithPreseason = (players, preseason) => {
     return players.map(player => {
         const playerId = player.player_id ?? player.id;
         const records = byPlayer[String(playerId)] || [];
+        const knownMinutes = records.filter(record => Number.isFinite(record.minutes));
+        const knownGoals = records.filter(record => Number.isFinite(record.goals));
+        const knownAssists = records.filter(record => Number.isFinite(record.assists));
         const summary = records.length > 0 ? {
             records,
             fixture_count: new Set(records.map(record => record.source_fixture_id)).size,
             appearances: records.length,
             starts: records.filter(record => record.started).length,
-            minutes: records.reduce((sum, record) => sum + Number(record.minutes || 0), 0),
-            goals: records.reduce((sum, record) => sum + Number(record.goals || 0), 0),
-            assists: records.reduce((sum, record) => sum + Number(record.assists || 0), 0),
+            minutes: knownMinutes.length ? knownMinutes.reduce((sum, record) => sum + record.minutes, 0) : null,
+            minutes_known: knownMinutes.length,
+            minutes_unknown: records.length - knownMinutes.length,
+            goals: knownGoals.length ? knownGoals.reduce((sum, record) => sum + record.goals, 0) : null,
+            goals_known: knownGoals.length,
+            assists: knownAssists.length ? knownAssists.reduce((sum, record) => sum + record.assists, 0) : null,
+            assists_known: knownAssists.length,
             source_updated_at: records.map(record => record.source_updated_at).filter(Boolean).sort().at(-1) || null
         } : null;
         return { ...player, preseason: summary };
@@ -106,13 +114,15 @@ export const getPreseasonStatus = ({ preseason, players = [], selectedPlayerIds 
     const selected = new Set(selectedPlayerIds.map(id => String(id)));
     const mappedSelected = players.filter(player => selected.has(String(player.player_id ?? player.id)) && player.preseason?.records?.length).length;
     return {
-        source: preseason?.source || 'API-Football',
+        source: preseason?.source || 'official-club-match-reports',
         sourceUpdatedAt: preseason?.source_updated_at || null,
         generatedAt: preseason?.generated_at || null,
         mappedPlayers: Number(coverage.mapped_players || 0),
         completedFixtures: Number(coverage.completed_fixtures || 0),
         mappedRecords: Number(coverage.mapped_player_records || 0),
-        unmappedPlayers: Number(coverage.unmapped_players || 0),
+        unmappedPlayers: coverage.unmapped_players == null ? null : Number(coverage.unmapped_players),
+        reportsCollected: Number(coverage.reports_collected || 0),
+        completeness: coverage.completeness || 'unknown',
         selectedPlayers: selected.size,
         mappedSelectedPlayers: mappedSelected,
         selectedComplete: selected.size > 0 && mappedSelected === selected.size,

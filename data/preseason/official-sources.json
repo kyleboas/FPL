@@ -1,0 +1,142 @@
+{
+  "schema_version": 1,
+  "season": "2026-27",
+  "source": "official-club-match-reports",
+  "attribution": "Canonical official club pages used for the manually verified preseason dataset.",
+  "generated_at": "2026-08-12T00:40:44.782Z",
+  "collection_note": "Completed preseason matches only. Match pages are official club pages; no third-party API or provider data was used.",
+  "sources": [
+    {
+      "id": "chelsea-western-sydney-2026-07-28",
+      "club": "Chelsea FC",
+      "fpl_team_id": 6,
+      "opponent": "Western Sydney Wanderers",
+      "home_team": "Chelsea",
+      "away_team": "Western Sydney Wanderers",
+      "match_date": "2026-07-28",
+      "report_date": "2026-07-28",
+      "competition": "Sydney Super Cup",
+      "fixture_type": "preseason_competitive_tournament",
+      "title": "Match report: Chelsea 6-4 Western Sydney Wanderers",
+      "url": "https://www.chelseafc.com/en/match/chelsea-vs-western-sydney-wanderers-sydney-super-cup-2026-07-28",
+      "completed": true,
+      "verified_facts": [
+        "starting_lineup",
+        "used_substitutes",
+        "published_score_and_goalscorers"
+      ],
+      "minutes_policy": "Do not infer total minutes from substitution times.",
+      "collected_at": "2026-08-12T00:40:44.782Z"
+    },
+    {
+      "id": "chelsea-tottenham-2026-08-01",
+      "club": "Chelsea FC",
+      "fpl_team_id": 6,
+      "opponent": "Tottenham Hotspur",
+      "home_team": "Chelsea",
+      "away_team": "Tottenham Hotspur",
+      "match_date": "2026-08-01",
+      "report_date": "2026-08-01",
+      "competition": "Sydney Super Cup",
+      "fixture_type": "preseason_competitive_tournament",
+      "title": "Match report: Chelsea 1-2 Tottenham",
+      "url": "https://www.chelseafc.com/en/match/chelsea-v-tottenham-hotspur-friendly-2026-08-01",
+      "completed": true,
+      "verified_facts": [
+        "starting_lineup",
+        "used_substitutes",
+        "published_score_and_goalscorers"
+      ],
+      "minutes_policy": "Do not infer total minutes from substitution times.",
+      "collected_at": "2026-08-12T00:40:44.782Z"
+    },
+    {
+      "id": "chelsea-juventus-2026-08-05",
+      "club": "Chelsea FC",
+      "fpl_team_id": 6,
+      "opponent": "Juventus",
+      "home_team": "Chelsea",
+      "away_team": "Juventus",
+      "match_date": "2026-08-05",
+      "report_date": "2026-08-05",
+      "competition": "Friendly",
+      "fixture_type": "preseason_friendly",
+      "title": "Match report: Chelsea 0-1 Juventus",
+      "url": "https://www.chelseafc.com/en/match/chelsea-vs-juventus-friendly-2026-08-05",
+      "completed": true,
+      "verified_facts": [
+        "starting_lineup",
+        "used_substitutes",
+        "published_score_and_goalscorers"
+      ],
+      "minutes_policy": "Do not infer total minutes from substitution times.",
+      "collected_at": "2026-08-12T00:40:44.782Z"
+    },
+    {
+      "id": "chelsea-milan-2026-08-08",
+      "club": "Chelsea FC",
+      "fpl_team_id": 6,
+      "opponent": "AC Milan",
+      "home_team": "Chelsea",
+      "away_team": "AC Milan",
+      "match_date": "2026-08-08",
+      "report_date": "2026-08-08",
+      "competition": "Friendly",
+      "fixture_type": "preseason_friendly",
+      "title": "Match report: Chelsea 3-0 Milan",
+      "url": "https://www.chelseafc.com/en/match/chelsea-vs-milan-friendly-2026-08-08",
+      "completed": true,
+      "verified_facts": [
+        "starting_lineup",
+        "used_substitutes",
+        "published_score_and_goalscorers"
+      ],
+      "minutes_policy": "Do not infer total minutes from substitution times.",
+      "collected_at": "2026-08-12T00:40:44.782Z"
+    },
+    {
+      "id": "johor-chelsea-2026-08-09",
+      "club": "Chelsea FC",
+      "fpl_team_id": 6,
+      "opponent": "Johor Darul Ta'zim",
+      "home_team": "Johor Darul Ta'zim",
+      "away_team": "Chelsea",
+      "match_date": "2026-08-09",
+      "report_date": "2026-08-09",
+      "competition": "Friendly",
+      "fixture_type": "preseason_friendly",
+      "title": "Match report: Johor Darul Ta'zim 3-3 Chelsea",
+      "url": "https://www.chelseafc.com/en/match/johor-darul-tazim-vs-chelsea-friendly-2026-08-09",
+      "completed": true,
+      "verified_facts": [
+        "starting_lineup",
+        "used_substitutes",
+        "published_score_and_goalscorers"
+      ],
+      "minutes_policy": "Do not infer total minutes from substitution times.",
+      "collected_at": "2026-08-12T00:40:44.782Z"
+    },
+    {
+      "id": "liverpool-monaco-2026-08-09",
+      "club": "Liverpool FC",
+      "fpl_team_id": 14,
+      "opponent": "AS Monaco",
+      "home_team": "Liverpool",
+      "away_team": "AS Monaco",
+      "match_date": "2026-08-09",
+      "report_date": "2026-08-09",
+      "competition": "Friendly",
+      "fixture_type": "preseason_friendly",
+      "title": "Liverpool beaten by Monaco in pre-season friendly at Anfield",
+      "url": "https://www.liverpoolfc.com/news/liverpool-beaten-monaco-pre-season-friendly-anfield",
+      "completed": true,
+      "verified_facts": [
+        "starting_lineup",
+        "used_substitutes",
+        "published_score_and_goalscorers"
+      ],
+      "minutes_policy": "Do not infer total minutes from substitution times.",
+      "collected_at": "2026-08-12T00:40:44.782Z"
+    }
+  ]
+}

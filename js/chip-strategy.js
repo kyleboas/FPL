@@ -232,10 +232,13 @@ function renderPreseasonStatus() {
         ? `Selected players mapped: ${status.mappedSelectedPlayers}/${status.selectedPlayers}.`
         : 'Load your FPL team to verify selected-player coverage.';
     const ready = status.selectedComplete;
+    const coverageText = status.completeness === 'partial'
+        ? 'Partial official-club coverage; this is not season-wide completeness.'
+        : status.completeness === 'complete' ? 'Official-club coverage marked complete.' : 'Official-club coverage is unavailable or unclassified.';
     element.style.display = 'block';
     element.style.background = ready ? 'rgba(76, 175, 80, 0.14)' : 'rgba(255, 152, 0, 0.16)';
     element.style.border = `1px solid ${ready ? '#4CAF50' : '#FF9800'}`;
-    element.innerHTML = `<strong>${ready ? 'Preseason data ready' : 'Preseason data incomplete'}</strong> — ${selectedText}<br><small>API-Football completed fixtures: ${status.completedFixtures}; mapped players: ${status.mappedPlayers}; source updated: ${updated}. Data is attributed to API-Football and refreshed server-side.</small>`;
+    element.innerHTML = `<strong>${ready ? 'Preseason evidence found for selected players' : 'Preseason evidence incomplete'}</strong> — ${selectedText}<br><small>${coverageText} Reports: ${status.reportsCollected}; completed fixtures: ${status.completedFixtures}; mapped players: ${status.mappedPlayers}; source updated: ${updated}. Attribution: ${status.source}.</small>`;
 }
 
 function renderTeamCoverage() {
