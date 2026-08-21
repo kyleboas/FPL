@@ -10,3 +10,7 @@ timestamp	avg_points_per_gw	holdout_avg_points	holdout_gap	total_hit_cost	status
 2026-08-11T23:22:04Z	51.68	54.57	3.86	0	discard	raise DEF.recentExpectedGoalsPer90 0.6 to 0.8; no change
 2026-08-11T23:22:37Z	51.57	54.57	4.00	0	discard	raise MID.recentExpectedAssistsPer90 0.8 to 1.0; lower full-season average
 2026-08-11T23:23:26Z	51.71	55.14	4.57	0	discard	raise FWD.recentExpectedGoalsPer90 1.0 to 1.2; insufficient +0.03 avg/GW gain, treated as noise
+2026-08-21T16:35:11Z	51.68	54.57	3.86	0	discard	defensive-contribution historical supplement with feature weights disabled; control
+2026-08-21T16:35:11Z	50.36	55.86	7.33	0	discard	set defensive-contribution hit-rate weight to 0.5 for DEF MID FWD; full-season regression
+2026-08-21T16:35:11Z	52.75	56.29	4.71	0	discard	set hit-rate weights to DEF 0.25 MID 1.0 FWD 0.25; superseded by stronger balanced result
+2026-08-21T16:35:11Z	53.46	59.86	8.52	0	keep	set hit-rate weights to DEF 0.25 MID 2.0 FWD 0.25; improves full season train and holdout

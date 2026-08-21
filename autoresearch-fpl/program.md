@@ -83,7 +83,7 @@ Columns:
 - `minimumRecentMinutes`: filter out players with less recent minutes
 - `minimumChanceOfPlaying`: filter out injured/doubtful players
 - `common`: weights applied to all players
-- `byPosition`: position-specific weights (GK, DEF, MID, FWD)
+- `byPosition`: position-specific weights (GK, DEF, MID, FWD), including recent defensive-contribution hit rate for outfield players
 
 ## Simplicity criterion
 

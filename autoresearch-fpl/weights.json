@@ -46,16 +46,19 @@
     },
     "DEF": {
       "recentCleanSheetRate": 1.2,
+      "recentDefensiveContributionHitRate": 0.25,
       "recentExpectedGoalsPer90": 0.6,
       "recentExpectedAssistsPer90": 0.5,
       "recentGoalsConcededPer90": -0.5
     },
     "MID": {
+      "recentDefensiveContributionHitRate": 2,
       "recentExpectedGoalsPer90": 0.8,
       "recentExpectedAssistsPer90": 0.8,
       "recentCleanSheetRate": 0.3
     },
     "FWD": {
+      "recentDefensiveContributionHitRate": 0.25,
       "recentExpectedGoalsPer90": 1.0,
       "recentExpectedAssistsPer90": 0.4
     }

@@ -46,6 +46,10 @@ const FPL_FIXTURES_URL = `${FPL_BASE}/fixtures/`;
 // olbauday/FPL-Elo-Insights@b446cf27a0931a5ef91a45bb7e70d980600474d9 and
 // metadata/fixtures to vaastav/Fantasy-Premier-League@8c97b2adb123863c3dd581e730f1360e89815ac2.
 const HISTORICAL_DATA_URL = new URL("./historical-data.json", import.meta.url);
+const HISTORICAL_DEFENSIVE_CONTRIBUTIONS_URL = new URL(
+  "./historical-defensive-contributions.json",
+  import.meta.url,
+);
 const FINAL_GW = 38;
 const SEASON_BASE =
   "https://raw.githubusercontent.com/olbauday/FPL-Elo-Insights/main/data/2025-2026/By%20Tournament/Premier%20League";
@@ -195,24 +199,33 @@ async function loadSnapshotRows(gw) {
 // Backtests use only this immutable historical snapshot; report mode below
 // continues to load current bootstrap/fixture data from the live FPL API.
 async function loadHistoricalBacktestData() {
-  const snapshot = JSON.parse(await readFile(HISTORICAL_DATA_URL, "utf8"));
+  const [snapshot, defensiveSnapshot] = await Promise.all([
+    readFile(HISTORICAL_DATA_URL, "utf8").then(JSON.parse),
+    readFile(HISTORICAL_DEFENSIVE_CONTRIBUTIONS_URL, "utf8").then(JSON.parse),
+  ]);
   const historicalMetaById = new Map(
     snapshot.bootstrap.elements.map((player) => [toNumber(player.id, 0), player]),
   );
-  // The stat source omits FPL team/position fields; fill only those structural
-  // fields from the separately pinned 2025-26 metadata, never from live data.
+  // The stat source omits structural fields and the original vendored subset
+  // omitted defensive contributions. Fill them only from separately pinned
+  // 2025-26 data, never from live data.
   const rowsByGw = new Map(
-    Object.entries(snapshot.gameweeks).map(([gw, rows]) => [
-      toNumber(gw, 0),
-      rows.map((row) => {
-        const meta = historicalMetaById.get(getPlayerId(row));
-        return {
-          ...row,
-          team: toNumber(row.team, 0) || toNumber(meta?.team, 0),
-          element_type: toNumber(row.element_type, 0) || toNumber(meta?.element_type, 0),
-        };
-      }),
-    ]),
+    Object.entries(snapshot.gameweeks).map(([gw, rows]) => {
+      const defensiveByPlayer = defensiveSnapshot.gameweeks[gw] ?? {};
+      return [
+        toNumber(gw, 0),
+        rows.map((row) => {
+          const playerId = getPlayerId(row);
+          const meta = historicalMetaById.get(playerId);
+          return {
+            ...row,
+            team: toNumber(row.team, 0) || toNumber(meta?.team, 0),
+            element_type: toNumber(row.element_type, 0) || toNumber(meta?.element_type, 0),
+            defensive_contribution: toNumber(defensiveByPlayer[playerId], 0),
+          };
+        }),
+      ];
+    }),
   );
   return {
     bootstrap: snapshot.bootstrap,

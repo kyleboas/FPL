@@ -25,6 +25,7 @@ import {
   POSITION_NAMES,
   AVAILABILITY_BY_STATUS,
 } from "./run.mjs";
+import { recentDefensiveContributionHitRate } from "./defensive-contribution.mjs";
 
 // ── Feature engineering helpers ─────────────────────────────────────────────
 
@@ -104,6 +105,8 @@ export function featureLabel(name, rawValue) {
       return `${rawValue.toFixed(2)} value`;
     case "recentCleanSheetRate":
       return `${Math.round(rawValue * 100)}% clean-sheet rate`;
+    case "recentDefensiveContributionHitRate":
+      return `${Math.round(rawValue * 100)}% defensive-contribution hit rate`;
     case "recentSavesPer90":
       return `${rawValue.toFixed(1)} saves/90`;
     case "recentGoalsConcededPer90":
@@ -167,6 +170,7 @@ export function scorePlayer({
       1.2,
     ),
     recentCleanSheetRate: countRecentCleanSheets(historyRows),
+    recentDefensiveContributionHitRate: recentDefensiveContributionHitRate(historyRows, positionName),
     recentSavesPer90: normalizeFeature(averagePer90(historyRows, "saves"), 5),
     recentGoalsConcededPer90: normalizeFeature(averagePer90(historyRows, "goals_conceded"), 3),
     recentExpectedGoalsPer90: normalizeFeature(averagePer90(historyRows, "expected_goals"), 1.2),
